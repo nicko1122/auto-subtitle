@@ -43,6 +43,10 @@ const state = {
 // DOM 元素引用
 const el = {
   video: document.getElementById("main-video"),
+  videoStage: document.getElementById("video-stage"),
+  btnScaleFit: document.getElementById("btn-scale-fit"),
+  btnScaleCompact: document.getElementById("btn-scale-compact"),
+  btnScaleLarge: document.getElementById("btn-scale-large"),
   placeholder: document.getElementById("video-placeholder"),
   leftPanel: document.getElementById("left-video-panel"),
   dragDropOverlay: document.getElementById("drag-drop-overlay"),
@@ -200,11 +204,56 @@ function initPlayer() {
     el.videoResolutionPill.textContent = `${state.video.width}x${state.video.height}${ratioDesc}`;
     el.videoResolutionPill.classList.remove("hidden");
     el.placeholder.classList.add("hidden");
+
+    // 若為直式短影音（寬度小於 600px，如 448x768 等小解析度），自適應縮減預設字級與邊距，防止字體過大爆框
+    if (state.video.width < 600 && state.style.font_size > 26) {
+      state.style.font_size = 22;
+      el.sliderFontSize.value = 22;
+      el.valFontSize.textContent = "22px";
+      state.style.padding_left = 16;
+      state.style.padding_right = 16;
+      el.inputPadLeft.value = 16;
+      el.inputPadRight.value = 16;
+    }
+
     updateSummary();
 
     // 重新計算字型與座標縮放比，確保預覽與實體影片原樣 100% 貼合
     applySubtitleStyleToOverlay();
   });
+
+  // 畫面大小切換 (Fit, Compact, Large)
+  function setPreviewSize(mode) {
+    if (!el.btnScaleFit) return;
+    el.btnScaleFit.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
+    el.btnScaleCompact.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
+    el.btnScaleLarge.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
+    
+    el.videoStage.classList.remove("max-h-full", "max-h-[300px]", "max-h-[560px]");
+    el.video.classList.remove("max-h-full", "max-h-[300px]", "max-h-[560px]");
+
+    if (mode === "compact") {
+      el.btnScaleCompact.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
+      el.videoStage.classList.add("max-h-[300px]");
+      el.video.classList.add("max-h-[300px]");
+    } else if (mode === "large") {
+      el.btnScaleLarge.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
+      el.videoStage.classList.add("max-h-[560px]");
+      el.video.classList.add("max-h-[560px]");
+    } else {
+      el.btnScaleFit.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
+      el.videoStage.classList.add("max-h-full");
+      el.video.classList.add("max-h-full");
+    }
+
+    setTimeout(() => {
+      applySubtitleStyleToOverlay();
+    }, 50);
+  }
+
+  if (el.btnScaleFit) el.btnScaleFit.addEventListener("click", () => setPreviewSize("fit"));
+  if (el.btnScaleCompact) el.btnScaleCompact.addEventListener("click", () => setPreviewSize("compact"));
+  if (el.btnScaleLarge) el.btnScaleLarge.addEventListener("click", () => setPreviewSize("large"));
 
   // 監聽視窗或影片尺寸變更，即時維持等比錨定
   if (window.ResizeObserver) {
