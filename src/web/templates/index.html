@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoSubtitle AI - 自動上字幕與影音工作台</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 自訂滾動條 */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+    /* 字幕即時覆蓋層 */
+    #subtitle-overlay-container {
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- 頂部導航列 -->
+  <header class="h-14 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur px-6 flex items-center justify-between sticky top-0 z-30">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
+        AS
+      </div>
+      <div>
+        <h1 class="text-base font-semibold tracking-wide flex items-center gap-2">
+          AutoSubtitle AI
+          <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Studio v1.0</span>
+        </h1>
+      </div>
+    </div>
+    
+    <div class="flex items-center space-x-4 text-xs text-zinc-400">
+      <div class="flex items-center space-x-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span id="system-status">WSL GPU 加速連線正常 (GTX 1070 Ti)</span>
+      </div>
+      <div class="h-4 w-px bg-zinc-800"></div>
+      <div id="active-media-badge" class="px-2 py-1 bg-zinc-800 rounded text-zinc-300">未載入影片</div>
+      <div id="segment-count-badge" class="px-2 py-1 bg-zinc-800 rounded text-zinc-300">0 句字幕</div>
+    </div>
+  </header>
+
+  <!-- 主內容區：左右分欄 -->
+  <main class="flex-1 flex overflow-hidden p-4 gap-4 max-w-[1920px] mx-auto w-full">
+
+    <!-- 【左欄】影片播放器佔位與即時字幕預覽區 (佔 7/12 或 55%) -->
+    <section class="w-7/12 flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      
+      <!-- 影片頂部資訊條 -->
+      <div class="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/60 text-xs">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          <span id="video-filename" class="font-medium text-zinc-200">即時影音預覽畫布</span>
+          <span id="video-resolution-pill" class="text-zinc-500 hidden">(1920x1080)</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="overlay-toggle-hint" class="text-zinc-500 text-[11px]">雙向即時渲染中</span>
+          <button id="btn-load-sample-video" class="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded transition border border-zinc-700">
+            載入 inputclip 測試影片
+          </button>
+        </div>
+      </div>
+
+      <!-- 影片播放器與字幕疊加層核心容器 -->
+      <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-[380px]">
+        
+        <!-- HTML5 Video 元素 -->
+        <video 
+          id="main-video" 
+          class="w-full h-full object-contain max-h-[68vh]"
+          preload="metadata"
+          playsinline
+        >
+          您的瀏覽器不支援 HTML5 影片播放。
+        </video>
+
+        <!-- 即時字幕疊加渲染層 (即時呈現 CSS 樣式、陰影、描邊與 X/Y 座標) -->
+        <div id="subtitle-overlay-container" class="absolute inset-0 flex pointer-events-none p-6">
+          <div id="subtitle-overlay" class="transition-all duration-75 text-center leading-normal">
+            <!-- 動態插入字幕文字 -->
+          </div>
+        </div>
+
+        <!-- 初始無影片時的佔位提示 -->
+        <div id="video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 gap-3">
+          <svg class="w-16 h-16 stroke-current text-zinc-700" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+          <p class="text-sm">尚未選取影片，請在右側【資產管理】上傳或載入測試影片</p>
+          <button onclick="document.getElementById('btn-load-sample-video').click()" class="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs transition">
+            一鍵載入 inputclip/test_video.mp4
+          </button>
+        </div>
+
+      </div>
+
+      <!-- 播放器自訂控制面板 (Play, Pause, Scrubber, Time, Volume) -->
+      <div class="p-3 border-t border-zinc-800 bg-zinc-900/90 flex flex-col gap-2">
+        <!-- 時間軌進度條 -->
+        <div class="flex items-center gap-2">
+          <input 
+            type="range" 
+            id="video-scrubber" 
+            min="0" 
+            max="100" 
+            value="0" 
+            step="0.01"
+            class="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+          >
+        </div>
+
+        <!-- 控制按鈕組 -->
+        <div class="flex items-center justify-between text-xs">
+          <div class="flex items-center gap-3">
+            <!-- 播放/暫停按鈕 -->
+            <button id="btn-play-pause" class="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center transition shadow-md shadow-blue-500/20">
+              <svg id="icon-play" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <svg id="icon-pause" class="w-4 h-4 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+
+            <!-- 前進/後退 5 秒 -->
+            <button id="btn-seek-backward" class="p-1.5 hover:bg-zinc-800 rounded text-zinc-300" title="倒退 3 秒 (鍵盤 J 或 左箭頭)">-3s</button>
+            <button id="btn-seek-forward" class="p-1.5 hover:bg-zinc-800 rounded text-zinc-300" title="快進 3 秒 (鍵盤 L 或 右箭頭)">+3s</button>
+
+            <!-- 時間戳記顯示 -->
+            <div class="font-mono text-zinc-300">
+              <span id="time-current">00:00.00</span> / <span id="time-duration">00:00.00</span>
+            </div>
+          </div>
+
+          <!-- 右側工具：音量、倍速與全螢幕 -->
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1.5">
+              <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+              <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1" class="w-16 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+            </div>
+
+            <select id="playback-speed" class="bg-zinc-800 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-xs">
+              <option value="0.5">0.5x</option>
+              <option value="0.75">0.75x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2.0x</option>
+            </select>
+
+            <button id="btn-fullscreen" class="p-1.5 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white" title="全螢幕">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+
+    <!-- 【右欄】多 Tab 功能控制台 (佔 5/12 或 45%) -->
+    <section class="w-5/12 flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      
+      <!-- Tab 頁籤標題列 -->
+      <div class="flex border-b border-zinc-800 bg-zinc-900/90 text-xs font-medium">
+        <button data-tab="tab-assets" class="tab-btn flex-1 py-3 px-3 text-center border-b-2 border-blue-500 text-blue-400 font-semibold bg-zinc-800/40 transition">
+          1. 資產管理
+        </button>
+        <button data-tab="tab-editor" class="tab-btn flex-1 py-3 px-3 text-center border-b-2 border-transparent text-zinc-400 hover:text-zinc-200 transition">
+          2. 字幕編輯
+        </button>
+        <button data-tab="tab-style" class="tab-btn flex-1 py-3 px-3 text-center border-b-2 border-transparent text-zinc-400 hover:text-zinc-200 transition">
+          3. 樣式與位置
+        </button>
+        <button data-tab="tab-export" class="tab-btn flex-1 py-3 px-3 text-center border-b-2 border-transparent text-zinc-400 hover:text-zinc-200 transition">
+          4. 預覽與匯出
+        </button>
+      </div>
+
+      <!-- Tab 內容容器 -->
+      <div class="flex-1 overflow-y-auto p-4 space-y-4">
+
+        <!-- ======================= TAB 1: 資產管理 UI ======================= -->
+        <div id="tab-assets" class="tab-pane space-y-4">
+          
+          <!-- 區塊 1: 影片上傳與選取 -->
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-3">
+            <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+              影片來源
+            </h3>
+            
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex flex-col items-center justify-center p-3 border-2 border-dashed border-zinc-700 hover:border-blue-500 rounded-lg cursor-pointer bg-zinc-900/50 hover:bg-zinc-900 transition">
+                <svg class="w-6 h-6 text-zinc-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                <span class="text-xs text-zinc-300">上傳本機影片 (MP4/MOV)</span>
+                <input type="file" id="input-upload-video" accept="video/*" class="hidden">
+              </label>
+
+              <button id="btn-pick-sample-video" class="flex flex-col items-center justify-center p-3 border border-zinc-700 hover:border-zinc-500 rounded-lg bg-zinc-900/50 hover:bg-zinc-800 transition">
+                <svg class="w-6 h-6 text-indigo-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span class="text-xs text-zinc-300">使用 test_video.mp4</span>
+              </button>
+            </div>
+            
+            <div id="video-loaded-meta" class="text-xs text-zinc-400 p-2 bg-zinc-900 rounded border border-zinc-800/60 hidden">
+              目前載入: <span id="meta-video-name" class="text-zinc-200 font-mono"></span>
+            </div>
+          </div>
+
+          <!-- 區塊 2: AI 自動辨識 / 字幕來源操作 -->
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-3">
+            <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              字幕生成與匯入
+            </h3>
+
+            <div class="space-y-2">
+              <!-- 按鈕 1: AI 語音辨識生成字幕 -->
+              <button id="btn-ai-transcribe" class="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
+                【AI 本地辨識】自動抽取音軌與斷句
+              </button>
+
+              <div class="grid grid-cols-2 gap-2 pt-1">
+                <!-- 按鈕 2: 上傳 SRT 字幕 -->
+                <label class="py-2 px-3 border border-zinc-700 hover:border-zinc-500 rounded bg-zinc-900/80 hover:bg-zinc-800 text-xs text-center cursor-pointer transition text-zinc-300">
+                  <span>上傳 SRT / VTT 字幕</span>
+                  <input type="file" id="input-upload-srt" accept=".srt,.vtt,.json" class="hidden">
+                </label>
+
+                <!-- 按鈕 3: 上傳原稿歌詞 -->
+                <label class="py-2 px-3 border border-zinc-700 hover:border-zinc-500 rounded bg-zinc-900/80 hover:bg-zinc-800 text-xs text-center cursor-pointer transition text-zinc-300">
+                  <span>上傳歌詞/原稿 (TXT)</span>
+                  <input type="file" id="input-upload-txt" accept=".txt" class="hidden">
+                </label>
+              </div>
+
+              <!-- 快捷載入 inputclip 現成字幕按鈕 -->
+              <div class="flex gap-2 pt-1">
+                <button id="btn-load-sample-srt" class="flex-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 rounded text-[11px] text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+                  載入 inputclip/audio.aligned.srt
+                </button>
+                <button id="btn-load-sample-txt" class="flex-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 rounded text-[11px] text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+                  載入 inputclip/audio-org.txt
+                </button>
+              </div>
+
+              <!-- 按鈕 4: 有稿模式強制對齊 -->
+              <button id="btn-ai-align" class="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-500/30 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                【有稿模式】原稿與音軌強制時間軸對齊
+              </button>
+
+              <!-- 按鈕 5: Edge LLM 智慧校對 -->
+              <button id="btn-ai-proofread" class="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-purple-400 border border-purple-500/30 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                【無稿校對】Qwen2.5 本地 Edge LLM 錯別字校正
+              </button>
+            </div>
+          </div>
+
+          <!-- 處理狀態即時回饋盒 -->
+          <div id="process-log-box" class="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-mono text-zinc-400 max-h-32 overflow-y-auto space-y-1">
+            <div class="text-zinc-500">系統就緒，等待載入影音素材...</div>
+          </div>
+
+        </div>
+
+
+        <!-- ======================= TAB 2: 字幕管理編輯器 ======================= -->
+        <div id="tab-editor" class="tab-pane hidden space-y-3">
+          
+          <!-- 上方功能操作按鈕列 (保留擴充與佔位) -->
+          <div class="p-2 bg-zinc-950/70 rounded-lg border border-zinc-800 flex flex-wrap gap-1.5">
+            <button id="btn-add-segment" class="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded text-xs transition">
+              + 新增字幕段
+            </button>
+            <button id="btn-merge-segments" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="合併相鄰段落 (佔位)">
+              合併相鄰
+            </button>
+            <button id="btn-split-by-punct" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="依標點符號重新斷句 (佔位)">
+              標點切分
+            </button>
+            <button id="btn-offset-time" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="全體時間軸平移 (佔位)">
+              平移 ±0.5s
+            </button>
+            <button id="btn-clear-subtitles" class="px-2.5 py-1 bg-red-900/20 hover:bg-red-900/30 text-red-400 border border-red-800/30 rounded text-xs transition ml-auto">
+              清空
+            </button>
+          </div>
+
+          <!-- 檢視模式切換：逐句時間軸 vs 全文多行文字框 -->
+          <div class="flex items-center justify-between text-xs px-1">
+            <span class="text-zinc-400">字幕清單 (<span id="editor-seg-count">0</span> 句)</span>
+            <div class="flex gap-2">
+              <button id="btn-view-list" class="text-blue-400 font-semibold underline">逐句時間軸</button>
+              <span class="text-zinc-600">|</span>
+              <button id="btn-view-raw" class="text-zinc-500 hover:text-zinc-300">全文文字框</button>
+            </div>
+          </div>
+
+          <!-- 模式 A: 逐句時間軸編輯清單 -->
+          <div id="segment-list-container" class="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+            <div class="text-center py-10 text-xs text-zinc-500">
+              尚無字幕資料，請至【資產管理】載入或自動生成字幕
+            </div>
+          </div>
+
+          <!-- 模式 B: 全文文字框 (切換用) -->
+          <div id="raw-text-container" class="hidden">
+            <textarea 
+              id="raw-subtitle-textarea" 
+              rows="18" 
+              class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500 leading-relaxed"
+              placeholder="每行代表一句字幕..."
+            ></textarea>
+            <button id="btn-apply-raw-text" class="mt-2 w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition">
+              套用全文變更至時間軸
+            </button>
+          </div>
+
+        </div>
+
+
+        <!-- ======================= TAB 3: 字幕樣式與位置編輯 ======================= -->
+        <div id="tab-style" class="tab-pane hidden space-y-4">
+          
+          <!-- 【關鍵功能】字幕逐行列出選擇控件 (選到該字幕即可出現在左邊影片上) -->
+          <div class="p-3 bg-blue-950/20 rounded-lg border border-blue-900/40 space-y-2">
+            <label class="text-xs font-semibold text-blue-300 flex items-center justify-between">
+              <span>🎯 選取特定字幕行預覽 (點選同步定位影片)</span>
+              <span id="selected-sub-badge" class="text-[11px] text-blue-400">目前選擇: 第 1 句</span>
+            </label>
+            <select id="select-subtitle-line" class="w-full bg-zinc-900 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+              <option value="0">尚無字幕</option>
+            </select>
+          </div>
+
+          <!-- 預設樣式快捷切換 (Presets) -->
+          <div class="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-2">
+            <span class="text-xs font-semibold text-zinc-300">快速樣式預設集 (Presets)</span>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="preset-youtube" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-yellow-400 border border-yellow-500/20 rounded text-xs text-left transition">
+                🌟 YouTube 醒目金黃
+              </button>
+              <button id="preset-tiktok" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-cyan-300 border border-cyan-500/20 rounded text-xs text-left transition">
+                📱 TikTok 右側直排
+              </button>
+              <button id="preset-classic" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700 rounded text-xs text-left transition">
+                🎬 經典電影白字
+              </button>
+              <button id="preset-minimal" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded text-xs text-left transition">
+                📺 現代電視置中
+              </button>
+            </div>
+          </div>
+
+          <!-- 位置調整 (X / Y Scrollbar、方向與九宮格對齊) -->
+          <div class="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-3">
+            <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">位置與佈局 (Web 盒模型)</h4>
+            
+            <!-- 方向切換：橫排 vs 直排 -->
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-400">文字方向 (writing-mode)</span>
+              <div class="flex gap-1 bg-zinc-900 p-0.5 rounded border border-zinc-800">
+                <button id="btn-orient-h" class="px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium">橫式字幕</button>
+                <button id="btn-orient-v" class="px-3 py-1 rounded text-xs text-zinc-400 hover:text-white">直式字幕</button>
+              </div>
+            </div>
+
+            <!-- X 軸位置 Scrollbar / Slider -->
+            <div class="space-y-1">
+              <div class="flex justify-between text-xs text-zinc-400">
+                <span>水平位置 X (Left / Margin-L)</span>
+                <span id="val-pos-x" class="font-mono text-zinc-300">置中 (Center)</span>
+              </div>
+              <input type="range" id="slider-pos-x" min="0" max="100" value="50" class="w-full h-1.5 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+            </div>
+
+            <!-- Y 軸位置 Scrollbar / Slider -->
+            <div class="space-y-1">
+              <div class="flex justify-between text-xs text-zinc-400">
+                <span>垂直位置 Y (Bottom / Margin-V)</span>
+                <span id="val-pos-y" class="font-mono text-zinc-300">底部 (60px)</span>
+              </div>
+              <input type="range" id="slider-pos-y" min="0" max="100" value="10" class="w-full h-1.5 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+            </div>
+
+            <!-- 九宮格快速對齊碼 -->
+            <div class="space-y-1.5 pt-1">
+              <span class="text-[11px] text-zinc-400">九宮格快速對齊:</span>
+              <div class="grid grid-cols-3 gap-1 w-36 mx-auto">
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="top" data-halign="left">頂左</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="top" data-halign="center">頂中</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="top" data-halign="right">頂右</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="middle" data-halign="left">中左</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="middle" data-halign="center">正中</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="middle" data-halign="right">中右</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="bottom" data-halign="left">底左</button>
+                <button class="grid-align-btn p-1.5 bg-blue-600 text-white rounded text-[10px]" data-valign="bottom" data-halign="center">底中</button>
+                <button class="grid-align-btn p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px]" data-valign="bottom" data-halign="right">底右</button>
+              </div>
+            </div>
+
+            <!-- Padding 邊距數值 -->
+            <div class="grid grid-cols-4 gap-1.5 pt-1 text-center">
+              <div>
+                <span class="text-[10px] text-zinc-500">上 (Top)</span>
+                <input type="number" id="input-pad-top" value="50" class="w-full bg-zinc-900 border border-zinc-800 rounded p-1 text-xs text-center font-mono">
+              </div>
+              <div>
+                <span class="text-[10px] text-zinc-500">右 (Right)</span>
+                <input type="number" id="input-pad-right" value="40" class="w-full bg-zinc-900 border border-zinc-800 rounded p-1 text-xs text-center font-mono">
+              </div>
+              <div>
+                <span class="text-[10px] text-zinc-500">下 (Bottom)</span>
+                <input type="number" id="input-pad-bottom" value="60" class="w-full bg-zinc-900 border border-zinc-800 rounded p-1 text-xs text-center font-mono">
+              </div>
+              <div>
+                <span class="text-[10px] text-zinc-500">左 (Left)</span>
+                <input type="number" id="input-pad-left" value="40" class="w-full bg-zinc-900 border border-zinc-800 rounded p-1 text-xs text-center font-mono">
+              </div>
+            </div>
+          </div>
+
+          <!-- 字型與外觀特效 (陰影字、描邊字) -->
+          <div class="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-3">
+            <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">字型外觀與特效</h4>
+
+            <!-- 字型與大小 -->
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[11px] text-zinc-400 block mb-1">字型</label>
+                <select id="select-font-name" class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs">
+                  <option value="Noto Sans CJK TC">Noto Sans CJK TC (黑體)</option>
+                  <option value="Noto Serif CJK TC">Noto Serif CJK TC (明體)</option>
+                  <option value="Arial">Arial</option>
+                  <option value="sans-serif">系統無襯線體</option>
+                </select>
+              </div>
+              <div>
+                <div class="flex justify-between text-[11px] text-zinc-400 mb-1">
+                  <span>字級</span>
+                  <span id="val-font-size" class="font-mono text-zinc-300">36px</span>
+                </div>
+                <input type="range" id="slider-font-size" min="14" max="96" value="36" class="w-full h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+              </div>
+            </div>
+
+            <!-- 文字顏色與粗體 -->
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <span class="text-zinc-400">文字填色:</span>
+                <input type="color" id="picker-primary-color" value="#FFFFFF" class="w-6 h-6 rounded border border-zinc-700 cursor-pointer bg-transparent">
+                <span id="label-primary-color" class="font-mono text-zinc-300 text-[11px]">#FFFFFF</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" id="check-bold" checked class="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-0">
+                  <span class="text-xs text-zinc-300">粗體</span>
+                </label>
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" id="check-italic" class="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-0">
+                  <span class="text-xs text-zinc-300">斜體</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 描邊字 (-webkit-text-stroke) -->
+            <div class="p-2.5 bg-zinc-900/60 rounded border border-zinc-800 space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-300 font-medium">描邊字 (-webkit-text-stroke)</span>
+                <div class="flex items-center gap-1.5">
+                  <input type="color" id="picker-outline-color" value="#000000" class="w-5 h-5 rounded border border-zinc-700 cursor-pointer bg-transparent">
+                  <span id="label-outline-color" class="font-mono text-zinc-400 text-[11px]">#000000</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="text-zinc-500 text-[11px] w-12">粗細:</span>
+                <input type="range" id="slider-outline-width" min="0" max="8" step="0.5" value="2.5" class="flex-1 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+                <span id="val-outline-width" class="font-mono text-zinc-300 text-[11px] w-8">2.5px</span>
+              </div>
+            </div>
+
+            <!-- 陰影字 (text-shadow) -->
+            <div class="p-2.5 bg-zinc-900/60 rounded border border-zinc-800 space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-300 font-medium">陰影字 (text-shadow)</span>
+                <div class="flex items-center gap-1.5">
+                  <input type="color" id="picker-shadow-color" value="#000000" class="w-5 h-5 rounded border border-zinc-700 cursor-pointer bg-transparent">
+                  <span id="label-shadow-color" class="font-mono text-zinc-400 text-[11px]">#000000</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="text-zinc-500 text-[11px] w-12">偏移:</span>
+                <input type="range" id="slider-shadow-offset" min="0" max="10" step="0.5" value="2" class="flex-1 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+                <span id="val-shadow-offset" class="font-mono text-zinc-300 text-[11px] w-8">2.0px</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 即時 CSS 程式碼預覽 (雙向連動) -->
+          <div class="p-3 bg-zinc-950/80 rounded-lg border border-zinc-800 space-y-2">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-semibold text-zinc-300">CSS 樣式代碼 (雙向支援)</span>
+              <button id="btn-copy-css" class="text-blue-400 hover:text-blue-300 text-[11px]">複製 CSS</button>
+            </div>
+            <textarea 
+              id="css-live-code" 
+              rows="6" 
+              class="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-[11px] font-mono text-emerald-400 focus:outline-none focus:border-blue-500 leading-normal"
+            ></textarea>
+          </div>
+
+        </div>
+
+
+        <!-- ======================= TAB 4: 預覽與匯出 ======================= -->
+        <div id="tab-export" class="tab-pane hidden space-y-4">
+          
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-2">
+            <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">專案資料摘要</h4>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="p-2 bg-zinc-900 rounded border border-zinc-800/80">
+                <span class="text-zinc-500 block text-[10px]">字幕總句數</span>
+                <span id="summary-total-lines" class="text-zinc-200 font-mono text-sm font-semibold">0 句</span>
+              </div>
+              <div class="p-2 bg-zinc-900 rounded border border-zinc-800/80">
+                <span class="text-zinc-500 block text-[10px]">影片時長</span>
+                <span id="summary-duration" class="text-zinc-200 font-mono text-sm font-semibold">0.00 秒</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 字幕檔案匯出 -->
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-2.5">
+            <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">匯出標準字幕檔案</h4>
+            <div class="grid grid-cols-3 gap-2">
+              <button id="btn-export-srt" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
+                <span>下載 SRT</span>
+                <span class="text-[10px] text-zinc-500">.srt</span>
+              </button>
+              <button id="btn-export-vtt" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
+                <span>下載 WebVTT</span>
+                <span class="text-[10px] text-zinc-500">.vtt</span>
+              </button>
+              <button id="btn-export-json" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
+                <span>下載 JSON</span>
+                <span class="text-[10px] text-zinc-500">時間軸軌道</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 影音硬字幕燒錄壓制 (Hardcopy Burn-in) -->
+          <div class="p-3.5 bg-gradient-to-br from-blue-950/40 to-indigo-950/30 rounded-lg border border-blue-900/40 space-y-3">
+            <div>
+              <h4 class="text-xs font-semibold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                影音 Hardcopy 字幕壓制 (燒錄至 MP4)
+              </h4>
+              <p class="text-[11px] text-zinc-400 mt-0.5">
+                使用本地 NVIDIA NVENC 進行硬體轉碼，將上述 CSS 樣式與排版永久燒錄進影片中。
+              </p>
+            </div>
+
+            <button id="btn-start-burn" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              開始壓制燒錄影片
+            </button>
+
+            <!-- 壓制完成下載連結 -->
+            <div id="burn-result-box" class="p-3 bg-zinc-900 rounded border border-emerald-500/30 hidden space-y-2">
+              <div class="flex items-center gap-2 text-xs text-emerald-400 font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                壓制完成！
+              </div>
+              <div class="flex gap-2">
+                <a id="link-download-burned" href="#" download class="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs text-center font-medium transition">
+                  下載壓制後 MP4
+                </a>
+                <button id="btn-preview-burned" class="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium transition">
+                  在播放器播放
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- 引入前端邏輯腳本 -->
+  <script src="/static/app.js"></script>
+</body>
+</html>

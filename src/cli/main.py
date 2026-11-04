@@ -472,5 +472,20 @@ def burn_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("serve")
+def serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="監聽主機 IP (0.0.0.0 可供區網存取)"),
+    port: int = typer.Option(8000, "--port", "-p", help="監聽連接埠 (預設 8000)"),
+    reload: bool = typer.Option(False, "--reload", help="啟用程式碼即時熱重載"),
+):
+    """【Web 工作台服務】啟動 AutoSubtitle AI 視覺化網頁工作台"""
+    import uvicorn
+    console.rule("[bold cyan]啟動 AutoSubtitle AI 網頁工作台[/bold cyan]")
+    console.print(f"  ✔ 本地瀏覽器網址: [bold green]http://{host}:{port}[/bold green]")
+    console.print(f"  ✔ API 文件:        [cyan]http://{host}:{port}/docs[/cyan]")
+    console.print(f"  ✔ 按下 Ctrl+C 可停止服務\n")
+    uvicorn.run("src.api.server:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()
