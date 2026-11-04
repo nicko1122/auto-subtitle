@@ -1,11 +1,43 @@
+import os
+import sys
+import ctypes
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-from faster_whisper import WhisperModel
-
-from ..schemas.subtitle import WordItem
 
 logger = logging.getLogger(__name__)
+
+
+def preload_cuda_libs():
+    """自動偵測並預載 pip 安裝的 nvidia cu12 函式庫 (如 cublas, cudnn)"""
+    try:
+        venv_base = sys.prefix
+        site_packages = os.path.join(
+            venv_base, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages"
+        )
+        nvidia_dir = os.path.join(site_packages, "nvidia")
+        if os.path.isdir(nvidia_dir):
+            for sub in sorted(os.listdir(nvidia_dir)):
+                lib_dir = os.path.join(nvidia_dir, sub, "lib")
+                if os.path.isdir(lib_dir):
+                    curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
+                    if lib_dir not in curr_ld:
+                        os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{curr_ld}" if curr_ld else lib_dir
+                    for fname in sorted(os.listdir(lib_dir)):
+                        if ".so" in fname:
+                            fpath = os.path.join(lib_dir, fname)
+                            try:
+                                ctypes.CDLL(fpath, mode=ctypes.RTLD_GLOBAL)
+                            except Exception:
+                                pass
+    except Exception:
+        pass
+
+
+preload_cuda_libs()
+
+from faster_whisper import WhisperModel
+from ..schemas.subtitle import WordItem
 
 
 def transcribe_audio(
@@ -14,40 +46,55 @@ def transcribe_audio(
     device: str = "auto",
     compute_type: str = "default",
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
     beam_size: int = 5,
     vad_filter: bool = True,
     word_timestamps: bool = True
 ) -> Dict[str, Any]:
     """
     使用 faster-whisper 對音訊進行辨識，並提取單字層級時間戳記 (Word-level timestamps)
-
-    :param audio_path: 音訊檔案路徑 (建議 16kHz WAV)
-    :param model_size: Whisper 模型大小 (tiny, base, small, medium, large-v3 等)
-    :param device: 運算裝置 ("cuda", "cpu", "auto")
-    :param compute_type: 精度 ("int8", "float16", "default" 等)
-    :param language: 指定語言代碼 (如 "zh", "en")，若 None 則自動偵測
-    :param beam_size: 搜尋光束大小，預設 5
-    :param vad_filter: 是否啟用 Silero VAD 語音活動過濾 (跳過無聲片段)
-    :param word_timestamps: 是否抽取逐字時間軸 (強烈建議 True)
-    :return: 包含偵測語言、總時長與未切分原始 segment/words 的結構化資料
     """
     audio_p = Path(audio_path).resolve()
     if not audio_p.exists():
         raise FileNotFoundError(f"找不到音訊檔案: {audio_path}")
 
-    # 如果 device 為 auto，可由 faster-whisper 自動決定，若 cuda 失敗會自動 fallback 或可手動處理
+    # 再次確保函式庫符號已載入
+    preload_cuda_libs()
+
     logger.info(f"正在載入 Whisper 模型 [{model_size}], 裝置: {device}, 精度: {compute_type}...")
-    try:
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
-    except Exception as e:
-        logger.warning(f"以 device={device} 載入失敗 ({e})，嘗試 fallback 至 CPU INT8 模式...")
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    
+    # 智慧嘗試策略: 先嘗試指定的 device/compute_type，若失敗依序降級嘗試 float32、CPU int8
+    model = None
+    try_configs = []
+    
+    if device in ("cuda", "auto"):
+        # Pascal GPU (GTX 1070 等) 通常不支援原生高效 fp16，float32 更穩定
+        if compute_type == "default":
+            try_configs.append({"device": "cuda", "compute_type": "float32"})
+            try_configs.append({"device": "cuda", "compute_type": "int8_float32"})
+        else:
+            try_configs.append({"device": "cuda", "compute_type": compute_type})
+    
+    # 最後備援方案: CPU int8
+    try_configs.append({"device": "cpu", "compute_type": "int8"})
+
+    for cfg in try_configs:
+        try:
+            model = WhisperModel(model_size, device=cfg["device"], compute_type=cfg["compute_type"])
+            logger.info(f"成功以 device={cfg['device']}, compute_type={cfg['compute_type']} 載入模型")
+            break
+        except Exception as e:
+            logger.warning(f"以 {cfg} 載入失敗 ({e})，嘗試下一個備援配置...")
+
+    if model is None:
+        raise RuntimeError("無法以任何配置載入 Whisper 模型！")
 
     logger.info(f"開始辨識音訊: {audio_p.name}...")
     segments_iter, info = model.transcribe(
         str(audio_p),
         beam_size=beam_size,
         language=language,
+        initial_prompt=initial_prompt,
         vad_filter=vad_filter,
         word_timestamps=word_timestamps
     )

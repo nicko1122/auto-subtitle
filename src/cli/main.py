@@ -54,6 +54,7 @@ def transcribe_cmd(
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     compute_type: str = typer.Option("default", "--compute-type", help="計算精度 (default, int8, float16)"),
     language: Optional[str] = typer.Option(None, "-l", "--lang", help="語言代碼 (如 zh, en)，未提供則自動辨識"),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="提示詞 (例如 '繁體中文' 可強制輸出繁體)"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出原始 JSON 路徑"),
 ):
     """【步驟 2】使用 faster-whisper 進行語音辨識並提取 Word-level 時間戳記"""
@@ -64,7 +65,8 @@ def transcribe_cmd(
             model_size=model,
             device=device,
             compute_type=compute_type,
-            language=language
+            language=language,
+            initial_prompt=prompt
         )
         console.print(f"[bold green]✔ 辨識完成！[/bold green]")
         console.print(f"  辨識語言:   [yellow]{res['language']}[/yellow] (信心度: {res['language_probability']})")
@@ -153,6 +155,7 @@ def pipeline_cmd(
     model: str = typer.Option("base", "-m", "--model", help="Whisper 模型 (tiny, base, small, medium, large-v3)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     language: Optional[str] = typer.Option(None, "-l", "--lang", help="指定語言 (如 zh, en)"),
+    prompt: Optional[str] = typer.Option("繁體中文", "--prompt", help="初始提示詞 (預設引導輸出繁體中文)"),
     max_chars: int = typer.Option(16, "-c", "--max-chars", help="單行字幕最大字數"),
     pause: float = typer.Option(0.45, "-p", "--pause", help="停頓斷句間隔 (秒)"),
     out_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設為影音同目錄)"),
@@ -180,12 +183,13 @@ def pipeline_cmd(
         audio_file = str(input_p)
 
     # 2. Whisper 語音辨識
-    console.print(f"[2/4] Whisper 語音辨識中 (模型: {model}, 裝置: {device})...")
+    console.print(f"[2/4] Whisper 語音辨識中 (模型: {model}, 裝置: {device}, 提示: {prompt})...")
     trans_res = transcribe_audio(
         audio_path=audio_file,
         model_size=model,
         device=device,
-        language=language
+        language=language,
+        initial_prompt=prompt
     )
 
     # 3. 智慧斷句
@@ -194,10 +198,17 @@ def pipeline_cmd(
     track = build_subtitle_track(trans_res, cfg)
 
     # 4. 匯出檔案
-    console.print("[4/4] 匯出檔案 (JSON & SRT)...")
+    console.print("[4/4] 匯出檔案 (JSON, SRT & VTT)...")
     json_path = target_dir / f"{stem}.subtitles.json"
-    srt_path = target_dir / f"{stem}.srt"
-    vtt_path = target_dir / f"{stem}.vtt"
+    
+    # 避免覆蓋使用者可能既有的同名 .srt 參考檔
+    raw_srt_path = target_dir / f"{stem}.srt"
+    if raw_srt_path.exists():
+        srt_path = target_dir / f"{stem}.generated.srt"
+        vtt_path = target_dir / f"{stem}.generated.vtt"
+    else:
+        srt_path = target_dir / f"{stem}.srt"
+        vtt_path = target_dir / f"{stem}.vtt"
 
     save_file(to_json(track), str(json_path))
     save_file(to_srt(track), str(srt_path))
