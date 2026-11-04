@@ -3,7 +3,8 @@ from .transcriber import transcribe_audio
 from .segmenter import split_words_into_segments, build_subtitle_track
 from .aligner import align_script_to_audio
 from .proofreader import SubtitleProofreader
-from .exporter import to_srt, to_vtt, to_json, save_file
+from .video_burner import burn_subtitles_to_video
+from .exporter import to_srt, to_vtt, to_json, to_ass, save_file
 
 __all__ = [
     "extract_audio",
@@ -14,8 +15,10 @@ __all__ = [
     "build_subtitle_track",
     "align_script_to_audio",
     "SubtitleProofreader",
+    "burn_subtitles_to_video",
     "to_srt",
     "to_vtt",
     "to_json",
+    "to_ass",
     "save_file",
 ]

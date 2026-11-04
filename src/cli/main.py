@@ -15,8 +15,9 @@ from src.core.transcriber import transcribe_audio
 from src.core.segmenter import build_subtitle_track
 from src.core.aligner import align_script_to_audio
 from src.core.proofreader import SubtitleProofreader
+from src.core.video_burner import burn_subtitles_to_video
 from src.core.exporter import to_srt, to_vtt, to_json, save_file
-from src.schemas.subtitle import SegmentationConfig, SubtitleTrack
+from src.schemas.subtitle import SegmentationConfig, SubtitleTrack, SubtitleStyle
 
 app = typer.Typer(
     name="auto-subtitle",
@@ -350,6 +351,72 @@ def proofread_cmd(
     for orig, corr in zip(track.segments[:6], proofread_track.segments[:6]):
         table.add_row(str(orig.id), orig.text, corr.text)
     console.print(table)
+
+
+@app.command("burn")
+def burn_cmd(
+    video_path: str = typer.Argument(..., help="來源影片檔案路徑 (MP4, MOV 等)"),
+    subtitle_path: str = typer.Argument(..., help="字幕檔案路徑 (.srt, .vtt, 或 .json)"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出影片路徑 (預設為同目錄 .hardsub.mp4)"),
+    font: str = typer.Option("Noto Sans CJK TC", "--font", help="字型名稱"),
+    size: int = typer.Option(28, "--size", help="字型大小 (像素)"),
+    color: str = typer.Option("#FFFFFF", "--color", help="主要字型顏色 (Hex，如 #FFFFFF, #FFFF00)"),
+    outline_color: str = typer.Option("#000000", "--outline-color", help="描邊顏色 (Hex)"),
+    outline: float = typer.Option(2.5, "--outline", help="描邊粗細"),
+    shadow: float = typer.Option(1.2, "--shadow", help="陰影偏移量"),
+    alignment: int = typer.Option(2, "--align", help="九宮格對齊碼 (1~9，2=底中(預設), 5=正中, 8=頂中)"),
+    margin_v: int = typer.Option(45, "--margin-v", help="垂直邊距 (像素)"),
+    pos_x: Optional[int] = typer.Option(None, "--x", help="精準絕對 X 座標 (像素，指定後將覆蓋對齊設定)"),
+    pos_y: Optional[int] = typer.Option(None, "--y", help="精準絕對 Y 座標 (像素，指定後將覆蓋對齊設定)"),
+    cpu: bool = typer.Option(False, "--cpu", help="強制使用 CPU (預設自動啟用 NVIDIA NVENC 硬體加速)"),
+):
+    """【Hardcopy 壓制】將字幕硬燒錄進影片中，支援自訂座標、九宮格對齊、字型、色彩與描邊"""
+    v_path = Path(video_path).resolve()
+    s_path = Path(subtitle_path).resolve()
+
+    if not v_path.exists():
+        console.print(f"[bold red]找不到來源影片: {video_path}[/bold red]")
+        raise typer.Exit(code=1)
+    if not s_path.exists():
+        console.print(f"[bold red]找不到字幕檔案: {subtitle_path}[/bold red]")
+        raise typer.Exit(code=1)
+
+    style = SubtitleStyle(
+        font_name=font,
+        font_size=size,
+        primary_color=color,
+        outline_color=outline_color,
+        outline_width=outline,
+        shadow_offset=shadow,
+        alignment=alignment,
+        margin_v=margin_v,
+        pos_x=pos_x,
+        pos_y=pos_y
+    )
+
+    console.rule("[bold cyan]開始執行影片字幕硬燒錄 (Hardsub)[/bold cyan]")
+    console.print(f"  來源影片: [yellow]{v_path}[/yellow]")
+    console.print(f"  套用字幕: [yellow]{s_path}[/yellow]")
+    console.print(f"  字型設定: [cyan]{font}[/cyan] ({size}px, 顏色: {color}, 描邊: {outline_color} {outline}px)")
+    
+    if pos_x is not None and pos_y is not None:
+        console.print(f"  定位模式: [magenta]精準絕對座標 (X={pos_x}, Y={pos_y})[/magenta]")
+    else:
+        console.print(f"  定位模式: [magenta]九宮格對齊碼 {alignment} (垂直邊距 {margin_v}px)[/magenta]")
+
+    try:
+        out_file = burn_subtitles_to_video(
+            video_path=str(v_path),
+            subtitles_source=str(s_path),
+            output_path=output,
+            style=style,
+            use_gpu=not cpu
+        )
+        console.rule("[bold green]影片壓制完成[/bold green]")
+        console.print(f"  ✔ 燒錄影片已產出: [bold green]{out_file}[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]壓制失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

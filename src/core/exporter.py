@@ -1,5 +1,97 @@
 from pathlib import Path
-from ..schemas.subtitle import SubtitleTrack
+from typing import Optional
+from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
+
+
+def hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
+    """將 Hex 顏色 (#RRGGBB) 轉換為 ASS 格式 (&H[AA]BBGGRR&)"""
+    c = hex_color.lstrip("#")
+    if len(c) == 6:
+        r, g, b = c[0:2], c[2:4], c[4:6]
+    elif len(c) == 8:
+        r, g, b, a = c[0:2], c[2:4], c[4:6], c[6:8]
+        alpha = int(a, 16)
+    else:
+        r, g, b = "FF", "FF", "FF"
+    return f"&H{alpha:02X}{b}{g}{r}&"
+
+
+def format_ass_timestamp(seconds: float) -> str:
+    """將秒數轉為 ASS 標準時間戳 (0:00:00.00，小數點兩位)"""
+    if seconds < 0:
+        seconds = 0.0
+
+    total_seconds = int(seconds)
+    centis = int(round((seconds - total_seconds) * 100))
+    if centis >= 100:
+        total_seconds += 1
+        centis = 0
+
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+
+    return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
+
+
+def to_ass(
+    track: SubtitleTrack,
+    style: Optional[SubtitleStyle] = None,
+    res_x: int = 1920,
+    res_y: int = 1080
+) -> str:
+    """
+    將 SubtitleTrack 轉換為支援精確樣式與座標定位的 ASS (Advanced SubStation Alpha) 格式
+    """
+    if style is None:
+        style = SubtitleStyle()
+
+    pri_col = hex_to_ass_color(style.primary_color)
+    sec_col = "&H000000FF&"
+    out_col = hex_to_ass_color(style.outline_color)
+    bak_col = hex_to_ass_color(style.shadow_color, alpha=128)
+
+    bold_val = -1 if style.bold else 0
+    italic_val = -1 if style.italic else 0
+
+    # 樣式定義行
+    style_line = (
+        f"Style: Default,{style.font_name},{style.font_size},"
+        f"{pri_col},{sec_col},{out_col},{bak_col},"
+        f"{bold_val},{italic_val},0,0,100,100,0,0,1,"
+        f"{style.outline_width},{style.shadow_offset},"
+        f"{style.alignment},{style.margin_l},{style.margin_r},{style.margin_v},1"
+    )
+
+    header = f"""[Script Info]
+Title: Auto Subtitle Burn-in
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: {res_x}
+PlayResY: {res_y}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+{style_line}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
+
+    event_lines = [header]
+    for seg in track.segments:
+        start_str = format_ass_timestamp(seg.start)
+        end_str = format_ass_timestamp(seg.end)
+
+        # 若指定了精準絕對座標 (pos_x, pos_y)，使用 ASS 的 \\pos(x, y) 覆蓋標記
+        if style.pos_x is not None and style.pos_y is not None:
+            text_field = f"{{\\pos({style.pos_x},{style.pos_y})}}{seg.text}"
+        else:
+            text_field = seg.text
+
+        event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
+
+    return "\n".join(event_lines) + "\n"
 
 
 def format_timestamp(seconds: float, decimal_separator: str = ",") -> str:
