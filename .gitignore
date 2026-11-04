@@ -10,6 +10,9 @@ env/
 # Media & Temp files
 uploads/
 output/
+temp/
+*.temp_burn.ass
+*.raw.json
 *.wav
 *.mp3
 *.mp4

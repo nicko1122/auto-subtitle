@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Union
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
-from .exporter import to_ass, save_file
+from .exporter import to_ass, save_file, parse_srt_content
 
 logger = logging.getLogger(__name__)
 
@@ -90,30 +90,10 @@ def burn_subtitles_to_video(
             data = json.loads(sub_p.read_text(encoding="utf-8"))
             track = SubtitleTrack(**data)
         elif sub_p.suffix.lower() in (".srt", ".vtt"):
-            # 若傳入 SRT，轉為 SubtitleTrack 結構
-            from .segmenter import build_subtitle_track
-            # 簡易解析 SRT
-            from ..schemas.subtitle import SubtitleSegment
-            import re
             content = sub_p.read_text(encoding="utf-8")
-            blocks = re.split(r'\n\s*\n', content.strip())
-            segments = []
-            for b in blocks:
-                lines = [l.strip() for l in b.splitlines() if l.strip()]
-                if len(lines) >= 3 and lines[0].isdigit():
-                    s_id = int(lines[0])
-                    time_match = re.match(r'(\d+:\d+:\d+[,\.]\d+)\s*-->\s*(\d+:\d+:\d+[,\.]\d+)', lines[1])
-                    if time_match:
-                        # parse time
-                        def parse_t(t_str):
-                            t_str = t_str.replace(',', '.')
-                            parts = t_str.split(':')
-                            return float(parts[0])*3600 + float(parts[1])*60 + float(parts[2])
-                        start_sec = parse_t(time_match.group(1))
-                        end_sec = parse_t(time_match.group(2))
-                        text = " ".join(lines[2:])
-                        segments.append(SubtitleSegment(id=s_id, start=start_sec, end=end_sec, text=text))
-            track = SubtitleTrack(source_file=str(input_v), duration=duration, segments=segments)
+            track = parse_srt_content(content, source_file=str(input_v))
+            if duration > 0:
+                track.duration = duration
 
     if track is None:
         raise ValueError("無法解析字幕資料源")
@@ -163,11 +143,12 @@ def burn_subtitles_to_video(
     ]
 
     logger.info(f"開始執行壓制: {' '.join(cmd)}")
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    # 壓制完成後清理臨時的 .ass 檔案
-    if temp_ass_path.exists():
-        temp_ass_path.unlink()
+    try:
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    finally:
+        # 確保無論壓制成功或失敗皆清理臨時的 .ass 檔案
+        if temp_ass_path.exists():
+            temp_ass_path.unlink()
 
     if process.returncode != 0:
         raise RuntimeError(f"FFmpeg 影片字幕壓制失敗: {process.stderr}")

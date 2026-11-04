@@ -1,37 +1,9 @@
-import os
-import sys
 import json
-import ctypes
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-
-def preload_cuda_libs():
-    """確保 CUDA 函式庫符號已被全域載入"""
-    try:
-        venv_base = sys.prefix
-        site_packages = os.path.join(
-            venv_base, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages"
-        )
-        nvidia_dir = os.path.join(site_packages, "nvidia")
-        if os.path.isdir(nvidia_dir):
-            for sub in sorted(os.listdir(nvidia_dir)):
-                lib_dir = os.path.join(nvidia_dir, sub, "lib")
-                if os.path.isdir(lib_dir):
-                    curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
-                    if lib_dir not in curr_ld:
-                        os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{curr_ld}" if curr_ld else lib_dir
-                    for fname in sorted(os.listdir(lib_dir)):
-                        if ".so" in fname:
-                            fpath = os.path.join(lib_dir, fname)
-                            try:
-                                ctypes.CDLL(fpath, mode=ctypes.RTLD_GLOBAL)
-                            except Exception:
-                                pass
-    except Exception:
-        pass
-
+from .env_utils import preload_cuda_libs, release_gpu_memory
 
 preload_cuda_libs()
 
@@ -176,3 +148,13 @@ class SubtitleProofreader:
             language=track.language,
             segments=new_segments
         )
+
+    def close(self) -> None:
+        """關閉並釋放 Llama 模型顯存"""
+        if hasattr(self, "llm") and self.llm is not None:
+            try:
+                self.llm.close()
+            except Exception:
+                pass
+            self.llm = None
+        release_gpu_memory()

@@ -87,9 +87,20 @@ def align_script_lines_with_char_stream(
 
     dp[(0, 0)] = 0.0
 
-    # 考量速度與時間順序，計算動態規劃矩陣
+    # 考量速度與時間順序，計算動態規劃矩陣 (加入 Sakoe-Chiba 斜對角搜尋帶剪枝)
+    use_band = (N > 80 and M > 80)
+    band_limit = max(100, int(max(N, M) * 0.35))
+
     for i in range(N + 1):
-        for j in range(M + 1):
+        # 計算對應的 j 中心位置與上下界
+        if use_band:
+            center_j = int((i / max(1, N)) * M)
+            j_min = max(0, center_j - band_limit)
+            j_max = min(M, center_j + band_limit)
+        else:
+            j_min, j_max = 0, M
+
+        for j in range(j_min, j_max + 1):
             if (i, j) not in dp:
                 continue
             curr_score = dp[(i, j)]

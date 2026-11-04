@@ -1,38 +1,10 @@
-import os
-import sys
-import ctypes
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+from .env_utils import preload_cuda_libs, release_gpu_memory
+
 logger = logging.getLogger(__name__)
-
-
-def preload_cuda_libs():
-    """自動偵測並預載 pip 安裝的 nvidia cu12 函式庫 (如 cublas, cudnn)"""
-    try:
-        venv_base = sys.prefix
-        site_packages = os.path.join(
-            venv_base, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages"
-        )
-        nvidia_dir = os.path.join(site_packages, "nvidia")
-        if os.path.isdir(nvidia_dir):
-            for sub in sorted(os.listdir(nvidia_dir)):
-                lib_dir = os.path.join(nvidia_dir, sub, "lib")
-                if os.path.isdir(lib_dir):
-                    curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
-                    if lib_dir not in curr_ld:
-                        os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{curr_ld}" if curr_ld else lib_dir
-                    for fname in sorted(os.listdir(lib_dir)):
-                        if ".so" in fname:
-                            fpath = os.path.join(lib_dir, fname)
-                            try:
-                                ctypes.CDLL(fpath, mode=ctypes.RTLD_GLOBAL)
-                            except Exception:
-                                pass
-    except Exception:
-        pass
-
 
 preload_cuda_libs()
 
@@ -123,11 +95,19 @@ def transcribe_audio(
             "words": seg_words
         })
 
+    duration = round(info.duration, 3)
+    lang = info.language
+    lang_prob = round(info.language_probability, 3)
+
+    # 明確釋放 Whisper 模型與顯存
+    del model
+    release_gpu_memory()
+
     return {
         "source_file": str(audio_p),
-        "language": info.language,
-        "language_probability": round(info.language_probability, 3),
-        "duration": round(info.duration, 3),
+        "language": lang,
+        "language_probability": lang_prob,
+        "duration": duration,
         "raw_segments": raw_segments,
         "all_words": [w.model_dump() for w in all_words]
     }

@@ -16,7 +16,7 @@ from src.core.segmenter import build_subtitle_track
 from src.core.aligner import align_script_to_audio
 from src.core.proofreader import SubtitleProofreader
 from src.core.video_burner import burn_subtitles_to_video
-from src.core.exporter import to_srt, to_vtt, to_json, save_file
+from src.core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
 from src.schemas.subtitle import SegmentationConfig, SubtitleTrack, SubtitleStyle
 
 app = typer.Typer(
@@ -319,6 +319,9 @@ def proofread_cmd(
     if input_p.suffix.lower() == ".json":
         data = json.loads(input_p.read_text(encoding="utf-8"))
         track = SubtitleTrack(**data)
+    elif input_p.suffix.lower() in (".srt", ".vtt"):
+        content = input_p.read_text(encoding="utf-8")
+        track = parse_srt_content(content, source_file=str(input_p))
     else:
         # 假設為影音檔，先跑 pipeline 核心
         console.print(f"[1/3] 執行快速語音辨識與切分...")
@@ -329,9 +332,11 @@ def proofread_cmd(
     proofreader = SubtitleProofreader(n_gpu_layers=gpu_layers)
 
     console.print(f"[3/3] 正在逐批校對字幕 (共 {len(track.segments)} 句)...")
-    
-    with console.status("[bold green]Edge LLM 思考校對中...") as status:
-        proofread_track = proofreader.proofread_track(track, batch_size=batch_size)
+    try:
+        with console.status("[bold green]Edge LLM 思考校對中...") as status:
+            proofread_track = proofreader.proofread_track(track, batch_size=batch_size)
+    finally:
+        proofreader.close()
 
     # 匯出
     out_file = output or str(input_p.parent / f"{input_p.stem}.proofread.srt")

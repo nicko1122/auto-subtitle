@@ -35,19 +35,53 @@ def format_ass_timestamp(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
 
 
-def format_text_for_layout(text: str, orientation: str = "horizontal") -> str:
+def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     """
-    根據排版方向格式化字幕文字內容：
+    將直式字幕文字切分為多列 (模擬 CSS writing-mode: vertical-rl 自動換列)：
+    - 英數連續詞彙維持塊狀 (Tate-chu-yoko 縱中橫)
+    - 單列超過 max_chars_per_col 時，優先於標點或空白處換至下一列
+    """
+    raw_lines = [l.strip() for l in text.replace("\r\n", "\n").split("\n") if l.strip()]
+    columns: list[str] = []
+
+    punct_breaks = set("，。！？；、,.!?;: 　")
+
+    for line in raw_lines:
+        tokens = re.findall(r'[A-Za-z0-9]+|.', line)
+        tokens = [t for t in tokens if t not in ('\r', '\n')]
+        if not tokens:
+            continue
+
+        while len(tokens) > max_chars_per_col:
+            # 尋找最佳斷點 (在 max_chars_per_col 附近尋找標點符號)
+            split_idx = max_chars_per_col
+            for k in range(max_chars_per_col - 1, max(2, max_chars_per_col // 2) - 1, -1):
+                if tokens[k] in punct_breaks:
+                    split_idx = k + 1
+                    break
+            col_tokens = [t for t in tokens[:split_idx] if t.strip()]
+            if col_tokens:
+                columns.append("\\N".join(col_tokens))
+            tokens = tokens[split_idx:]
+
+        rem_tokens = [t for t in tokens if t.strip()]
+        if rem_tokens:
+            columns.append("\\N".join(rem_tokens))
+
+    return columns if columns else [""]
+
+
+def format_text_for_layout(text: str, orientation: str = "horizontal", max_chars_per_col: int = 12) -> str:
+    """
+    根據排版方向格式化單列字幕文字內容：
     - horizontal: 橫排文字，保留或轉為 ASS 的 \\N 換行
-    - vertical: 直排文字，英數連續詞彙維持塊狀 (Tate-chu-yoko 縱中橫)，中文字元與全形標點垂直堆疊
+    - vertical: 直排文字，英數連續詞彙維持塊狀，中文字元垂直堆疊
     """
     if orientation != "vertical":
         return text.replace("\r\n", "\\N").replace("\n", "\\N")
 
-    # 直排處理：將英數字群組 [A-Za-z0-9]+ 保持在一起，其餘單一字元逐一分行
-    tokens = re.findall(r'[A-Za-z0-9]+|.', text, flags=re.DOTALL)
-    clean_tokens = [t for t in tokens if t not in ('\r', '\n')]
-    return "\\N".join(clean_tokens)
+    cols = split_vertical_columns(text, max_chars_per_col=max_chars_per_col)
+    return cols[0] if cols else ""
 
 
 def to_ass(
@@ -109,20 +143,41 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"""
 
     event_lines = [header]
+
+    # 計算直式排版時，單列可容納的最大字數與列間距
+    avail_height = max(180, res_y - style.padding_top - style.padding_bottom)
+    char_step = max(12, int(style.font_size * 1.18))
+    max_chars_per_col = max(4, avail_height // char_step)
+    col_spacing = int(style.font_size * 1.45)
+
     for seg in track.segments:
         start_str = format_ass_timestamp(seg.start)
         end_str = format_ass_timestamp(seg.end)
 
-        # 依排版方向 (horizontal / vertical) 轉換文字
-        formatted_text = format_text_for_layout(seg.text, orientation=style.orientation)
-
-        # 若指定了精準絕對座標 (pos_x, pos_y)，使用 ASS 的 \\pos(x, y) 覆蓋標記
-        if style.pos_x is not None and style.pos_y is not None:
-            text_field = f"{{\\pos({style.pos_x},{style.pos_y})}}{formatted_text}"
+        if style.orientation == "vertical":
+            cols = split_vertical_columns(seg.text, max_chars_per_col=max_chars_per_col)
+            for col_idx, col_text in enumerate(cols):
+                if style.pos_x is not None and style.pos_y is not None:
+                    # 精準座標模式下，每多一列往左偏移 col_spacing
+                    cx = max(0, style.pos_x - col_idx * col_spacing)
+                    text_field = f"{{\\pos({cx},{style.pos_y})}}{col_text}"
+                    event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
+                else:
+                    # 盒模型邊距模式下，根據對齊方向偏移 MarginR 或 MarginL (模擬 vertical-rl 右至左換列)
+                    if style.horizontal_align == "left":
+                        ml = margin_l + col_idx * col_spacing
+                        mr = margin_r
+                    else:
+                        ml = margin_l
+                        mr = margin_r + col_idx * col_spacing
+                    event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,{ml},{mr},{margin_v},,{col_text}")
         else:
-            text_field = formatted_text
-
-        event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
+            formatted_text = format_text_for_layout(seg.text, orientation="horizontal")
+            if style.pos_x is not None and style.pos_y is not None:
+                text_field = f"{{\\pos({style.pos_x},{style.pos_y})}}{formatted_text}"
+            else:
+                text_field = formatted_text
+            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
 
     return "\n".join(event_lines) + "\n"
 
