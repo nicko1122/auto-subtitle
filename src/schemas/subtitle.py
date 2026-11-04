@@ -73,7 +73,7 @@ class SubtitleLayout(BaseModel):
 
 
 class SubtitleStyle(BaseModel):
-    """字幕外觀樣式、字型排版與 Web 盒模型座標定位配置"""
+    """字幕外觀樣式、字型排版與 Web 盒模型座標定位配置 (完整支援 CSS 語法)"""
     # 1. 字型與文字外觀
     font_name: str = Field(default="Noto Sans CJK TC", description="字型名稱 (如 Noto Sans CJK TC, Arial)")
     font_size: int = Field(default=32, ge=10, le=160, description="字型大小 (像素)")
@@ -124,11 +124,51 @@ class SubtitleStyle(BaseModel):
         }
         return mapping.get((self.vertical_align, self.horizontal_align), 2)
 
+    @classmethod
+    def from_css(cls, css_text_or_path: str, **overrides) -> "SubtitleStyle":
+        """從 CSS 樣式字串或檔案直接生成 SubtitleStyle 物件"""
+        from ..core.css_parser import parse_css_to_style_dict
+        parsed = parse_css_to_style_dict(css_text_or_path)
+        parsed.update(overrides)
+        return cls(**parsed)
+
+    def to_css(self) -> str:
+        """將目前 SubtitleStyle 序列化為標準 CSS 樣式字串 (供前端 UI 預覽直接使用)"""
+        writing_mode = "vertical-rl" if self.orientation == "vertical" else "horizontal-tb"
+        lines = [
+            f"font-family: '{self.font_name}', sans-serif;",
+            f"font-size: {self.font_size}px;",
+            f"color: {self.primary_color};",
+            f"font-weight: {'bold' if self.bold else 'normal'};",
+            f"font-style: {'italic' if self.italic else 'normal'};",
+            f"-webkit-text-stroke: {self.outline_width}px {self.outline_color};",
+            f"text-shadow: {self.shadow_offset}px {self.shadow_offset}px {self.shadow_offset*1.5:.1f}px {self.shadow_color};",
+            f"writing-mode: {writing_mode};",
+            f"text-align: {self.horizontal_align};",
+            f"vertical-align: {self.vertical_align};",
+            f"padding: {self.padding_top}px {self.padding_right}px {self.padding_bottom}px {self.padding_left}px;",
+        ]
+        if self.letter_spacing > 0:
+            lines.append(f"letter-spacing: {self.letter_spacing}px;")
+        if self.pos_x is not None:
+            lines.append(f"left: {self.pos_x}px;")
+        if self.pos_y is not None:
+            lines.append(f"top: {self.pos_y}px;")
+        return "\n".join(lines)
+
     @model_validator(mode="before")
     @classmethod
     def handle_legacy_and_shorthand(cls, data: Any):
         if not isinstance(data, dict):
             return data
+
+        # 支援直接傳入 CSS 字串
+        if "css" in data and isinstance(data["css"], str):
+            from ..core.css_parser import parse_css_to_style_dict
+            parsed_css = parse_css_to_style_dict(data["css"])
+            for k, v in parsed_css.items():
+                if k not in data or data[k] is None:
+                    data[k] = v
 
         # 相容舊版 alignment 參數 (1~9)
         if "alignment" in data and "vertical_align" not in data and "horizontal_align" not in data:

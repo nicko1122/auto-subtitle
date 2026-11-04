@@ -1,0 +1,14 @@
+/* YouTube 風格：醒目金黃色、粗體、黑描邊與陰影 */
+.subtitle {
+    font-family: 'Noto Sans CJK TC', sans-serif;
+    font-size: 38px;
+    font-weight: bold;
+    color: #FFD700;
+    -webkit-text-stroke: 3.2px #000000;
+    text-shadow: 2.5px 2.5px 4px rgba(0, 0, 0, 0.85);
+    writing-mode: horizontal-tb;
+    text-align: center;
+    vertical-align: bottom;
+    padding-bottom: 60px;
+    letter-spacing: 1.5px;
+}

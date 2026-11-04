@@ -1,0 +1,15 @@
+/* 短影音 / TikTok / Reels 直排風格：右上齊頭、白字黑邊強陰影 */
+.subtitle-vertical {
+    font-family: 'Noto Sans CJK TC', sans-serif;
+    font-size: 34px;
+    font-weight: bold;
+    color: #FFFFFF;
+    -webkit-text-stroke: 2.5px #111111;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.9);
+    writing-mode: vertical-rl;
+    text-align: right;
+    vertical-align: top;
+    padding-top: 60px;
+    padding-right: 60px;
+    letter-spacing: 2px;
+}
