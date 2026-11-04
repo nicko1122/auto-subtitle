@@ -1,0 +1,214 @@
+import os
+import sys
+import json
+from pathlib import Path
+from typing import Optional
+import typer
+from rich.console import Console
+from rich.table import Table
+
+# Add project root to sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from src.core.audio_extractor import extract_audio, check_ffmpeg
+from src.core.transcriber import transcribe_audio
+from src.core.segmenter import build_subtitle_track
+from src.core.exporter import to_srt, to_vtt, to_json, save_file
+from src.schemas.subtitle import SegmentationConfig, SubtitleTrack
+
+app = typer.Typer(
+    name="auto-subtitle",
+    help="自動上字幕 CLI 工具箱 - 包含音軌分離、Whisper 本地辨識、智慧斷句與字幕匯出",
+    add_completion=False
+)
+console = Console()
+
+
+@app.command("extract")
+def extract_cmd(
+    video_path: str = typer.Argument(..., help="來源影片檔案路徑 (MP4, MOV, MKV 等)"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出 WAV 路徑 (預設為同檔名 .wav)"),
+    sample_rate: int = typer.Option(16000, "--sr", help="取樣頻率 (Hz)"),
+):
+    """【步驟 1】從影片中抽取音軌，轉換為 16kHz 單聲道 WAV"""
+    if not check_ffmpeg():
+        console.print("[bold red]錯誤: 系統未安裝或找不到 ffmpeg 指令！[/bold red]")
+        raise typer.Exit(code=1)
+
+    try:
+        console.print(f"[cyan]正在從 [bold]{video_path}[/bold] 提取音軌...[/cyan]")
+        res = extract_audio(video_path, output_path=output, sample_rate=sample_rate)
+        console.print(f"[bold green]✔ 音軌提取成功！[/bold green]")
+        console.print(f"  音訊路徑: [yellow]{res['audio_path']}[/yellow]")
+        console.print(f"  音訊長度: [yellow]{res['duration']:.2f} 秒[/yellow]")
+        console.print(f"  取樣率:   [yellow]{res['sample_rate']} Hz (單聲道)[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]提取失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("transcribe")
+def transcribe_cmd(
+    audio_path: str = typer.Argument(..., help="音訊檔案路徑 (WAV, MP3 等)"),
+    model: str = typer.Option("base", "-m", "--model", help="Whisper 模型大小 (tiny, base, small, medium, large-v3)"),
+    device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
+    compute_type: str = typer.Option("default", "--compute-type", help="計算精度 (default, int8, float16)"),
+    language: Optional[str] = typer.Option(None, "-l", "--lang", help="語言代碼 (如 zh, en)，未提供則自動辨識"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出原始 JSON 路徑"),
+):
+    """【步驟 2】使用 faster-whisper 進行語音辨識並提取 Word-level 時間戳記"""
+    try:
+        console.print(f"[cyan]正在以 [bold]{model}[/bold] 模型辨識 [bold]{audio_path}[/bold] (裝置: {device})...[/cyan]")
+        res = transcribe_audio(
+            audio_path=audio_path,
+            model_size=model,
+            device=device,
+            compute_type=compute_type,
+            language=language
+        )
+        console.print(f"[bold green]✔ 辨識完成！[/bold green]")
+        console.print(f"  辨識語言:   [yellow]{res['language']}[/yellow] (信心度: {res['language_probability']})")
+        console.print(f"  音訊長度:   [yellow]{res['duration']:.2f} 秒[/yellow]")
+        console.print(f"  總字詞數量: [yellow]{len(res['all_words'])} 個[/yellow]")
+
+        out_file = output or str(Path(audio_path).with_suffix(".raw.json"))
+        Path(out_file).write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"  原始資料已存至: [yellow]{out_file}[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]辨識失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("segment")
+def segment_cmd(
+    raw_json_path: str = typer.Argument(..., help="transcribe 指令輸出的原始 JSON 檔"),
+    max_chars: int = typer.Option(16, "-c", "--max-chars", help="單行字幕最大字數 (中文建議 12-18)"),
+    pause: float = typer.Option(0.45, "-p", "--pause", help="視為停頓斷句的間隔秒數"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出 SubtitleTrack JSON 檔名"),
+):
+    """【步驟 3】依據標點符號、語音停頓與最大字數規則進行智慧斷句"""
+    try:
+        raw_p = Path(raw_json_path)
+        data = json.loads(raw_p.read_text(encoding="utf-8"))
+        cfg = SegmentationConfig(max_chars=max_chars, pause_threshold=pause)
+
+        console.print(f"[cyan]正在進行智慧斷句校對 (最大字數: {max_chars}, 停頓閥值: {pause}s)...[/cyan]")
+        track = build_subtitle_track(data, cfg)
+
+        out_file = output or str(raw_p.with_name(raw_p.name.replace(".raw.json", ".subtitles.json")))
+        save_file(to_json(track), out_file)
+
+        console.print(f"[bold green]✔ 智慧斷句完成！共產生 {len(track.segments)} 條字幕[/bold green]")
+        console.print(f"  字幕檔已存至: [yellow]{out_file}[/yellow]")
+
+        # 印出前 5 句預覽
+        table = Table(title="字幕片段預覽 (前 5 句)")
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("起訖時間", style="magenta")
+        table.add_column("字幕內容", style="green")
+        for seg in track.segments[:5]:
+            table.add_row(str(seg.id), f"{seg.start:.2f}s -> {seg.end:.2f}s", seg.text)
+        console.print(table)
+    except Exception as e:
+        console.print(f"[bold red]斷句失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("export")
+def export_cmd(
+    subtitle_json: str = typer.Argument(..., help="SubtitleTrack JSON 檔案路徑"),
+    fmt: str = typer.Option("srt", "-f", "--format", help="匯出格式 (srt, vtt, json)"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出檔案路徑"),
+):
+    """【步驟 4】將 SubtitleTrack JSON 轉換匯出為標準 SRT / VTT 格式"""
+    try:
+        data = json.loads(Path(subtitle_json).read_text(encoding="utf-8"))
+        track = SubtitleTrack(**data)
+
+        fmt_lower = fmt.lower()
+        if fmt_lower == "srt":
+            content = to_srt(track)
+            ext = ".srt"
+        elif fmt_lower == "vtt":
+            content = to_vtt(track)
+            ext = ".vtt"
+        elif fmt_lower == "json":
+            content = to_json(track)
+            ext = ".json"
+        else:
+            raise ValueError(f"不支援的格式: {fmt} (僅支援 srt, vtt, json)")
+
+        out_file = output or str(Path(subtitle_json).with_suffix(ext))
+        save_file(content, out_file)
+        console.print(f"[bold green]✔ 匯出成功！格式: {fmt_lower.upper()}[/bold green]")
+        console.print(f"  儲存路徑: [yellow]{out_file}[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]匯出失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("pipeline")
+def pipeline_cmd(
+    media_path: str = typer.Argument(..., help="來源影音檔案路徑 (MP4, MOV, WAV, MP3 等)"),
+    model: str = typer.Option("base", "-m", "--model", help="Whisper 模型 (tiny, base, small, medium, large-v3)"),
+    device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
+    language: Optional[str] = typer.Option(None, "-l", "--lang", help="指定語言 (如 zh, en)"),
+    max_chars: int = typer.Option(16, "-c", "--max-chars", help="單行字幕最大字數"),
+    pause: float = typer.Option(0.45, "-p", "--pause", help="停頓斷句間隔 (秒)"),
+    out_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設為影音同目錄)"),
+):
+    """【一鍵全流程】影片 ➔ 提取音訊 ➔ Whisper 辨識 ➔ 智慧斷句 ➔ 匯出 JSON & SRT"""
+    input_p = Path(media_path).resolve()
+    if not input_p.exists():
+        console.print(f"[bold red]找不到檔案: {media_path}[/bold red]")
+        raise typer.Exit(code=1)
+
+    target_dir = Path(out_dir).resolve() if out_dir else input_p.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = input_p.stem
+
+    console.rule("[bold cyan]開始執行自動上字幕流水線[/bold cyan]")
+
+    # 1. 音訊處理
+    is_video = input_p.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv"]
+    if is_video:
+        console.print("[1/4] 抽取並轉換音訊 (16kHz Mono WAV)...")
+        wav_path = target_dir / f"{stem}.wav"
+        extract_res = extract_audio(str(input_p), str(wav_path))
+        audio_file = extract_res["audio_path"]
+    else:
+        audio_file = str(input_p)
+
+    # 2. Whisper 語音辨識
+    console.print(f"[2/4] Whisper 語音辨識中 (模型: {model}, 裝置: {device})...")
+    trans_res = transcribe_audio(
+        audio_path=audio_file,
+        model_size=model,
+        device=device,
+        language=language
+    )
+
+    # 3. 智慧斷句
+    console.print(f"[3/4] 智慧斷句切分中 (單行最大 {max_chars} 字, 停頓閥值 {pause}s)...")
+    cfg = SegmentationConfig(max_chars=max_chars, pause_threshold=pause)
+    track = build_subtitle_track(trans_res, cfg)
+
+    # 4. 匯出檔案
+    console.print("[4/4] 匯出檔案 (JSON & SRT)...")
+    json_path = target_dir / f"{stem}.subtitles.json"
+    srt_path = target_dir / f"{stem}.srt"
+    vtt_path = target_dir / f"{stem}.vtt"
+
+    save_file(to_json(track), str(json_path))
+    save_file(to_srt(track), str(srt_path))
+    save_file(to_vtt(track), str(vtt_path))
+
+    console.rule("[bold green]處理完成[/bold green]")
+    console.print(f"  ✔ 總字幕句數: [yellow]{len(track.segments)} 句[/yellow]")
+    console.print(f"  ✔ JSON 資料 (含逐字時間軸): [green]{json_path}[/green]")
+    console.print(f"  ✔ SRT 字幕檔:              [green]{srt_path}[/green]")
+    console.print(f"  ✔ VTT 字幕檔:              [green]{vtt_path}[/green]")
+
+
+if __name__ == "__main__":
+    app()
