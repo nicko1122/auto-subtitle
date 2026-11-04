@@ -1,10 +1,11 @@
+import re
 from pathlib import Path
 from typing import Optional
 from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
 
 
 def hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
-    """將 Hex 顏色 (#RRGGBB) 轉換為 ASS 格式 (&H[AA]BBGGRR&)"""
+    """將 Hex 顏色 (#RRGGBB 或 #RRGGBBAA) 轉換為 ASS 格式 (&H[AA]BBGGRR&)"""
     c = hex_color.lstrip("#")
     if len(c) == 6:
         r, g, b = c[0:2], c[2:4], c[4:6]
@@ -34,6 +35,21 @@ def format_ass_timestamp(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
 
 
+def format_text_for_layout(text: str, orientation: str = "horizontal") -> str:
+    """
+    根據排版方向格式化字幕文字內容：
+    - horizontal: 橫排文字，保留或轉為 ASS 的 \\N 換行
+    - vertical: 直排文字，英數連續詞彙維持塊狀 (Tate-chu-yoko 縱中橫)，中文字元與全形標點垂直堆疊
+    """
+    if orientation != "vertical":
+        return text.replace("\r\n", "\\N").replace("\n", "\\N")
+
+    # 直排處理：將英數字群組 [A-Za-z0-9]+ 保持在一起，其餘單一字元逐一分行
+    tokens = re.findall(r'[A-Za-z0-9]+|.', text, flags=re.DOTALL)
+    clean_tokens = [t for t in tokens if t not in ('\r', '\n')]
+    return "\\N".join(clean_tokens)
+
+
 def to_ass(
     track: SubtitleTrack,
     style: Optional[SubtitleStyle] = None,
@@ -41,7 +57,7 @@ def to_ass(
     res_y: int = 1080
 ) -> str:
     """
-    將 SubtitleTrack 轉換為支援精確樣式與座標定位的 ASS (Advanced SubStation Alpha) 格式
+    將 SubtitleTrack 轉換為支援 Web Box Model (Padding、九宮格對齊、直排/橫排) 的 ASS 格式
     """
     if style is None:
         style = SubtitleStyle()
@@ -54,13 +70,27 @@ def to_ass(
     bold_val = -1 if style.bold else 0
     italic_val = -1 if style.italic else 0
 
-    # 樣式定義行
+    # 1. 計算九宮格對齊碼 (1~9)
+    alignment = style.ass_alignment
+
+    # 2. 計算與畫面邊界的內距 (Padding -> Margin)
+    if style.vertical_align == "top":
+        margin_v = style.padding_top
+    elif style.vertical_align == "bottom":
+        margin_v = style.padding_bottom
+    else:
+        margin_v = max(style.padding_top, style.padding_bottom)
+
+    margin_l = style.padding_left
+    margin_r = style.padding_right
+
+    # 3. 組合 ASS Style 定義行
     style_line = (
         f"Style: Default,{style.font_name},{style.font_size},"
         f"{pri_col},{sec_col},{out_col},{bak_col},"
-        f"{bold_val},{italic_val},0,0,100,100,0,0,1,"
+        f"{bold_val},{italic_val},0,0,100,100,{style.letter_spacing},0,1,"
         f"{style.outline_width},{style.shadow_offset},"
-        f"{style.alignment},{style.margin_l},{style.margin_r},{style.margin_v},1"
+        f"{alignment},{margin_l},{margin_r},{margin_v},1"
     )
 
     header = f"""[Script Info]
@@ -83,11 +113,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         start_str = format_ass_timestamp(seg.start)
         end_str = format_ass_timestamp(seg.end)
 
+        # 依排版方向 (horizontal / vertical) 轉換文字
+        formatted_text = format_text_for_layout(seg.text, orientation=style.orientation)
+
         # 若指定了精準絕對座標 (pos_x, pos_y)，使用 ASS 的 \\pos(x, y) 覆蓋標記
         if style.pos_x is not None and style.pos_y is not None:
-            text_field = f"{{\\pos({style.pos_x},{style.pos_y})}}{seg.text}"
+            text_field = f"{{\\pos({style.pos_x},{style.pos_y})}}{formatted_text}"
         else:
-            text_field = seg.text
+            text_field = formatted_text
 
         event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
 

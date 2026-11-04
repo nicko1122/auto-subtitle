@@ -358,19 +358,25 @@ def burn_cmd(
     video_path: str = typer.Argument(..., help="來源影片檔案路徑 (MP4, MOV 等)"),
     subtitle_path: str = typer.Argument(..., help="字幕檔案路徑 (.srt, .vtt, 或 .json)"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出影片路徑 (預設為同目錄 .hardsub.mp4)"),
+    direction: str = typer.Option("horizontal", "--direction", "-d", help="排版方向: horizontal (橫式), vertical (直式)"),
+    valign: str = typer.Option("bottom", "--valign", help="垂直對齊: top (靠頂/齊頭), middle (垂直置中), bottom (靠底)"),
+    halign: str = typer.Option("center", "--halign", help="水平對齊: left (靠左), center (水平置中), right (靠右)"),
+    padding: Optional[str] = typer.Option(None, "--padding", help="CSS 邊距簡寫 (如 '50 40' 或 '40' 或 '50 40 60 40')"),
+    padding_top: Optional[int] = typer.Option(None, "--padding-top", help="頂部內距 (像素)"),
+    padding_bottom: Optional[int] = typer.Option(None, "--padding-bottom", help="底部內距 (像素)"),
+    padding_left: Optional[int] = typer.Option(None, "--padding-left", help="左側內距 (像素)"),
+    padding_right: Optional[int] = typer.Option(None, "--padding-right", help="右側內距 (像素)"),
     font: str = typer.Option("Noto Sans CJK TC", "--font", help="字型名稱"),
-    size: int = typer.Option(28, "--size", help="字型大小 (像素)"),
+    size: int = typer.Option(32, "--size", "-s", help="字型大小 (像素)"),
     color: str = typer.Option("#FFFFFF", "--color", help="主要字型顏色 (Hex，如 #FFFFFF, #FFFF00)"),
     outline_color: str = typer.Option("#000000", "--outline-color", help="描邊顏色 (Hex)"),
     outline: float = typer.Option(2.5, "--outline", help="描邊粗細"),
     shadow: float = typer.Option(1.2, "--shadow", help="陰影偏移量"),
-    alignment: int = typer.Option(2, "--align", help="九宮格對齊碼 (1~9，2=底中(預設), 5=正中, 8=頂中)"),
-    margin_v: int = typer.Option(45, "--margin-v", help="垂直邊距 (像素)"),
     pos_x: Optional[int] = typer.Option(None, "--x", help="精準絕對 X 座標 (像素，指定後將覆蓋對齊設定)"),
     pos_y: Optional[int] = typer.Option(None, "--y", help="精準絕對 Y 座標 (像素，指定後將覆蓋對齊設定)"),
     cpu: bool = typer.Option(False, "--cpu", help="強制使用 CPU (預設自動啟用 NVIDIA NVENC 硬體加速)"),
 ):
-    """【Hardcopy 壓制】將字幕硬燒錄進影片中，支援自訂座標、九宮格對齊、字型、色彩與描邊"""
+    """【Hardcopy 壓制】將字幕硬燒錄進影片中，支援 Web 盒模型 Padding、直排/橫排、對齊與自訂外觀"""
     v_path = Path(video_path).resolve()
     s_path = Path(subtitle_path).resolve()
 
@@ -381,28 +387,45 @@ def burn_cmd(
         console.print(f"[bold red]找不到字幕檔案: {subtitle_path}[/bold red]")
         raise typer.Exit(code=1)
 
-    style = SubtitleStyle(
-        font_name=font,
-        font_size=size,
-        primary_color=color,
-        outline_color=outline_color,
-        outline_width=outline,
-        shadow_offset=shadow,
-        alignment=alignment,
-        margin_v=margin_v,
-        pos_x=pos_x,
-        pos_y=pos_y
-    )
+    style_kwargs = {
+        "font_name": font,
+        "font_size": size,
+        "primary_color": color,
+        "outline_color": outline_color,
+        "outline_width": outline,
+        "shadow_offset": shadow,
+        "orientation": direction,
+        "vertical_align": valign,
+        "horizontal_align": halign,
+        "pos_x": pos_x,
+        "pos_y": pos_y
+    }
+    if padding:
+        style_kwargs["padding"] = padding
+    if padding_top is not None:
+        style_kwargs["padding_top"] = padding_top
+    if padding_bottom is not None:
+        style_kwargs["padding_bottom"] = padding_bottom
+    if padding_left is not None:
+        style_kwargs["padding_left"] = padding_left
+    if padding_right is not None:
+        style_kwargs["padding_right"] = padding_right
+
+    style = SubtitleStyle(**style_kwargs)
 
     console.rule("[bold cyan]開始執行影片字幕硬燒錄 (Hardsub)[/bold cyan]")
     console.print(f"  來源影片: [yellow]{v_path}[/yellow]")
     console.print(f"  套用字幕: [yellow]{s_path}[/yellow]")
-    console.print(f"  字型設定: [cyan]{font}[/cyan] ({size}px, 顏色: {color}, 描邊: {outline_color} {outline}px)")
-    
+    console.print(f"  字型外觀: [cyan]{font}[/cyan] ({size}px, 顏色: {color}, 描邊: {outline_color} {outline}px)")
+    console.print(f"  排版方向: [magenta]{'直式 (Vertical)' if style.orientation == 'vertical' else '橫式 (Horizontal)'}[/magenta]")
+
     if pos_x is not None and pos_y is not None:
         console.print(f"  定位模式: [magenta]精準絕對座標 (X={pos_x}, Y={pos_y})[/magenta]")
     else:
-        console.print(f"  定位模式: [magenta]九宮格對齊碼 {alignment} (垂直邊距 {margin_v}px)[/magenta]")
+        align_desc = f"{style.vertical_align}-{style.horizontal_align} (ASS Code: {style.ass_alignment})"
+        padding_desc = f"上={style.padding_top}px, 右={style.padding_right}px, 下={style.padding_bottom}px, 左={style.padding_left}px"
+        console.print(f"  對齊模式: [magenta]{align_desc}[/magenta]")
+        console.print(f"  內距邊界: [magenta]{padding_desc}[/magenta]")
 
     try:
         out_file = burn_subtitles_to_video(
