@@ -1,0 +1,1868 @@
+{
+  "version": "1.0.0",
+  "source_file": "/mnt/d/projects/auto-subtitle/inputclip/audio.wav",
+  "duration": 182.56,
+  "language": "zh",
+  "segments": [
+    {
+      "id": 1,
+      "start": 11.63,
+      "end": 14.87,
+      "text": "牆上的時鐘它,滴答滴答,你和我沙發上,",
+      "words": [
+        {
+          "word": "想",
+          "start": 11.63,
+          "end": 11.73,
+          "probability": 0.533
+        },
+        {
+          "word": "上",
+          "start": 11.73,
+          "end": 11.97,
+          "probability": 0.5
+        },
+        {
+          "word": "的",
+          "start": 11.97,
+          "end": 12.09,
+          "probability": 0.725
+        },
+        {
+          "word": "時",
+          "start": 12.09,
+          "end": 12.31,
+          "probability": 0.133
+        },
+        {
+          "word": "鐘",
+          "start": 12.31,
+          "end": 12.47,
+          "probability": 0.732
+        },
+        {
+          "word": "它",
+          "start": 12.47,
+          "end": 12.75,
+          "probability": 0.502
+        },
+        {
+          "word": " 滴",
+          "start": 12.93,
+          "end": 13.01,
+          "probability": 0.735
+        },
+        {
+          "word": "答",
+          "start": 13.01,
+          "end": 13.15,
+          "probability": 0.787
+        },
+        {
+          "word": "滴",
+          "start": 13.15,
+          "end": 13.35,
+          "probability": 0.994
+        },
+        {
+          "word": "答",
+          "start": 13.35,
+          "end": 13.83,
+          "probability": 0.999
+        },
+        {
+          "word": "你",
+          "start": 13.83,
+          "end": 14.23,
+          "probability": 0.917
+        },
+        {
+          "word": "和",
+          "start": 14.23,
+          "end": 14.41,
+          "probability": 0.991
+        },
+        {
+          "word": "我",
+          "start": 14.41,
+          "end": 14.55,
+          "probability": 0.975
+        },
+        {
+          "word": "沙",
+          "start": 14.55,
+          "end": 14.77,
+          "probability": 0.775
+        },
+        {
+          "word": "發",
+          "start": 14.77,
+          "end": 14.87,
+          "probability": 0.89
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "start": 14.87,
+      "end": 18.59,
+      "text": "兩端晃啊晃,像是隔著太平洋,想不想啊",
+      "words": [
+        {
+          "word": "上",
+          "start": 14.87,
+          "end": 15.13,
+          "probability": 0.54
+        },
+        {
+          "word": "兩",
+          "start": 15.13,
+          "end": 15.47,
+          "probability": 0.467
+        },
+        {
+          "word": "段",
+          "start": 15.47,
+          "end": 15.59,
+          "probability": 0.956
+        },
+        {
+          "word": "荒",
+          "start": 15.59,
+          "end": 15.83,
+          "probability": 0.879
+        },
+        {
+          "word": "涼",
+          "start": 15.83,
+          "end": 15.95,
+          "probability": 0.265
+        },
+        {
+          "word": "荒",
+          "start": 15.95,
+          "end": 16.21,
+          "probability": 0.991
+        },
+        {
+          "word": "涼",
+          "start": 16.21,
+          "end": 16.51,
+          "probability": 0.836
+        },
+        {
+          "word": "像",
+          "start": 16.51,
+          "end": 16.87,
+          "probability": 0.717
+        },
+        {
+          "word": "是",
+          "start": 16.87,
+          "end": 17.07,
+          "probability": 0.97
+        },
+        {
+          "word": "隔",
+          "start": 17.07,
+          "end": 17.25,
+          "probability": 0.924
+        },
+        {
+          "word": "著",
+          "start": 17.25,
+          "end": 17.39,
+          "probability": 0.948
+        },
+        {
+          "word": "開",
+          "start": 17.39,
+          "end": 17.55,
+          "probability": 0.58
+        },
+        {
+          "word": "平",
+          "start": 17.55,
+          "end": 17.77,
+          "probability": 0.847
+        },
+        {
+          "word": "洋",
+          "start": 17.77,
+          "end": 18.05,
+          "probability": 0.965
+        },
+        {
+          "word": "啊",
+          "start": 18.05,
+          "end": 18.33,
+          "probability": 0.393
+        },
+        {
+          "word": " 想",
+          "start": 18.47,
+          "end": 18.59,
+          "probability": 0.812
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "start": 18.59,
+      "end": 22.39,
+      "text": "不想啊我想戳破這,自己的感覺啊",
+      "words": [
+        {
+          "word": "不",
+          "start": 18.59,
+          "end": 18.77,
+          "probability": 0.998
+        },
+        {
+          "word": "想",
+          "start": 18.77,
+          "end": 19.03,
+          "probability": 0.969
+        },
+        {
+          "word": "啊",
+          "start": 19.03,
+          "end": 19.45,
+          "probability": 0.912
+        },
+        {
+          "word": "我想",
+          "start": 19.45,
+          "end": 19.85,
+          "probability": 0.907
+        },
+        {
+          "word": "戳",
+          "start": 19.85,
+          "end": 20.05,
+          "probability": 0.913
+        },
+        {
+          "word": "破",
+          "start": 20.05,
+          "end": 20.21,
+          "probability": 0.991
+        },
+        {
+          "word": "這",
+          "start": 20.21,
+          "end": 20.51,
+          "probability": 0.825
+        },
+        {
+          "word": " 自己",
+          "start": 20.81,
+          "end": 20.99,
+          "probability": 0.971
+        },
+        {
+          "word": "的",
+          "start": 20.99,
+          "end": 21.29,
+          "probability": 0.999
+        },
+        {
+          "word": "感覺",
+          "start": 21.29,
+          "end": 21.73,
+          "probability": 0.991
+        },
+        {
+          "word": "啊",
+          "start": 21.73,
+          "end": 22.39,
+          "probability": 0.848
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "start": 22.85,
+      "end": 26.75,
+      "text": "你的腦袋裝什麼,沒搞懂我的世界在下,",
+      "words": [
+        {
+          "word": "你的",
+          "start": 22.85,
+          "end": 23.29,
+          "probability": 0.826
+        },
+        {
+          "word": "腦",
+          "start": 23.29,
+          "end": 23.59,
+          "probability": 0.993
+        },
+        {
+          "word": "袋",
+          "start": 23.59,
+          "end": 23.73,
+          "probability": 0.999
+        },
+        {
+          "word": "裝",
+          "start": 23.73,
+          "end": 23.91,
+          "probability": 0.975
+        },
+        {
+          "word": "什麼",
+          "start": 23.91,
+          "end": 24.21,
+          "probability": 0.958
+        },
+        {
+          "word": " 沒",
+          "start": 24.51,
+          "end": 24.69,
+          "probability": 0.982
+        },
+        {
+          "word": "搞",
+          "start": 24.69,
+          "end": 25.03,
+          "probability": 0.941
+        },
+        {
+          "word": "懂",
+          "start": 25.03,
+          "end": 25.49,
+          "probability": 0.977
+        },
+        {
+          "word": "我的",
+          "start": 25.49,
+          "end": 26.13,
+          "probability": 0.96
+        },
+        {
+          "word": "世界",
+          "start": 26.13,
+          "end": 26.49,
+          "probability": 0.995
+        },
+        {
+          "word": "在",
+          "start": 26.49,
+          "end": 26.75,
+          "probability": 0.963
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "start": 26.75,
+      "end": 30.29,
+      "text": "學愛驚動同一個戰場上兩個人交著火,幾乎理解被命運推到邊緣",
+      "words": [
+        {
+          "word": "下",
+          "start": 26.75,
+          "end": 27.13,
+          "probability": 0.928
+        },
+        {
+          "word": " 學",
+          "start": 27.33,
+          "end": 27.41,
+          "probability": 0.389
+        },
+        {
+          "word": "愛",
+          "start": 27.41,
+          "end": 27.63,
+          "probability": 0.907
+        },
+        {
+          "word": "驚",
+          "start": 27.63,
+          "end": 27.79,
+          "probability": 0.407
+        },
+        {
+          "word": "動",
+          "start": 27.79,
+          "end": 28.33,
+          "probability": 0.985
+        },
+        {
+          "word": "同",
+          "start": 28.33,
+          "end": 28.71,
+          "probability": 0.878
+        },
+        {
+          "word": "一個",
+          "start": 28.71,
+          "end": 28.99,
+          "probability": 0.967
+        },
+        {
+          "word": "戰",
+          "start": 28.99,
+          "end": 29.23,
+          "probability": 0.868
+        },
+        {
+          "word": "場",
+          "start": 29.23,
+          "end": 29.35,
+          "probability": 0.985
+        },
+        {
+          "word": "上",
+          "start": 29.35,
+          "end": 29.55,
+          "probability": 0.952
+        },
+        {
+          "word": "兩個",
+          "start": 29.55,
+          "end": 29.79,
+          "probability": 0.701
+        },
+        {
+          "word": "人",
+          "start": 29.79,
+          "end": 30.11,
+          "probability": 0.998
+        },
+        {
+          "word": "交",
+          "start": 30.11,
+          "end": 30.29,
+          "probability": 0.43
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "start": 30.29,
+      "end": 34.25,
+      "text": "著火沒交 幾乎理解被命運推到邊緣",
+      "words": [
+        {
+          "word": "著",
+          "start": 30.29,
+          "end": 30.41,
+          "probability": 0.872
+        },
+        {
+          "word": "火",
+          "start": 30.41,
+          "end": 30.71,
+          "probability": 0.741
+        },
+        {
+          "word": "沒",
+          "start": 30.71,
+          "end": 30.95,
+          "probability": 0.855
+        },
+        {
+          "word": "交",
+          "start": 30.95,
+          "end": 31.21,
+          "probability": 0.422
+        },
+        {
+          "word": " 幾",
+          "start": 31.43,
+          "end": 31.49,
+          "probability": 0.419
+        },
+        {
+          "word": "乎",
+          "start": 31.49,
+          "end": 31.55,
+          "probability": 0.929
+        },
+        {
+          "word": "理",
+          "start": 31.55,
+          "end": 31.73,
+          "probability": 0.965
+        },
+        {
+          "word": "解",
+          "start": 31.73,
+          "end": 31.85,
+          "probability": 0.996
+        },
+        {
+          "word": "被",
+          "start": 31.85,
+          "end": 32.03,
+          "probability": 0.747
+        },
+        {
+          "word": "命",
+          "start": 32.03,
+          "end": 32.25,
+          "probability": 0.989
+        },
+        {
+          "word": "運",
+          "start": 32.25,
+          "end": 32.47,
+          "probability": 0.999
+        },
+        {
+          "word": "推",
+          "start": 32.47,
+          "end": 32.73,
+          "probability": 0.652
+        },
+        {
+          "word": "到",
+          "start": 32.73,
+          "end": 32.91,
+          "probability": 0.768
+        },
+        {
+          "word": "邊",
+          "start": 32.91,
+          "end": 33.17,
+          "probability": 0.955
+        },
+        {
+          "word": "緣",
+          "start": 33.17,
+          "end": 34.25,
+          "probability": 0.884
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "start": 34.25,
+      "end": 37.99,
+      "text": "大樓傾倒路段，明軒一線那一秒對，上演心照不宣本能再深處理，合作。",
+      "words": [
+        {
+          "word": "大",
+          "start": 34.25,
+          "end": 34.55,
+          "probability": 0.919
+        },
+        {
+          "word": "樓",
+          "start": 34.55,
+          "end": 34.67,
+          "probability": 0.795
+        },
+        {
+          "word": "傾",
+          "start": 34.67,
+          "end": 34.89,
+          "probability": 0.584
+        },
+        {
+          "word": " 推",
+          "start": 35.13,
+          "end": 35.23,
+          "probability": 0.652
+        },
+        {
+          "word": "路",
+          "start": 35.23,
+          "end": 35.37,
+          "probability": 0.86
+        },
+        {
+          "word": "段",
+          "start": 35.37,
+          "end": 35.65,
+          "probability": 0.722
+        },
+        {
+          "word": " 明",
+          "start": 35.85,
+          "end": 35.91,
+          "probability": 0.485
+        },
+        {
+          "word": "軒",
+          "start": 35.91,
+          "end": 36.07,
+          "probability": 0.664
+        },
+        {
+          "word": "一",
+          "start": 36.07,
+          "end": 36.31,
+          "probability": 0.914
+        },
+        {
+          "word": "線",
+          "start": 36.31,
+          "end": 36.75,
+          "probability": 0.947
+        },
+        {
+          "word": "那",
+          "start": 36.75,
+          "end": 37.37,
+          "probability": 0.949
+        },
+        {
+          "word": "一",
+          "start": 37.37,
+          "end": 37.53,
+          "probability": 0.946
+        },
+        {
+          "word": "秒",
+          "start": 37.53,
+          "end": 37.75,
+          "probability": 0.982
+        },
+        {
+          "word": "對",
+          "start": 37.75,
+          "end": 37.99,
+          "probability": 0.635
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "start": 37.99,
+      "end": 41.71,
+      "text": "無間這是你我之間，微抹起對話，不對。",
+      "words": [
+        {
+          "word": "上",
+          "start": 37.99,
+          "end": 38.21,
+          "probability": 0.955
+        },
+        {
+          "word": "演",
+          "start": 38.21,
+          "end": 38.43,
+          "probability": 0.209
+        },
+        {
+          "word": " 心",
+          "start": 38.65,
+          "end": 38.75,
+          "probability": 0.769
+        },
+        {
+          "word": "照",
+          "start": 38.75,
+          "end": 38.91,
+          "probability": 0.381
+        },
+        {
+          "word": "不",
+          "start": 38.91,
+          "end": 39.13,
+          "probability": 0.991
+        },
+        {
+          "word": "懸",
+          "start": 39.13,
+          "end": 39.63,
+          "probability": 0.64
+        },
+        {
+          "word": "本",
+          "start": 39.63,
+          "end": 40.15,
+          "probability": 0.818
+        },
+        {
+          "word": "能",
+          "start": 40.15,
+          "end": 40.31,
+          "probability": 0.994
+        },
+        {
+          "word": "再",
+          "start": 40.31,
+          "end": 40.57,
+          "probability": 0.566
+        },
+        {
+          "word": "深",
+          "start": 40.57,
+          "end": 40.83,
+          "probability": 0.599
+        },
+        {
+          "word": "處",
+          "start": 40.83,
+          "end": 41.01,
+          "probability": 0.377
+        },
+        {
+          "word": "理",
+          "start": 41.01,
+          "end": 41.29,
+          "probability": 0.896
+        },
+        {
+          "word": " 合",
+          "start": 41.49,
+          "end": 41.59,
+          "probability": 0.959
+        },
+        {
+          "word": "作",
+          "start": 41.59,
+          "end": 41.71,
+          "probability": 0.993
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "start": 41.71,
+      "end": 45.07,
+      "text": "沒有感覺管它現在到底是誰，這溫度冷的臉，必須都切當。世界只剩下一片漆黑，沒有感覺管。",
+      "words": [
+        {
+          "word": "無",
+          "start": 41.71,
+          "end": 42.01,
+          "probability": 0.84
+        },
+        {
+          "word": "間",
+          "start": 42.01,
+          "end": 42.33,
+          "probability": 0.777
+        },
+        {
+          "word": "這是",
+          "start": 42.33,
+          "end": 42.69,
+          "probability": 0.572
+        },
+        {
+          "word": "你",
+          "start": 42.69,
+          "end": 42.95,
+          "probability": 0.965
+        },
+        {
+          "word": "我",
+          "start": 42.95,
+          "end": 43.13,
+          "probability": 0.663
+        },
+        {
+          "word": "之",
+          "start": 43.13,
+          "end": 43.37,
+          "probability": 0.84
+        },
+        {
+          "word": "間",
+          "start": 43.37,
+          "end": 43.51,
+          "probability": 0.998
+        },
+        {
+          "word": " 微",
+          "start": 43.65,
+          "end": 43.73,
+          "probability": 0.532
+        },
+        {
+          "word": "抹",
+          "start": 43.73,
+          "end": 44.05,
+          "probability": 0.665
+        },
+        {
+          "word": "起",
+          "start": 44.05,
+          "end": 44.21,
+          "probability": 0.82
+        },
+        {
+          "word": "對",
+          "start": 44.21,
+          "end": 44.39,
+          "probability": 0.411
+        },
+        {
+          "word": "話",
+          "start": 44.39,
+          "end": 44.55,
+          "probability": 0.412
+        },
+        {
+          "word": "不對",
+          "start": 44.55,
+          "end": 45.07,
+          "probability": 0.976
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "start": 45.83,
+      "end": 49.33,
+      "text": "沒有感覺管它現在到底是誰這溫度冷",
+      "words": [
+        {
+          "word": "沒有",
+          "start": 45.83,
+          "end": 46.29,
+          "probability": 0.946
+        },
+        {
+          "word": "感覺",
+          "start": 46.29,
+          "end": 46.59,
+          "probability": 0.55
+        },
+        {
+          "word": "管",
+          "start": 46.59,
+          "end": 46.89,
+          "probability": 0.595
+        },
+        {
+          "word": "它",
+          "start": 46.89,
+          "end": 47.01,
+          "probability": 0.413
+        },
+        {
+          "word": "現在",
+          "start": 47.01,
+          "end": 47.23,
+          "probability": 0.897
+        },
+        {
+          "word": "到底",
+          "start": 47.23,
+          "end": 47.65,
+          "probability": 0.987
+        },
+        {
+          "word": "是",
+          "start": 47.65,
+          "end": 47.93,
+          "probability": 0.992
+        },
+        {
+          "word": "誰",
+          "start": 47.93,
+          "end": 48.47,
+          "probability": 0.997
+        },
+        {
+          "word": "這",
+          "start": 48.47,
+          "end": 48.81,
+          "probability": 0.489
+        },
+        {
+          "word": "溫",
+          "start": 48.81,
+          "end": 48.99,
+          "probability": 0.984
+        },
+        {
+          "word": "度",
+          "start": 48.99,
+          "end": 49.15,
+          "probability": 0.973
+        },
+        {
+          "word": "冷",
+          "start": 49.15,
+          "end": 49.33,
+          "probability": 0.893
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "start": 49.33,
+      "end": 50.21,
+      "text": "的臉 必須都",
+      "words": [
+        {
+          "word": "的",
+          "start": 49.33,
+          "end": 49.51,
+          "probability": 0.849
+        },
+        {
+          "word": "臉",
+          "start": 49.51,
+          "end": 49.69,
+          "probability": 0.967
+        },
+        {
+          "word": " 必",
+          "start": 49.87,
+          "end": 49.87,
+          "probability": 0.161
+        },
+        {
+          "word": "須",
+          "start": 49.87,
+          "end": 49.99,
+          "probability": 0.816
+        },
+        {
+          "word": "都",
+          "start": 49.99,
+          "end": 50.21,
+          "probability": 0.291
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "start": 53.96,
+      "end": 58.18,
+      "text": "切當世界只剩下一片漆黑沒有感覺管",
+      "words": [
+        {
+          "word": "切",
+          "start": 53.96,
+          "end": 54.18,
+          "probability": 0.268
+        },
+        {
+          "word": "當",
+          "start": 54.18,
+          "end": 54.42,
+          "probability": 0.668
+        },
+        {
+          "word": "世界",
+          "start": 54.42,
+          "end": 54.74,
+          "probability": 0.917
+        },
+        {
+          "word": "只",
+          "start": 54.74,
+          "end": 54.94,
+          "probability": 0.938
+        },
+        {
+          "word": "剩",
+          "start": 54.94,
+          "end": 55.1,
+          "probability": 1.0
+        },
+        {
+          "word": "下一",
+          "start": 55.1,
+          "end": 55.68,
+          "probability": 0.995
+        },
+        {
+          "word": "片",
+          "start": 55.68,
+          "end": 55.84,
+          "probability": 0.824
+        },
+        {
+          "word": "漆",
+          "start": 55.84,
+          "end": 56.04,
+          "probability": 0.842
+        },
+        {
+          "word": "黑",
+          "start": 56.04,
+          "end": 56.76,
+          "probability": 0.999
+        },
+        {
+          "word": "沒有",
+          "start": 56.76,
+          "end": 57.52,
+          "probability": 0.853
+        },
+        {
+          "word": "感覺",
+          "start": 57.52,
+          "end": 57.9,
+          "probability": 0.976
+        },
+        {
+          "word": "管",
+          "start": 57.9,
+          "end": 58.18,
+          "probability": 0.997
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "start": 58.18,
+      "end": 58.9,
+      "text": "它現在大,真的。",
+      "words": [
+        {
+          "word": "它",
+          "start": 58.18,
+          "end": 58.32,
+          "probability": 0.99
+        },
+        {
+          "word": "現在",
+          "start": 58.32,
+          "end": 58.54,
+          "probability": 0.996
+        },
+        {
+          "word": "大",
+          "start": 58.54,
+          "end": 58.9,
+          "probability": 0.745
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "start": 66.74,
+      "end": 71.08,
+      "text": "一片漆黑寂寞蔓延在心中，破碎。",
+      "words": [
+        {
+          "word": "一",
+          "start": 66.74,
+          "end": 67.0,
+          "probability": 0.951
+        },
+        {
+          "word": "片",
+          "start": 67.0,
+          "end": 67.14,
+          "probability": 0.997
+        },
+        {
+          "word": "漆",
+          "start": 67.14,
+          "end": 67.38,
+          "probability": 0.998
+        },
+        {
+          "word": "黑",
+          "start": 67.38,
+          "end": 67.9,
+          "probability": 1.0
+        },
+        {
+          "word": "寂",
+          "start": 67.9,
+          "end": 68.22,
+          "probability": 0.964
+        },
+        {
+          "word": "寞",
+          "start": 68.22,
+          "end": 68.4,
+          "probability": 0.996
+        },
+        {
+          "word": "在",
+          "start": 68.4,
+          "end": 68.56,
+          "probability": 0.948
+        },
+        {
+          "word": "蔓",
+          "start": 68.56,
+          "end": 68.8,
+          "probability": 0.947
+        },
+        {
+          "word": "延",
+          "start": 68.8,
+          "end": 69.04,
+          "probability": 0.986
+        },
+        {
+          "word": "內",
+          "start": 69.04,
+          "end": 69.32,
+          "probability": 0.815
+        },
+        {
+          "word": "心",
+          "start": 69.32,
+          "end": 69.68,
+          "probability": 0.959
+        },
+        {
+          "word": "在",
+          "start": 69.68,
+          "end": 69.96,
+          "probability": 0.57
+        },
+        {
+          "word": "破",
+          "start": 69.96,
+          "end": 70.18,
+          "probability": 0.951
+        },
+        {
+          "word": "碎",
+          "start": 70.18,
+          "end": 70.66,
+          "probability": 0.995
+        },
+        {
+          "word": "我要",
+          "start": 70.66,
+          "end": 71.08,
+          "probability": 0.622
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "start": 71.08,
+      "end": 73.5,
+      "text": "我要偷說這感情沒得追。",
+      "words": [
+        {
+          "word": "要",
+          "start": 71.08,
+          "end": 71.4,
+          "probability": 0.78
+        },
+        {
+          "word": "偷",
+          "start": 71.4,
+          "end": 71.66,
+          "probability": 0.842
+        },
+        {
+          "word": "說",
+          "start": 71.66,
+          "end": 71.88,
+          "probability": 0.639
+        },
+        {
+          "word": "這",
+          "start": 71.88,
+          "end": 72.1,
+          "probability": 0.594
+        },
+        {
+          "word": "感",
+          "start": 72.1,
+          "end": 72.32,
+          "probability": 0.96
+        },
+        {
+          "word": "情",
+          "start": 72.32,
+          "end": 72.6,
+          "probability": 0.999
+        },
+        {
+          "word": "沒",
+          "start": 72.6,
+          "end": 72.84,
+          "probability": 0.596
+        },
+        {
+          "word": "得",
+          "start": 72.84,
+          "end": 73.04,
+          "probability": 0.93
+        },
+        {
+          "word": "追",
+          "start": 73.04,
+          "end": 73.5,
+          "probability": 0.748
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "start": 74.02,
+      "end": 77.28,
+      "text": "身子在鬥,眼神放空，假不沉重，我們",
+      "words": [
+        {
+          "word": "身",
+          "start": 74.02,
+          "end": 74.4,
+          "probability": 0.304
+        },
+        {
+          "word": "子",
+          "start": 74.4,
+          "end": 74.56,
+          "probability": 0.926
+        },
+        {
+          "word": "在",
+          "start": 74.56,
+          "end": 74.82,
+          "probability": 0.632
+        },
+        {
+          "word": "鬥",
+          "start": 74.82,
+          "end": 75.18,
+          "probability": 0.574
+        },
+        {
+          "word": " 眼",
+          "start": 75.4,
+          "end": 75.44,
+          "probability": 0.951
+        },
+        {
+          "word": "神",
+          "start": 75.44,
+          "end": 75.6,
+          "probability": 0.939
+        },
+        {
+          "word": "放",
+          "start": 75.6,
+          "end": 75.84,
+          "probability": 0.942
+        },
+        {
+          "word": "空",
+          "start": 75.84,
+          "end": 76.26,
+          "probability": 0.995
+        },
+        {
+          "word": "假",
+          "start": 76.26,
+          "end": 76.5,
+          "probability": 0.903
+        },
+        {
+          "word": "不",
+          "start": 76.5,
+          "end": 76.7,
+          "probability": 0.79
+        },
+        {
+          "word": "沉",
+          "start": 76.7,
+          "end": 76.9,
+          "probability": 0.338
+        },
+        {
+          "word": "重",
+          "start": 76.9,
+          "end": 77.02,
+          "probability": 0.975
+        },
+        {
+          "word": " 我們",
+          "start": 77.02,
+          "end": 77.28,
+          "probability": 0.547
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "start": 77.28,
+      "end": 80.58,
+      "text": "穿過這座水，你從零開始發著風，你這一腳我",
+      "words": [
+        {
+          "word": "穿",
+          "start": 77.28,
+          "end": 77.58,
+          "probability": 0.965
+        },
+        {
+          "word": "過",
+          "start": 77.58,
+          "end": 77.78,
+          "probability": 0.994
+        },
+        {
+          "word": "這",
+          "start": 77.78,
+          "end": 77.96,
+          "probability": 0.967
+        },
+        {
+          "word": "座",
+          "start": 77.96,
+          "end": 78.06,
+          "probability": 0.746
+        },
+        {
+          "word": "水",
+          "start": 78.06,
+          "end": 78.24,
+          "probability": 0.957
+        },
+        {
+          "word": "你",
+          "start": 78.24,
+          "end": 78.44,
+          "probability": 0.175
+        },
+        {
+          "word": "從",
+          "start": 78.44,
+          "end": 78.64,
+          "probability": 0.639
+        },
+        {
+          "word": "零",
+          "start": 78.64,
+          "end": 78.76,
+          "probability": 0.796
+        },
+        {
+          "word": "發",
+          "start": 78.76,
+          "end": 79.0,
+          "probability": 0.638
+        },
+        {
+          "word": "著",
+          "start": 79.0,
+          "end": 79.14,
+          "probability": 0.569
+        },
+        {
+          "word": "風",
+          "start": 79.14,
+          "end": 79.48,
+          "probability": 0.537
+        },
+        {
+          "word": "你",
+          "start": 79.48,
+          "end": 79.9,
+          "probability": 0.795
+        },
+        {
+          "word": "這一",
+          "start": 79.9,
+          "end": 80.1,
+          "probability": 0.378
+        },
+        {
+          "word": "腳",
+          "start": 80.1,
+          "end": 80.42,
+          "probability": 0.92
+        },
+        {
+          "word": "我",
+          "start": 80.42,
+          "end": 80.58,
+          "probability": 0.766
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "start": 80.58,
+      "end": 83.58,
+      "text": "迎著風真是拼了臉,穿口氣對象在復",
+      "words": [
+        {
+          "word": "迎",
+          "start": 80.58,
+          "end": 80.74,
+          "probability": 0.241
+        },
+        {
+          "word": "著",
+          "start": 80.74,
+          "end": 80.92,
+          "probability": 0.982
+        },
+        {
+          "word": "風",
+          "start": 80.92,
+          "end": 81.24,
+          "probability": 0.994
+        },
+        {
+          "word": "真",
+          "start": 81.24,
+          "end": 81.78,
+          "probability": 0.652
+        },
+        {
+          "word": "是",
+          "start": 81.78,
+          "end": 81.96,
+          "probability": 0.803
+        },
+        {
+          "word": "拼",
+          "start": 81.96,
+          "end": 82.18,
+          "probability": 0.822
+        },
+        {
+          "word": "了",
+          "start": 82.18,
+          "end": 82.36,
+          "probability": 0.991
+        },
+        {
+          "word": "臉",
+          "start": 82.36,
+          "end": 82.54,
+          "probability": 0.971
+        },
+        {
+          "word": " 穿",
+          "start": 82.64,
+          "end": 82.68,
+          "probability": 0.761
+        },
+        {
+          "word": "口",
+          "start": 82.68,
+          "end": 82.88,
+          "probability": 0.546
+        },
+        {
+          "word": "氣",
+          "start": 82.88,
+          "end": 83.04,
+          "probability": 0.467
+        },
+        {
+          "word": "對",
+          "start": 83.04,
+          "end": 83.2,
+          "probability": 0.494
+        },
+        {
+          "word": "象",
+          "start": 83.2,
+          "end": 83.36,
+          "probability": 0.678
+        },
+        {
+          "word": "在",
+          "start": 83.36,
+          "end": 83.44,
+          "probability": 0.665
+        },
+        {
+          "word": "復",
+          "start": 83.44,
+          "end": 83.58,
+          "probability": 0.689
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "start": 83.58,
+      "end": 84.46,
+      "text": "興那樣重",
+      "words": [
+        {
+          "word": "興",
+          "start": 83.58,
+          "end": 83.74,
+          "probability": 0.402
+        },
+        {
+          "word": "那",
+          "start": 83.74,
+          "end": 83.94,
+          "probability": 0.79
+        },
+        {
+          "word": "樣",
+          "start": 83.94,
+          "end": 84.08,
+          "probability": 0.975
+        },
+        {
+          "word": "重",
+          "start": 84.08,
+          "end": 84.46,
+          "probability": 0.589
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "start": 84.92,
+      "end": 88.96,
+      "text": "那你看前面那個路口轉過街角路 燈還亮著可",
+      "words": [
+        {
+          "word": "那",
+          "start": 84.92,
+          "end": 85.36,
+          "probability": 0.944
+        },
+        {
+          "word": "你看",
+          "start": 85.36,
+          "end": 85.6,
+          "probability": 0.963
+        },
+        {
+          "word": "前",
+          "start": 85.6,
+          "end": 86.04,
+          "probability": 0.37
+        },
+        {
+          "word": "面",
+          "start": 86.04,
+          "end": 86.2,
+          "probability": 0.996
+        },
+        {
+          "word": "那個",
+          "start": 86.2,
+          "end": 86.5,
+          "probability": 0.823
+        },
+        {
+          "word": "路",
+          "start": 86.5,
+          "end": 86.78,
+          "probability": 0.983
+        },
+        {
+          "word": "口",
+          "start": 86.78,
+          "end": 87.22,
+          "probability": 0.996
+        },
+        {
+          "word": "轉",
+          "start": 87.22,
+          "end": 87.44,
+          "probability": 0.712
+        },
+        {
+          "word": "過",
+          "start": 87.44,
+          "end": 87.62,
+          "probability": 0.986
+        },
+        {
+          "word": "街",
+          "start": 87.62,
+          "end": 87.92,
+          "probability": 0.927
+        },
+        {
+          "word": "角",
+          "start": 87.92,
+          "end": 88.24,
+          "probability": 0.997
+        },
+        {
+          "word": "路",
+          "start": 88.24,
+          "end": 88.62,
+          "probability": 0.708
+        },
+        {
+          "word": " 燈",
+          "start": 88.82,
+          "end": 88.96,
+          "probability": 0.788
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "start": 88.96,
+      "end": 90.9,
+      "text": "得去 可沒人敢示弱想弄的灰 散又墜落面具下沉默 誰都不敢說多",
+      "words": [
+        {
+          "word": "還",
+          "start": 88.96,
+          "end": 89.28,
+          "probability": 0.885
+        },
+        {
+          "word": "亮",
+          "start": 89.28,
+          "end": 89.52,
+          "probability": 0.934
+        },
+        {
+          "word": "著",
+          "start": 89.52,
+          "end": 90.2,
+          "probability": 0.992
+        },
+        {
+          "word": "可",
+          "start": 90.2,
+          "end": 90.9,
+          "probability": 0.135
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "start": 125.55,
+      "end": 129.25,
+      "text": "到哪裡去 都冷的發",
+      "words": [
+        {
+          "word": "得",
+          "start": 125.55,
+          "end": 125.73,
+          "probability": 0.868
+        },
+        {
+          "word": "去",
+          "start": 125.73,
+          "end": 125.97,
+          "probability": 0.644
+        },
+        {
+          "word": " 可",
+          "start": 126.15,
+          "end": 126.23,
+          "probability": 0.978
+        },
+        {
+          "word": "沒",
+          "start": 126.23,
+          "end": 126.45,
+          "probability": 0.916
+        },
+        {
+          "word": "人",
+          "start": 126.45,
+          "end": 126.63,
+          "probability": 0.995
+        },
+        {
+          "word": "敢",
+          "start": 126.63,
+          "end": 126.75,
+          "probability": 0.87
+        },
+        {
+          "word": "示",
+          "start": 126.75,
+          "end": 127.07,
+          "probability": 0.844
+        },
+        {
+          "word": "弱",
+          "start": 127.07,
+          "end": 127.65,
+          "probability": 0.983
+        },
+        {
+          "word": "想",
+          "start": 127.65,
+          "end": 128.07,
+          "probability": 0.741
+        },
+        {
+          "word": "弄",
+          "start": 128.07,
+          "end": 128.37,
+          "probability": 0.99
+        },
+        {
+          "word": "的",
+          "start": 128.37,
+          "end": 128.57,
+          "probability": 0.612
+        },
+        {
+          "word": "灰",
+          "start": 128.57,
+          "end": 128.77,
+          "probability": 0.625
+        },
+        {
+          "word": " 想",
+          "start": 128.93,
+          "end": 129.03,
+          "probability": 0.434
+        },
+        {
+          "word": "瀟",
+          "start": 129.03,
+          "end": 129.25,
+          "probability": 0.674
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "start": 129.25,
+      "end": 133.41,
+      "text": "散又墜落面具下沉默 誰都不敢說多",
+      "words": [
+        {
+          "word": "散",
+          "start": 129.25,
+          "end": 129.45,
+          "probability": 0.794
+        },
+        {
+          "word": "又",
+          "start": 129.45,
+          "end": 129.61,
+          "probability": 0.861
+        },
+        {
+          "word": "墜",
+          "start": 129.61,
+          "end": 129.83,
+          "probability": 0.992
+        },
+        {
+          "word": "落",
+          "start": 129.83,
+          "end": 130.41,
+          "probability": 1.0
+        },
+        {
+          "word": "面",
+          "start": 130.41,
+          "end": 130.87,
+          "probability": 0.432
+        },
+        {
+          "word": "具",
+          "start": 130.87,
+          "end": 131.11,
+          "probability": 0.912
+        },
+        {
+          "word": "下",
+          "start": 131.11,
+          "end": 131.39,
+          "probability": 0.9
+        },
+        {
+          "word": "沉",
+          "start": 131.39,
+          "end": 131.63,
+          "probability": 0.93
+        },
+        {
+          "word": "默",
+          "start": 131.63,
+          "end": 131.85,
+          "probability": 0.92
+        },
+        {
+          "word": " 誰",
+          "start": 131.99,
+          "end": 132.07,
+          "probability": 0.995
+        },
+        {
+          "word": "都",
+          "start": 132.07,
+          "end": 132.29,
+          "probability": 0.987
+        },
+        {
+          "word": "不",
+          "start": 132.29,
+          "end": 132.47,
+          "probability": 0.997
+        },
+        {
+          "word": "敢",
+          "start": 132.47,
+          "end": 132.71,
+          "probability": 0.988
+        },
+        {
+          "word": "說",
+          "start": 132.71,
+          "end": 133.05,
+          "probability": 0.965
+        },
+        {
+          "word": "多",
+          "start": 133.05,
+          "end": 133.41,
+          "probability": 0.728
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "start": 133.41,
+      "end": 135.15,
+      "text": "到哪裡去 都冷的發",
+      "words": [
+        {
+          "word": "到",
+          "start": 133.41,
+          "end": 133.81,
+          "probability": 0.306
+        },
+        {
+          "word": "哪裡",
+          "start": 133.81,
+          "end": 134.11,
+          "probability": 0.697
+        },
+        {
+          "word": "去",
+          "start": 134.11,
+          "end": 134.41,
+          "probability": 0.783
+        },
+        {
+          "word": " 都",
+          "start": 134.55,
+          "end": 134.59,
+          "probability": 0.988
+        },
+        {
+          "word": "冷",
+          "start": 134.59,
+          "end": 134.79,
+          "probability": 0.97
+        },
+        {
+          "word": "的",
+          "start": 134.79,
+          "end": 134.93,
+          "probability": 0.439
+        },
+        {
+          "word": "發",
+          "start": 134.93,
+          "end": 135.15,
+          "probability": 0.37
+        }
+      ]
+    }
+  ]
+}

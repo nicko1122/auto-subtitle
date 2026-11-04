@@ -184,10 +184,14 @@ def align_script_to_audio(
     """
     # 讀取原稿行
     text = script_text_or_path
-    from pathlib import Path
-    p = Path(script_text_or_path)
-    if p.exists() and p.is_file():
-        text = p.read_text(encoding="utf-8")
+    if "\n" not in script_text_or_path and len(script_text_or_path) < 260:
+        try:
+            from pathlib import Path
+            p = Path(script_text_or_path)
+            if p.exists() and p.is_file():
+                text = p.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            pass
 
     raw_lines = [line.strip() for line in text.splitlines()]
     script_lines = [l for l in raw_lines if l]

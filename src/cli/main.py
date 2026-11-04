@@ -14,6 +14,7 @@ from src.core.audio_extractor import extract_audio, check_ffmpeg
 from src.core.transcriber import transcribe_audio
 from src.core.segmenter import build_subtitle_track
 from src.core.aligner import align_script_to_audio
+from src.core.proofreader import SubtitleProofreader
 from src.core.exporter import to_srt, to_vtt, to_json, save_file
 from src.schemas.subtitle import SegmentationConfig, SubtitleTrack
 
@@ -295,6 +296,59 @@ def align_cmd(
     table.add_column("對齊後原稿文字", style="green")
     for seg in track.segments[:6]:
         table.add_row(str(seg.id), f"{seg.start:.2f}s -> {seg.end:.2f}s", seg.text)
+    console.print(table)
+
+
+@app.command("proofread")
+def proofread_cmd(
+    input_file: str = typer.Argument(..., help="來源檔案 (可為 .subtitles.json、.srt 或影音檔)"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出檔案路徑 (預設輸出 .proofread.srt)"),
+    batch_size: int = typer.Option(8, "-b", "--batch-size", help="每次批次送入 LLM 校對的字幕句數"),
+    gpu_layers: int = typer.Option(-1, "--gpu-layers", help="GPU 卸載層數 (-1 為全層放 GPU)"),
+):
+    """【無稿模式】使用本地 Edge LLM (Qwen2.5) 自動校正逐字稿錯別字與同音字"""
+    input_p = Path(input_file).resolve()
+    if not input_p.exists():
+        console.print(f"[bold red]找不到輸入檔案: {input_file}[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.rule("[bold cyan]開始執行【無稿模式】Edge LLM 智慧校對[/bold cyan]")
+
+    # 1. 取得 SubtitleTrack
+    if input_p.suffix.lower() == ".json":
+        data = json.loads(input_p.read_text(encoding="utf-8"))
+        track = SubtitleTrack(**data)
+    else:
+        # 假設為影音檔，先跑 pipeline 核心
+        console.print(f"[1/3] 執行快速語音辨識與切分...")
+        trans_res = transcribe_audio(str(input_p), model_size="small", device="cuda", initial_prompt="繁體中文")
+        track = build_subtitle_track(trans_res)
+
+    console.print(f"[2/3] 載入本地 Qwen2.5-3B-Instruct 模型 (GPU 全速加速)...")
+    proofreader = SubtitleProofreader(n_gpu_layers=gpu_layers)
+
+    console.print(f"[3/3] 正在逐批校對字幕 (共 {len(track.segments)} 句)...")
+    
+    with console.status("[bold green]Edge LLM 思考校對中...") as status:
+        proofread_track = proofreader.proofread_track(track, batch_size=batch_size)
+
+    # 匯出
+    out_file = output or str(input_p.parent / f"{input_p.stem}.proofread.srt")
+    out_json = str(input_p.parent / f"{input_p.stem}.proofread.json")
+
+    save_file(to_srt(proofread_track), out_file)
+    save_file(to_json(proofread_track), out_json)
+
+    console.rule("[bold green]校對完成[/bold green]")
+    console.print(f"  ✔ 校對後 SRT:  [green]{out_file}[/green]")
+    console.print(f"  ✔ 校對後 JSON: [green]{out_json}[/green]")
+
+    table = Table(title="校對前後對照預覽 (前 6 句)")
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("校對前文字", style="yellow")
+    table.add_column("Qwen2.5 校對後文字", style="bold green")
+    for orig, corr in zip(track.segments[:6], proofread_track.segments[:6]):
+        table.add_row(str(orig.id), orig.text, corr.text)
     console.print(table)
 
 
