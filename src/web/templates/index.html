@@ -82,38 +82,43 @@
         <div class="flex items-center gap-2">
           <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
           <span id="video-filename" class="font-medium text-zinc-200">即時影音預覽畫布</span>
-          <span id="video-resolution-pill" class="text-zinc-500 hidden">(1920x1080)</span>
+          <span id="video-resolution-pill" class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono hidden"></span>
         </div>
         <div class="flex items-center gap-3">
-          <span class="text-zinc-500 text-[11px]">可直接拖放影片/SRT至此視窗</span>
+          <span class="text-zinc-500 text-[11px]">原生比例錨定渲染</span>
         </div>
       </div>
 
-      <!-- 影片播放器與字幕疊加層核心容器 -->
-      <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-[380px]">
+      <!-- 影片播放器畫布容器 (支援任何比例：橫式 16:9、直式 9:16、4:3、1:1) -->
+      <div class="flex-1 bg-zinc-950 flex items-center justify-center p-3 overflow-hidden relative" id="video-viewport">
         
-        <!-- HTML5 Video 元素 -->
-        <video 
-          id="main-video" 
-          class="w-full h-full object-contain max-h-[68vh]"
-          preload="metadata"
-          playsinline
-        >
-          您的瀏覽器不支援 HTML5 影片播放。
-        </video>
+        <!-- 影片原生比例舞台 (Video Stage)：寬高 100% 貼合影片實體畫布，絕無虛擬黑邊干擾字幕！ -->
+        <div id="video-stage" class="relative inline-flex items-center justify-center max-w-full max-h-[68vh] shadow-2xl transition-all">
+          
+          <!-- HTML5 Video 元素 (保持原生寬高比，不強迫全幅變形) -->
+          <video 
+            id="main-video" 
+            class="max-w-full max-h-[68vh] block rounded bg-black"
+            preload="metadata"
+            playsinline
+          >
+            您的瀏覽器不支援 HTML5 影片播放。
+          </video>
 
-        <!-- 即時字幕疊加渲染層 (即時呈現 CSS 樣式、陰影、描邊與 X/Y 座標) -->
-        <div id="subtitle-overlay-container" class="absolute inset-0 flex pointer-events-none p-6">
-          <div id="subtitle-overlay" class="transition-all duration-75 text-center leading-normal">
-            <!-- 動態插入字幕文字 -->
+          <!-- 即時字幕疊加渲染層：精確 100% 貼合在影片實體畫面上！ -->
+          <div id="subtitle-overlay-container" class="absolute inset-0 flex pointer-events-none overflow-hidden">
+            <div id="subtitle-overlay" class="transition-all duration-75 text-center leading-normal">
+              <!-- 動態插入字幕文字 -->
+            </div>
           </div>
-        </div>
 
-        <!-- 初始無影片時的佔位提示 -->
-        <div id="video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 gap-3">
-          <svg class="w-16 h-16 stroke-current text-zinc-700" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
-          <p class="text-sm">可直接將 <span class="text-blue-400 font-semibold">Video + SRT</span> 拖曳丟入此處，將直接載入時間軸！</p>
-          <p class="text-xs text-zinc-600">或從右側【資產管理】瀏覽已上傳資產庫</p>
+          <!-- 初始無影片時的佔位提示 -->
+          <div id="video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 text-zinc-500 gap-3 min-w-[320px] min-h-[240px]">
+            <svg class="w-16 h-16 stroke-current text-zinc-700" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+            <p class="text-sm font-medium text-zinc-400">可直接將 <span class="text-blue-400 font-semibold">Video + SRT</span> 拖入此處</p>
+            <p class="text-xs text-zinc-600">或從右側【資產庫】點選載入</p>
+          </div>
+
         </div>
 
       </div>

@@ -186,11 +186,37 @@ function initPlayer() {
     state.video.duration = v.duration;
     state.video.width = v.videoWidth || 1920;
     state.video.height = v.videoHeight || 1080;
-    el.videoResolutionPill.textContent = `(${state.video.width}x${state.video.height})`;
+
+    // 計算原生長寬比與標籤
+    const ratio = state.video.width / state.video.height;
+    let ratioDesc = "";
+    if (Math.abs(ratio - (16/9)) < 0.05) ratioDesc = " (16:9 橫式)";
+    else if (Math.abs(ratio - (9/16)) < 0.05) ratioDesc = " (9:16 直式)";
+    else if (Math.abs(ratio - (4/3)) < 0.05) ratioDesc = " (4:3)";
+    else if (Math.abs(ratio - 1.0) < 0.05) ratioDesc = " (1:1 正方)";
+    else if (ratio < 0.9) ratioDesc = " (直式)";
+    else ratioDesc = " (橫式)";
+
+    el.videoResolutionPill.textContent = `${state.video.width}x${state.video.height}${ratioDesc}`;
     el.videoResolutionPill.classList.remove("hidden");
     el.placeholder.classList.add("hidden");
     updateSummary();
+
+    // 重新計算字型與座標縮放比，確保預覽與實體影片原樣 100% 貼合
+    applySubtitleStyleToOverlay();
   });
+
+  // 監聽視窗或影片尺寸變更，即時維持等比錨定
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => {
+      applySubtitleStyleToOverlay();
+    });
+    ro.observe(el.video);
+  } else {
+    window.addEventListener("resize", () => {
+      applySubtitleStyleToOverlay();
+    });
+  }
 
   // 進度拖曳
   el.scrubber.addEventListener("input", (e) => {
@@ -217,11 +243,19 @@ function initPlayer() {
   });
 }
 
+// 取得預覽畫面相對於影片原生實體解析度的縮放比例
+function getPreviewScale() {
+  const v = el.video;
+  if (!v || !v.videoHeight || !v.clientHeight) return 1.0;
+  return v.clientHeight / v.videoHeight;
+}
+
 // ---------------- 2. 即時字幕覆蓋層渲染 (CSS Box Model) ----------------
 function applySubtitleStyleToOverlay() {
   const s = state.style;
   const overlay = el.overlay;
   const container = el.overlayContainer;
+  const scale = getPreviewScale();
 
   // 1. 盒模型對齊
   if (s.vertical_align === "top") container.style.alignItems = "flex-start";
@@ -232,24 +266,33 @@ function applySubtitleStyleToOverlay() {
   else if (s.horizontal_align === "right") container.style.justifyContent = "flex-end";
   else container.style.justifyContent = "center";
 
-  container.style.paddingTop = `${s.padding_top}px`;
-  container.style.paddingRight = `${s.padding_right}px`;
-  container.style.paddingBottom = `${s.padding_bottom}px`;
-  container.style.paddingLeft = `${s.padding_left}px`;
+  // 等比縮放內距 (Padding) 邊界，確保在任何解析度下與影片邊緣距離一致
+  const padTop = Math.round(s.padding_top * scale);
+  const padRight = Math.round(s.padding_right * scale);
+  const padBottom = Math.round(s.padding_bottom * scale);
+  const padLeft = Math.round(s.padding_left * scale);
 
-  // 2. 文字外觀與特效
+  container.style.paddingTop = `${padTop}px`;
+  container.style.paddingRight = `${padRight}px`;
+  container.style.paddingBottom = `${padBottom}px`;
+  container.style.paddingLeft = `${padLeft}px`;
+
+  // 2. 文字外觀與特效 (依據影片原生解析度等比縮放)
+  const fontSize = Math.max(10, Math.round(s.font_size * scale));
+  const outlineWidth = Math.max(0.5, (s.outline_width * scale).toFixed(1));
+  const shadowDist = (s.shadow_offset * scale).toFixed(1);
+
   overlay.style.fontFamily = `"${s.font_name}", sans-serif`;
-  overlay.style.fontSize = `${s.font_size}px`;
+  overlay.style.fontSize = `${fontSize}px`;
   overlay.style.color = s.primary_color;
   overlay.style.fontWeight = s.bold ? "bold" : "normal";
   overlay.style.fontStyle = s.italic ? "italic" : "normal";
-  overlay.style.letterSpacing = `${s.letter_spacing}px`;
+  overlay.style.letterSpacing = `${(s.letter_spacing * scale).toFixed(1)}px`;
 
   // 描邊字
-  overlay.style.webkitTextStroke = `${s.outline_width}px ${s.outline_color}`;
+  overlay.style.webkitTextStroke = `${outlineWidth}px ${s.outline_color}`;
 
   // 陰影字
-  const shadowDist = s.shadow_offset;
   overlay.style.textShadow = `${shadowDist}px ${shadowDist}px ${shadowDist * 1.5}px ${s.shadow_color}`;
 
   // 直排 / 橫排
