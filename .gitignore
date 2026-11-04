@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+venv/
+env/
+*.env
+
+# Media & Temp files
+uploads/
+output/
+*.wav
+*.mp3
+*.mp4
+*.mkv
+*.srt
+*.vtt
+
+# Models cache
+models/
+huggingface/
+
+# Node (Frontend)
+node_modules/
+.next/
+dist/
+.DS_Store
