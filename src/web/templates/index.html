@@ -132,6 +132,15 @@
       <!-- 播放器自訂控制面板 (Play, Pause, Scrubber, Time, Volume) -->
       <div class="p-2.5 border-t border-zinc-800 bg-zinc-900/90 flex flex-col gap-1.5 shrink-0">
         <!-- 時間軌進度條 -->
+        <!-- 聲學能量波形與斷點索引視覺條 (點擊可直接定位與選取該段) -->
+        <div id="waveform-bar-wrapper" class="relative w-full h-9 bg-zinc-950/90 border border-zinc-800/90 rounded-lg overflow-hidden cursor-pointer select-none hidden" title="點擊波形可定位播放並選取對應 #Index 段落">
+          <canvas id="waveform-canvas" class="w-full h-full block"></canvas>
+          <div class="absolute top-0.5 left-1.5 text-[9px] font-mono text-zinc-400 pointer-events-none bg-zinc-950/70 px-1 rounded">
+            📊 聲學能量與斷點時間軸 (藍框=選取段 | 紅線=目前播放點)
+          </div>
+        </div>
+
+        <!-- 播放時間進度軸 (Timeline Scrubber) -->
         <div class="flex items-center gap-2">
           <input 
             type="range" 
@@ -198,7 +207,7 @@
           1. 資產管理
         </button>
         <button data-tab="tab-editor" class="tab-btn flex-1 py-2.5 px-3 text-center border-b-2 border-transparent text-zinc-400 hover:text-zinc-200 transition">
-          2. 字幕編輯
+          2. 斷點與字幕
         </button>
         <button data-tab="tab-style" class="tab-btn flex-1 py-2.5 px-3 text-center border-b-2 border-transparent text-zinc-400 hover:text-zinc-200 transition">
           3. 樣式與位置
@@ -313,8 +322,19 @@
             <div class="flex items-center justify-between">
               <span class="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-purple-500"></span>
-                步驟 3：AI 產生或校對字幕 (無現成 SRT 時使用)
+                步驟 3：建立時間軸斷點或產生字幕
               </span>
+            </div>
+
+            <!-- ⭐ 推薦新流程：先抓音訊斷點建 Index -->
+            <div class="p-2.5 bg-gradient-to-r from-cyan-950/50 to-blue-950/40 rounded-lg border border-cyan-500/40 flex items-center justify-between gap-2">
+              <div class="text-[11px] text-cyan-200 leading-snug">
+                <div class="font-semibold text-cyan-300">💡 推薦流程：先抓音訊斷點 (#Index) 再上字</div>
+                <div class="text-[10px] text-zinc-400">1秒標出每句開頭結尾 ➔ 手動聽頭尾微調 ➔ 再貼詞或讓 Whisper 按格填字（解決密集歌詞不成句）</div>
+              </div>
+              <button id="btn-goto-breakpoint-flow" class="px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[11px] font-semibold shrink-0 shadow transition">
+                🔍 分析斷點 ➔
+              </button>
             </div>
 
             <!-- AI 模式切換小頁籤 -->
@@ -380,57 +400,112 @@
         </div>
 
 
-        <!-- ======================= TAB 2: 字幕管理編輯器 ======================= -->
-        <div id="tab-editor" class="tab-pane hidden space-y-3">
+        <!-- ======================= TAB 2: 斷點校對與字幕管理編輯器 ======================= -->
+        <div id="tab-editor" class="tab-pane hidden space-y-2.5">
           
-          <!-- 上方操作列 (完整實作功能) -->
-          <div class="p-2 bg-zinc-950/70 rounded-lg border border-zinc-800 flex flex-wrap items-center gap-1.5">
-            <button id="btn-add-segment" class="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded text-xs transition" title="在目前影片時間插入新字幕">
-              + 新增字幕
-            </button>
-            <button id="btn-merge-segments" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="將目前選取的字幕與下一句合併">
-              合併下一句
-            </button>
-            <button id="btn-split-by-punct" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="將目前選取或含標點的長句拆分為兩句">
-              依標點拆句
-            </button>
-            <div class="flex items-center bg-zinc-900 rounded border border-zinc-800 text-[11px]">
-              <button id="btn-offset-minus" class="px-2 py-1 hover:bg-zinc-800 text-zinc-300 transition" title="全體字幕提前 0.5 秒">-0.5s</button>
-              <span class="text-zinc-600 px-1">平移</span>
-              <button id="btn-offset-plus" class="px-2 py-1 hover:bg-zinc-800 text-zinc-300 transition" title="全體字幕延後 0.5 秒">+0.5s</button>
+          <!-- 【核心流程面板】階段 1：分析音訊斷點建 Index ➔ 階段 2：聽頭尾校對 ➔ 階段 3：依鎖定時間軸填字 -->
+          <div class="p-2.5 bg-gradient-to-br from-zinc-950 to-slate-950 rounded-xl border border-cyan-500/30 space-y-2">
+            <div class="grid grid-cols-2 gap-2">
+              <!-- 左：步驟 1 分析音訊斷點 -->
+              <div class="p-2 bg-zinc-900/90 rounded-lg border border-zinc-800 space-y-1.5">
+                <div class="flex items-center justify-between text-[11px]">
+                  <span class="font-semibold text-cyan-300">步驟 1：抓音訊斷點 (#Index)</span>
+                  <select id="select-breakpoint-mode" class="bg-zinc-950 text-zinc-200 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px]">
+                    <option value="dense">密集歌詞 / 快歌</option>
+                    <option value="balanced" selected>一般標準 (推薦)</option>
+                    <option value="slow">慢歌拖音 / 抒情</option>
+                  </select>
+                </div>
+                <button id="btn-analyze-breakpoints" class="w-full py-1.5 px-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-semibold flex items-center justify-center gap-1 shadow shadow-cyan-500/20 transition">
+                  <span>🔍 分析音訊斷點 (建立時間軸)</span>
+                </button>
+              </div>
+
+              <!-- 右：步驟 3 依鎖定時間軸填字 -->
+              <div class="p-2 bg-zinc-900/90 rounded-lg border border-zinc-800 space-y-1.5">
+                <div class="flex items-center justify-between text-[10px] text-zinc-300">
+                  <span class="font-semibold text-purple-300 text-[11px]">步驟 3：鎖定時間軸填字</span>
+                  <div class="flex items-center gap-2">
+                    <label class="flex items-center gap-1 cursor-pointer select-none" title="勾選後，您已經手動打好字的段落不會被覆蓋">
+                      <input type="checkbox" id="check-locked-only-empty" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
+                      <span>僅填空白段</span>
+                    </label>
+                    <label class="flex items-center gap-1 cursor-pointer select-none" title="辨識後自動執行 Qwen2.5 錯別字校正">
+                      <input type="checkbox" id="check-locked-proofread" class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
+                      <span>Qwen校對</span>
+                    </label>
+                  </div>
+                </div>
+                <button id="btn-transcribe-locked" class="w-full py-1.5 px-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold flex items-center justify-center gap-1 shadow shadow-purple-500/20 transition" title="嚴格按照下方已校對的每個 #Index 起訖時間與預估字數執行 Whisper 填空，絕不改動時間軸！">
+                  <span>🎙️ 依目前時間軸填入 AI 字幕</span>
+                </button>
+              </div>
             </div>
-            <button id="btn-clear-subtitles" class="px-2.5 py-1 bg-red-900/20 hover:bg-red-900/30 text-red-400 border border-red-800/30 rounded text-xs transition ml-auto">
-              清空
-            </button>
+
+            <!-- 步驟 2：拍點快修工具列 (專供邊聽邊修開頭結尾與切段) -->
+            <div class="pt-1.5 border-t border-zinc-800/80 flex flex-wrap items-center gap-1">
+              <span class="text-[10px] text-zinc-400 font-medium mr-0.5">拍點快修:</span>
+              <button id="btn-set-in-point" class="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded text-[11px] font-mono transition" title="將目前選取段的「起點 (Start)」設為目前播放器時間 (快捷鍵: [ )">
+                [ 設起點
+              </button>
+              <button id="btn-set-out-point" class="px-2 py-1 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded text-[11px] font-mono transition" title="將目前選取段的「終點 (End)」設為目前播放器時間 (快捷鍵: ] )">
+                ] 設終點
+              </button>
+              <button id="btn-split-at-playhead" class="px-2 py-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded text-[11px] transition" title="在目前播放游標時間點將此段切開為兩段，自動吸附聲學波谷 (快捷鍵: S )">
+                ✂️ 游標處切開
+              </button>
+              <button id="btn-merge-segments" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[11px] transition" title="將目前選取的段落與下一段合併">
+                🔗 合併下段
+              </button>
+              <button id="btn-add-segment" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-blue-300 rounded text-[11px] transition" title="在目前影片時間插入新段落">
+                + 新增段
+              </button>
+              <button id="btn-split-by-punct" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded text-[11px] transition" title="將含標點的長句拆分為兩句">
+                標點拆句
+              </button>
+              <div class="flex items-center bg-zinc-900 rounded border border-zinc-800 text-[10px]">
+                <button id="btn-offset-minus" class="px-1.5 py-1 hover:bg-zinc-800 text-zinc-300 transition" title="全體時間軸提前 0.5 秒">-0.5s</button>
+                <button id="btn-offset-plus" class="px-1.5 py-1 hover:bg-zinc-800 text-zinc-300 transition" title="全體時間軸延後 0.5 秒">+0.5s</button>
+              </div>
+              <button id="btn-clear-subtitles" class="px-2 py-1 bg-red-900/20 hover:bg-red-900/30 text-red-400 border border-red-800/30 rounded text-[11px] transition ml-auto">
+                清空
+              </button>
+            </div>
           </div>
 
-          <!-- 檢視切換：逐句時間軸 vs 全文多行文字框 -->
+          <!-- 檢視切換：逐句時間軸 vs 全文多行文字框 (1:1 填入時間軸) -->
           <div class="flex items-center justify-between text-xs px-1">
-            <span class="text-zinc-400">字幕清單 (<span id="editor-seg-count">0</span> 句)</span>
+            <span class="text-zinc-400 flex items-center gap-1.5">
+              <span>時間軸索引 (<span id="editor-seg-count">0</span> 段)</span>
+              <span class="text-[10px] text-zinc-500 font-mono hidden xl:inline">快捷鍵: [ 設起點 | ] 設終點 | S 切開</span>
+            </span>
             <div class="flex gap-2">
-              <button id="btn-view-list" class="text-blue-400 font-semibold underline">逐句時間軸</button>
+              <button id="btn-view-list" class="text-blue-400 font-semibold underline">逐段校對與填字</button>
               <span class="text-zinc-600">|</span>
-              <button id="btn-view-raw" class="text-zinc-500 hover:text-zinc-300">全文文字框</button>
+              <button id="btn-view-raw" class="text-zinc-500 hover:text-zinc-300">貼上多行歌詞 (1:1 依序填入)</button>
             </div>
           </div>
 
           <!-- 逐句時間軸編輯清單 -->
           <div id="segment-list-container" class="space-y-2 pr-1">
             <div class="text-center py-10 text-xs text-zinc-500">
-              尚無字幕資料，可直接拖入 SRT 或至【資產管理】載入
+              請點擊上方【🔍 分析音訊斷點】自動抓出每句開頭結尾，或拖入現成 SRT
             </div>
           </div>
 
           <!-- 全文文字框 -->
-          <div id="raw-text-container" class="hidden">
+          <div id="raw-text-container" class="hidden space-y-2">
+            <div class="text-[11px] text-zinc-400 bg-zinc-900/80 px-2.5 py-1.5 rounded border border-zinc-800">
+              💡 每行文字會 **1 對 1 依序填入** 您已校對好的 `#1, #2, #3...` 時間軸段落中（不會改動時間軸起訖點）。
+            </div>
             <textarea 
               id="raw-subtitle-textarea" 
-              rows="18" 
+              rows="16" 
               class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500 leading-relaxed"
-              placeholder="每行代表一句字幕..."
+              placeholder="在此貼上歌詞或字幕文字（第一行對應 #1，第二行對應 #2...）"
             ></textarea>
-            <button id="btn-apply-raw-text" class="mt-2 w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium transition">
-              套用全文變更至時間軸
+            <button id="btn-apply-raw-text" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition">
+              ✔ 將文字逐行填入目前鎖定的時間軸 (#1 ~ #N)
             </button>
           </div>
 

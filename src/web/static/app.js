@@ -20,6 +20,8 @@ const state = {
   assetFilter: "video", // "video" | "subtitle" | "text" | "all"
   showSamples: false,
   selectedSegmentIndex: 0,
+  waveformPeaks: [],
+  autoPauseAt: null,
   style: {
     font_name: "Noto Sans CJK TC",
     font_size: 36,
@@ -55,6 +57,8 @@ const el = {
   dragDropOverlay: document.getElementById("drag-drop-overlay"),
   overlayContainer: document.getElementById("subtitle-overlay-container"),
   overlay: document.getElementById("subtitle-overlay"),
+  waveformBarWrapper: document.getElementById("waveform-bar-wrapper"),
+  waveformCanvas: document.getElementById("waveform-canvas"),
   scrubber: document.getElementById("video-scrubber"),
   btnPlayPause: document.getElementById("btn-play-pause"),
   iconPlay: document.getElementById("icon-play"),
@@ -98,8 +102,17 @@ const el = {
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
   btnAiAlign: document.getElementById("btn-ai-align"),
   btnAiProofread: document.getElementById("btn-ai-proofread"),
+  btnGotoBreakpointFlow: document.getElementById("btn-goto-breakpoint-flow"),
 
-  // Tab 2: 字幕編輯
+  // Tab 2: 斷點校對與字幕編輯
+  selectBreakpointMode: document.getElementById("select-breakpoint-mode"),
+  btnAnalyzeBreakpoints: document.getElementById("btn-analyze-breakpoints"),
+  checkLockedOnlyEmpty: document.getElementById("check-locked-only-empty"),
+  checkLockedProofread: document.getElementById("check-locked-proofread"),
+  btnTranscribeLocked: document.getElementById("btn-transcribe-locked"),
+  btnSetInPoint: document.getElementById("btn-set-in-point"),
+  btnSetOutPoint: document.getElementById("btn-set-out-point"),
+  btnSplitAtPlayhead: document.getElementById("btn-split-at-playhead"),
   btnAddSegment: document.getElementById("btn-add-segment"),
   btnMergeSegments: document.getElementById("btn-merge-segments"),
   btnSplitByPunct: document.getElementById("btn-split-by-punct"),
@@ -196,6 +209,7 @@ function initPlayer() {
 
   // 播放 / 暫停按鈕
   el.btnPlayPause.addEventListener("click", () => {
+    state.autoPauseAt = null;
     if (v.paused) v.play();
     else v.pause();
   });
@@ -210,13 +224,18 @@ function initPlayer() {
     el.iconPause.classList.add("hidden");
   });
 
-  // 時間與進度條更新
+  // 時間與進度條更新 (含聽頭/聽尾自動停頓與波形游標重繪)
   v.addEventListener("timeupdate", () => {
+    if (state.autoPauseAt !== null && v.currentTime >= state.autoPauseAt) {
+      v.pause();
+      state.autoPauseAt = null;
+    }
     el.timeCurrent.textContent = formatTime(v.currentTime);
     if (v.duration) {
       el.scrubber.value = (v.currentTime / v.duration) * 100;
     }
     updateSubtitleOverlayOnTime(v.currentTime);
+    drawWaveformTimeline();
   });
 
   v.addEventListener("loadedmetadata", () => {
@@ -257,7 +276,7 @@ function initPlayer() {
     applySubtitleStyleToOverlay();
   });
 
-  // 全域鍵盤快捷鍵 (Space 播放/暫停，左右鍵快進退)
+  // 全域鍵盤快捷鍵 (Space 播放/暫停，左右鍵快進退，[ 設起點，] 設終點，S 游標處切開)
   window.addEventListener("keydown", (e) => {
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target.isContentEditable) {
@@ -265,16 +284,51 @@ function initPlayer() {
     }
     if (e.code === "Space") {
       e.preventDefault();
+      state.autoPauseAt = null;
       if (v.paused) v.play();
       else v.pause();
     } else if (e.code === "ArrowLeft" || e.key === "j" || e.key === "J") {
       e.preventDefault();
+      state.autoPauseAt = null;
       v.currentTime = Math.max(0, v.currentTime - 3);
     } else if (e.code === "ArrowRight" || e.key === "l" || e.key === "L") {
       e.preventDefault();
+      state.autoPauseAt = null;
       v.currentTime = Math.min(v.duration || 0, v.currentTime + 3);
+    } else if (e.key === "[") {
+      e.preventDefault();
+      setInPointAtPlayhead();
+    } else if (e.key === "]") {
+      e.preventDefault();
+      setOutPointAtPlayhead();
+    } else if (e.key === "s" || e.key === "S") {
+      e.preventDefault();
+      splitSegmentAtPlayhead();
     }
   });
+
+  // 點擊聲學波形條定位播放並選取對應 #Index 段落
+  if (el.waveformCanvas) {
+    el.waveformCanvas.addEventListener("click", (e) => {
+      const rect = el.waveformCanvas.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+      const dur = v.duration || state.track.duration || 0;
+      if (dur > 0) {
+        const targetTime = ratio * dur;
+        state.autoPauseAt = null;
+        v.currentTime = targetTime;
+        const foundIdx = state.track.segments.findIndex(s => targetTime >= s.start && targetTime <= s.end);
+        if (foundIdx !== -1) {
+          state.selectedSegmentIndex = foundIdx;
+          const seg = state.track.segments[foundIdx];
+          highlightActiveSegmentInList(seg.id);
+          const cardEl = document.getElementById(`seg-card-${seg.id}`);
+          if (cardEl) cardEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        drawWaveformTimeline();
+      }
+    });
+  }
 
   // 畫面大小切換 (Fit, Compact, Large)
   function setPreviewSize(mode) {
@@ -441,11 +495,14 @@ function updateSubtitleOverlayOnTime(currentTime) {
   const activeSeg = state.track.segments.find(seg => currentTime >= seg.start && currentTime <= seg.end);
 
   if (activeSeg) {
-    renderOverlayText(activeSeg.text);
+    const activeIdx = state.track.segments.indexOf(activeSeg);
+    if (activeIdx !== -1) state.selectedSegmentIndex = activeIdx;
+    renderOverlayText(activeSeg.text || `[#${activeSeg.id} 斷點區間]`);
     highlightActiveSegmentInList(activeSeg.id);
   } else {
     if (el.video.paused && state.selectedSegmentIndex >= 0 && state.track.segments[state.selectedSegmentIndex]) {
-      renderOverlayText(state.track.segments[state.selectedSegmentIndex].text);
+      const selSeg = state.track.segments[state.selectedSegmentIndex];
+      renderOverlayText(selSeg.text || "");
     } else {
       el.overlay.textContent = "";
     }
@@ -1107,7 +1164,81 @@ function parseAndSetSrt(srtContent, sourceName = "manual.srt") {
   });
 }
 
-// ---------------- 7. Tab 2: 字幕管理編輯器 ----------------
+// ---------------- 7. Tab 2: 斷點校對與字幕管理編輯器 ----------------
+function drawWaveformTimeline() {
+  if (!el.waveformCanvas || !el.waveformBarWrapper) return;
+  if ((!state.waveformPeaks || !state.waveformPeaks.length) && (!state.track.segments || !state.track.segments.length)) {
+    return;
+  }
+
+  el.waveformBarWrapper.classList.remove("hidden");
+  const canvas = el.waveformCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 480;
+  const h = canvas.clientHeight || 36;
+  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const totalDur = el.video.duration || state.track.duration || 1;
+
+  // 1. 繪製 #Index 段落底色區塊
+  if (state.track.segments && state.track.segments.length > 0) {
+    state.track.segments.forEach((seg, idx) => {
+      const x1 = (seg.start / totalDur) * w;
+      const x2 = Math.max(x1 + 2, (seg.end / totalDur) * w);
+      const isSel = (idx === state.selectedSegmentIndex);
+
+      ctx.fillStyle = isSel ? "rgba(37, 99, 235, 0.32)" : "rgba(16, 185, 129, 0.13)";
+      ctx.fillRect(x1, 0, x2 - x1, h);
+
+      ctx.strokeStyle = isSel ? "rgba(96, 165, 250, 0.9)" : "rgba(52, 211, 153, 0.45)";
+      ctx.lineWidth = isSel ? 1.5 : 1;
+      ctx.strokeRect(x1 + 0.5, 0.5, Math.max(1, x2 - x1 - 1), h - 1);
+    });
+  }
+
+  // 2. 繪製聲學能量峰值柱狀圖
+  if (state.waveformPeaks && state.waveformPeaks.length > 0) {
+    const peaks = state.waveformPeaks;
+    const n = peaks.length;
+    const barW = w / n;
+    ctx.fillStyle = "rgba(148, 163, 184, 0.55)";
+    for (let i = 0; i < n; i++) {
+      const val = peaks[i];
+      const bh = Math.max(2, val * (h - 6));
+      const x = i * barW;
+      const y = h - bh;
+      ctx.fillRect(x, y, Math.max(1, barW - 0.5), bh);
+    }
+  }
+
+  // 3. 繪製目前播放時間紅線游標
+  const curX = ((el.video.currentTime || 0) / totalDur) * w;
+  ctx.strokeStyle = "#f43f5e";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(curX, 0);
+  ctx.lineTo(curX, h);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function auditionWindow(startSec, endSec) {
+  const s = Math.max(0, startSec);
+  const e = Math.max(s + 0.25, endSec);
+  state.autoPauseAt = e;
+  el.video.currentTime = s;
+  el.video.play();
+}
+
 function normalizeTrackSegments() {
   if (!state.track || !state.track.segments) return;
   state.track.segments.sort((a, b) => a.start - b.start);
@@ -1115,6 +1246,9 @@ function normalizeTrackSegments() {
     seg.id = i + 1;
     seg.start = Math.max(0, Number(seg.start.toFixed(2)));
     seg.end = Math.max(seg.start + 0.1, Number(seg.end.toFixed(2)));
+    if (!seg.expected_chars) {
+      seg.expected_chars = Math.max(2, Math.min(22, Math.round((seg.end - seg.start) * 3.3)));
+    }
   });
 }
 
@@ -1128,6 +1262,7 @@ function setSubtitleTrack(track) {
   updateSummary();
   updateWorkspaceSlots();
   renderFilteredAssetLibrary();
+  drawWaveformTimeline();
   saveSessionToStorage();
 
   if (track.segments.length > 0) {
@@ -1140,7 +1275,7 @@ function renderSegmentList() {
   container.innerHTML = "";
 
   if (!state.track.segments.length) {
-    container.innerHTML = `<div class="text-center py-10 text-xs text-zinc-500">尚無字幕資料，可直接拖入 SRT 或至【1. 資產管理】載入</div>`;
+    container.innerHTML = `<div class="text-center py-10 text-xs text-zinc-500">請點擊上方【🔍 分析音訊斷點】自動抓出每句開頭結尾，或拖入現成 SRT</div>`;
     el.rawSubtitleTextarea.value = "";
     return;
   }
@@ -1152,36 +1287,61 @@ function renderSegmentList() {
     card.id = `seg-card-${seg.id}`;
     const isSelected = (idx === state.selectedSegmentIndex);
     card.className = isSelected
-      ? "p-2.5 bg-blue-950/20 border border-blue-500 rounded-lg transition flex flex-col gap-1.5 text-xs"
+      ? "p-2.5 bg-blue-950/25 border border-blue-500 rounded-lg transition flex flex-col gap-1.5 text-xs"
       : "p-2.5 bg-zinc-950/70 border border-zinc-800 rounded-lg hover:border-zinc-700 transition flex flex-col gap-1.5 text-xs";
 
+    const dur = Math.max(0.1, seg.end - seg.start);
+    const expChars = seg.expected_chars || Math.max(2, Math.round(dur * 3.3));
+    const curLen = (seg.text || "").trim().length;
+    const capBadgeText = curLen > 0
+      ? `${dur.toFixed(1)}s • 已填 ${curLen} 字 (建議~${expChars}字)`
+      : `${dur.toFixed(1)}s • 建議約 ${expChars} 字`;
+    const capBadgeColor = (curLen > expChars + 6)
+      ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+      : (curLen > 0 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" : "text-cyan-300 bg-cyan-500/10 border-cyan-500/20");
+
     const topRow = document.createElement("div");
-    topRow.className = "flex items-center justify-between gap-2";
+    topRow.className = "flex items-center justify-between gap-1.5 flex-wrap";
 
     topRow.innerHTML = `
-      <div class="flex items-center gap-1.5">
-        <span class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">#${seg.id}</span>
-        <input type="number" step="0.1" min="0" class="seg-start-input w-16 bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 font-mono text-[11px] text-zinc-300 text-center focus:outline-none focus:border-blue-500" title="起始秒數">
+      <div class="flex items-center gap-1">
+        <span class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 font-semibold font-mono text-[10px]">#${seg.id}</span>
+        <input type="number" step="0.05" min="0" class="seg-start-input w-16 bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 font-mono text-[11px] text-zinc-200 text-center focus:outline-none focus:border-blue-500" title="起點秒數 (支援滾輪微調)">
         <span class="text-zinc-600 text-[10px]">➔</span>
-        <input type="number" step="0.1" min="0" class="seg-end-input w-16 bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 font-mono text-[11px] text-zinc-300 text-center focus:outline-none focus:border-blue-500" title="結束秒數">
+        <input type="number" step="0.05" min="0" class="seg-end-input w-16 bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 font-mono text-[11px] text-zinc-200 text-center focus:outline-none focus:border-blue-500" title="終點秒數 (支援滾輪微調)">
+        <span class="seg-cap-badge px-1.5 py-0.5 rounded border font-mono text-[10px] ${capBadgeColor}">${capBadgeText}</span>
       </div>
       <div class="flex items-center gap-1">
-        <button class="btn-play-seg px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-[11px]" title="定位播放此段">▶ 試聽</button>
-        <button class="btn-del-seg px-1.5 py-0.5 hover:bg-red-950/40 text-red-400 rounded text-[11px]" title="刪除此句">✕</button>
+        <button class="btn-audition-head px-1.5 py-0.5 bg-zinc-800 hover:bg-cyan-900/50 text-cyan-300 border border-zinc-700/80 rounded text-[10px] transition" title="只聽開頭 0.9 秒，確認起點有沒有切太早或太晚">🎧 聽頭</button>
+        <button class="btn-audition-tail px-1.5 py-0.5 bg-zinc-800 hover:bg-amber-900/50 text-amber-300 border border-zinc-700/80 rounded text-[10px] transition" title="只聽結尾最後 0.9 秒，確認拖音有沒有被切斷">🎧 聽尾</button>
+        <button class="btn-play-seg px-1.5 py-0.5 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 rounded text-[10px] transition" title="完整試聽此段並在結尾自動暫停">▶ 整段</button>
+        <button class="btn-del-seg px-1.5 py-0.5 hover:bg-red-950/40 text-zinc-500 hover:text-red-400 rounded text-[10px]" title="刪除此段">✕</button>
       </div>
     `;
 
     const startInput = topRow.querySelector(".seg-start-input");
     const endInput = topRow.querySelector(".seg-end-input");
+    const capBadge = topRow.querySelector(".seg-cap-badge");
     startInput.value = seg.start.toFixed(2);
     endInput.value = seg.end.toFixed(2);
+
+    function refreshCapBadge() {
+      const d = Math.max(0.1, seg.end - seg.start);
+      seg.expected_chars = Math.max(2, Math.min(22, Math.round(d * 3.3)));
+      const cLen = (seg.text || "").trim().length;
+      capBadge.textContent = cLen > 0
+        ? `${d.toFixed(1)}s • 已填 ${cLen} 字 (建議~${seg.expected_chars}字)`
+        : `${d.toFixed(1)}s • 建議約 ${seg.expected_chars} 字`;
+      drawWaveformTimeline();
+    }
 
     startInput.addEventListener("change", (e) => {
       const val = parseFloat(e.target.value);
       if (!isNaN(val) && val >= 0) {
-        seg.start = val;
-        if (seg.end <= seg.start) seg.end = Number((seg.start + 0.5).toFixed(2));
+        seg.start = Number(val.toFixed(2));
+        if (seg.end <= seg.start) seg.end = Number((seg.start + 0.4).toFixed(2));
         endInput.value = seg.end.toFixed(2);
+        refreshCapBadge();
         updateSubtitleSelectDropdown();
         saveSessionToStorage();
       }
@@ -1190,7 +1350,8 @@ function renderSegmentList() {
     endInput.addEventListener("change", (e) => {
       const val = parseFloat(e.target.value);
       if (!isNaN(val) && val > seg.start) {
-        seg.end = val;
+        seg.end = Number(val.toFixed(2));
+        refreshCapBadge();
         updateSubtitleSelectDropdown();
         saveSessionToStorage();
       }
@@ -1198,9 +1359,9 @@ function renderSegmentList() {
 
     const textInput = document.createElement("input");
     textInput.type = "text";
-    textInput.className = "seg-text-input w-full bg-zinc-900 border border-zinc-800/80 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-blue-500";
-    // 使用安全 DOM 屬性賦值，防止雙引號或 HTML 特殊字元截斷
-    textInput.value = seg.text;
+    textInput.className = "seg-text-input w-full bg-zinc-900 border border-zinc-800/80 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-blue-500 placeholder:text-zinc-600";
+    textInput.placeholder = `[#${seg.id} 待填字幕 — 可直接手打 (Enter 跳下一段)，或校對完時間軸後點上方「填入 AI 字幕」]`;
+    textInput.value = seg.text || "";
 
     card.appendChild(topRow);
     card.appendChild(textInput);
@@ -1214,21 +1375,58 @@ function renderSegmentList() {
     textInput.addEventListener("focus", () => {
       state.selectedSegmentIndex = idx;
       highlightActiveSegmentInList(seg.id);
+      drawWaveformTimeline();
+    });
+
+    textInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const nextIdx = idx + 1;
+        if (nextIdx < state.track.segments.length) {
+          const nextSeg = state.track.segments[nextIdx];
+          selectAndJumpToSegment(nextIdx);
+          auditionWindow(nextSeg.start, nextSeg.end);
+          const nextCard = document.getElementById(`seg-card-${nextSeg.id}`);
+          if (nextCard) {
+            const nextInp = nextCard.querySelector(".seg-text-input");
+            if (nextInp) nextInp.focus();
+          }
+        }
+      }
     });
 
     textInput.addEventListener("input", (e) => {
       seg.text = e.target.value;
       el.rawSubtitleTextarea.value = state.track.segments.map(s => s.text).join("\n");
+      refreshCapBadge();
       if (state.selectedSegmentIndex === idx) {
         renderOverlayText(seg.text);
       }
       saveSessionToStorage();
     });
 
+    // 🎧 聽頭 (只播開頭 0.95 秒)
+    topRow.querySelector(".btn-audition-head").addEventListener("click", () => {
+      state.selectedSegmentIndex = idx;
+      highlightActiveSegmentInList(seg.id);
+      renderOverlayText(seg.text || `[#${seg.id} 聽開頭]`);
+      auditionWindow(seg.start, Math.min(seg.end, seg.start + 0.95));
+    });
+
+    // 🎧 聽尾 (只播結尾前 0.95 秒到結束)
+    topRow.querySelector(".btn-audition-tail").addEventListener("click", () => {
+      state.selectedSegmentIndex = idx;
+      highlightActiveSegmentInList(seg.id);
+      renderOverlayText(seg.text || `[#${seg.id} 聽結尾]`);
+      auditionWindow(Math.max(seg.start, seg.end - 0.95), seg.end);
+    });
+
+    // ▶ 整段試聽 (播到該段結束自動暫停)
     topRow.querySelector(".btn-play-seg").addEventListener("click", () => {
-      selectAndJumpToSegment(idx);
-      el.video.currentTime = seg.start;
-      el.video.play();
+      state.selectedSegmentIndex = idx;
+      highlightActiveSegmentInList(seg.id);
+      renderOverlayText(seg.text || `[#${seg.id} 試聽中]`);
+      auditionWindow(seg.start, seg.end);
     });
 
     topRow.querySelector(".btn-del-seg").addEventListener("click", () => {
@@ -1256,11 +1454,241 @@ function selectAndJumpToSegment(index) {
   state.selectedSegmentIndex = index;
   const seg = state.track.segments[index];
   if (seg) {
+    state.autoPauseAt = null;
     el.video.currentTime = seg.start;
     renderOverlayText(seg.text);
     highlightActiveSegmentInList(seg.id);
     el.selectedSubBadge.textContent = `目前選擇: 第 ${seg.id} 句 (${seg.start.toFixed(2)}s)`;
     el.selectSubtitleLine.value = String(index);
+    drawWaveformTimeline();
+  }
+}
+
+// 【拍點快修 1】設目前播放點為選取段的「起點 (In)」
+function setInPointAtPlayhead() {
+  const segs = state.track.segments;
+  const idx = state.selectedSegmentIndex;
+  if (!segs.length || idx < 0 || idx >= segs.length) {
+    addLog("請先選取一個 #Index 段落後再設起點", "error");
+    return;
+  }
+  const cur = segs[idx];
+  const t = Number((el.video.currentTime || 0).toFixed(2));
+  if (t >= cur.end - 0.15) {
+    cur.end = Number((t + 1.5).toFixed(2));
+  }
+  cur.start = t;
+  // 若與前一段重疊，自動收斂前一段的終點
+  if (idx > 0 && segs[idx - 1].end > t) {
+    segs[idx - 1].end = t;
+  }
+  setSubtitleTrack(state.track);
+  auditionWindow(cur.start, Math.min(cur.end, cur.start + 0.9));
+  addLog(`✔ 已將 #${cur.id} 起點設為 ${t.toFixed(2)}s (並自動試聽開頭)`, "success");
+}
+
+// 【拍點快修 2】設目前播放點為選取段的「終點 (Out)」
+function setOutPointAtPlayhead() {
+  const segs = state.track.segments;
+  const idx = state.selectedSegmentIndex;
+  if (!segs.length || idx < 0 || idx >= segs.length) {
+    addLog("請先選取一個 #Index 段落後再設終點", "error");
+    return;
+  }
+  const cur = segs[idx];
+  const t = Number((el.video.currentTime || 0).toFixed(2));
+  if (t <= cur.start + 0.15) {
+    addLog(`終點 (${t}s) 必須大於該段起點 (${cur.start}s)`, "error");
+    return;
+  }
+  cur.end = t;
+  // 若與下一段重疊，自動往後推下一段的起點
+  if (idx + 1 < segs.length && segs[idx + 1].start < t) {
+    segs[idx + 1].start = t;
+    if (segs[idx + 1].end <= t) segs[idx + 1].end = Number((t + 1.2).toFixed(2));
+  }
+  setSubtitleTrack(state.track);
+  auditionWindow(Math.max(cur.start, cur.end - 0.9), cur.end);
+  addLog(`✔ 已將 #${cur.id} 終點設為 ${t.toFixed(2)}s (並自動試聽結尾)`, "success");
+}
+
+// 【拍點快修 3】在目前播放游標處切開為兩段 (自動吸附聲學波谷)
+async function splitSegmentAtPlayhead() {
+  const segs = state.track.segments;
+  if (!segs.length) {
+    addLog("目前尚無時間軸段落可供切分", "error");
+    return;
+  }
+  let playTime = Number((el.video.currentTime || 0).toFixed(2));
+
+  // 優先尋找包含目前播放時間的段落，否則使用目前選取的段落
+  let targetIdx = segs.findIndex(s => playTime > s.start + 0.15 && playTime < s.end - 0.15);
+  if (targetIdx === -1) {
+    const sel = segs[state.selectedSegmentIndex];
+    if (sel && playTime > sel.start + 0.15 && playTime < sel.end - 0.15) {
+      targetIdx = state.selectedSegmentIndex;
+    } else if (sel && (sel.end - sel.start) >= 0.8) {
+      targetIdx = state.selectedSegmentIndex;
+      playTime = Number(((sel.start + sel.end) / 2).toFixed(2));
+    }
+  }
+
+  if (targetIdx === -1) {
+    addLog("請先將播放游標停在要切開的段落中間後再按「✂️ 游標處切開」", "error");
+    return;
+  }
+
+  const cur = segs[targetIdx];
+  // 呼叫後端吸附附近 ±0.18s 的聲學能量波谷
+  if (state.video.path) {
+    try {
+      const res = await fetch("/api/audio/snap-split", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_path: state.video.path, time_sec: playTime })
+      });
+      const data = await res.json();
+      if (data.status === "success" && data.snapped_time > cur.start + 0.2 && data.snapped_time < cur.end - 0.2) {
+        playTime = data.snapped_time;
+      }
+    } catch (e) {
+      // ignore snap fallback
+    }
+  }
+
+  const origEnd = cur.end;
+  const origText = (cur.text || "").trim();
+  let text1 = origText;
+  let text2 = "";
+  if (origText.length >= 4) {
+    const ratio = (playTime - cur.start) / Math.max(0.2, origEnd - cur.start);
+    const cutIdx = Math.max(1, Math.min(origText.length - 1, Math.round(origText.length * ratio)));
+    text1 = origText.slice(0, cutIdx).trim();
+    text2 = origText.slice(cutIdx).trim();
+  }
+
+  cur.end = playTime;
+  cur.text = text1;
+  cur.expected_chars = Math.max(2, Math.round((cur.end - cur.start) * 3.3));
+
+  const newSeg = {
+    id: cur.id + 1,
+    start: playTime,
+    end: origEnd,
+    text: text2,
+    expected_chars: Math.max(2, Math.round((origEnd - playTime) * 3.3)),
+    words: []
+  };
+
+  segs.splice(targetIdx + 1, 0, newSeg);
+  state.selectedSegmentIndex = targetIdx + 1;
+  setSubtitleTrack(state.track);
+  auditionWindow(newSeg.start, Math.min(newSeg.end, newSeg.start + 1.0));
+  addLog(`✂️ 已於聲學波谷 ${playTime.toFixed(2)}s 處切開為 #${targetIdx + 1} 與 #${targetIdx + 2}！`, "success");
+}
+
+// 【階段 1】執行極速音訊斷點分析 (建立 #1 ~ #N 時間軸索引)
+async function runBreakpointAnalysis() {
+  const media = state.video.path;
+  if (!media) {
+    addLog("請先載入或上傳影片後再執行音訊斷點分析", "error");
+    return;
+  }
+
+  const hasTypedText = state.track.segments.some(s => (s.text || "").trim().length > 0);
+  if (hasTypedText) {
+    if (!confirm("重新分析音訊斷點將會建立全新的空白時間軸索引 (#1 ~ #N)，確定要覆蓋目前的字幕嗎？")) {
+      return;
+    }
+  }
+
+  const mode = el.selectBreakpointMode ? el.selectBreakpointMode.value : "balanced";
+  const modeLabel = mode === "dense" ? "密集歌詞/快歌" : (mode === "slow" ? "慢歌拖音" : "一般標準");
+  addLog(`【階段 1：音訊斷點分析】正在以「${modeLabel}」模式掃描 ${state.video.filename} 的發聲區間與換氣波谷...`);
+
+  if (el.btnAnalyzeBreakpoints) {
+    el.btnAnalyzeBreakpoints.disabled = true;
+    el.btnAnalyzeBreakpoints.textContent = "⏳ 掃描聲學斷點中...";
+  }
+
+  try {
+    const res = await fetch("/api/audio/breakpoints", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ media_path: media, mode })
+    });
+    const data = await res.json();
+    if (data.status === "success") {
+      state.waveformPeaks = data.waveform_peaks || [];
+      state.selectedSegmentIndex = 0;
+      setSubtitleTrack(data.track);
+      // 自動切換至 Tab 2 方便使用者立即聽頭尾校對
+      const tab2Btn = document.querySelector('[data-tab="tab-editor"]');
+      if (tab2Btn) tab2Btn.click();
+      addLog(`✔ 斷點分析完成！共抓出 ${data.segment_count} 個發聲段落 (#1 ~ #${data.segment_count})。請用「🎧 聽頭 / 聽尾」確認斷點，確認無誤後即可手打、貼詞或點「🎙️ 依目前時間軸填入 AI 字幕」！`, "success");
+    } else {
+      throw new Error(data.detail || "斷點分析失敗");
+    }
+  } catch (err) {
+    addLog(`斷點分析失敗: ${err.message}`, "error");
+  } finally {
+    if (el.btnAnalyzeBreakpoints) {
+      el.btnAnalyzeBreakpoints.disabled = false;
+      el.btnAnalyzeBreakpoints.innerHTML = `<span>🔍 分析音訊斷點 (建立時間軸)</span>`;
+    }
+  }
+}
+
+// 【階段 3】依目前鎖定時間軸執行受控 Whisper 填空
+async function runLockedTimelineTranscribe() {
+  const media = state.video.path;
+  if (!media) {
+    addLog("請先載入影片後再執行填字", "error");
+    return;
+  }
+  if (!state.track.segments || !state.track.segments.length) {
+    addLog("請先點選左側「🔍 分析音訊斷點」建立時間軸段落後，再執行填字！", "error");
+    return;
+  }
+
+  const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
+  const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
+  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "small";
+
+  addLog(`【階段 3：鎖定時間軸填字】正在嚴格依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (絕不改動起訖時間)...`);
+  if (el.btnTranscribeLocked) {
+    el.btnTranscribeLocked.disabled = true;
+    el.btnTranscribeLocked.textContent = "⏳ 按鎖定時間軸逐段辨識中...";
+  }
+
+  try {
+    const res = await fetch("/api/ai/transcribe-segments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        media_path: media,
+        track: state.track,
+        model: modelSize,
+        device: "cuda",
+        prompt: "繁體中文",
+        only_empty: onlyEmpty,
+        auto_proofread: autoProofread
+      })
+    });
+    const data = await res.json();
+    if (data.status === "success") {
+      setSubtitleTrack(data.track);
+      addLog(`🎉 已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入！時間軸起訖點 100% 保持不變！`, "success");
+    } else {
+      throw new Error(data.detail || "填字失敗");
+    }
+  } catch (err) {
+    addLog(`鎖定時間軸填字失敗: ${err.message}`, "error");
+  } finally {
+    if (el.btnTranscribeLocked) {
+      el.btnTranscribeLocked.disabled = false;
+      el.btnTranscribeLocked.innerHTML = `<span>🎙️ 依目前時間軸填入 AI 字幕</span>`;
+    }
   }
 }
 
@@ -1279,16 +1707,46 @@ function initEditorViewToggle() {
     el.btnViewList.className = "text-zinc-500 hover:text-zinc-300";
   });
 
+  // 1:1 將多行文字依序填入目前鎖定的 #1 ~ #N 時間軸
   el.btnApplyRawText.addEventListener("click", () => {
-    const lines = el.rawSubtitleTextarea.value.split("\n").map(l => l.trim()).filter(Boolean);
-    if (lines.length === state.track.segments.length) {
-      lines.forEach((l, i) => { state.track.segments[i].text = l; });
-      setSubtitleTrack(state.track);
-      addLog("全文文字已更新至時間軸！", "success");
+    const lines = el.rawSubtitleTextarea.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const segs = state.track.segments;
+    if (!segs.length) {
+      addLog("目前尚無時間軸段落，請先執行「🔍 分析音訊斷點」建立時間軸！", "error");
+      return;
+    }
+    const fillCount = Math.min(lines.length, segs.length);
+    for (let i = 0; i < fillCount; i++) {
+      segs[i].text = lines[i];
+    }
+    setSubtitleTrack(state.track);
+    el.btnViewList.click();
+    if (lines.length === segs.length) {
+      addLog(`✔ 已將 ${lines.length} 行文字 1:1 完美填入 #1 ~ #${segs.length} 時間軸！`, "success");
     } else {
-      addLog(`行數 (${lines.length}) 與現有時間軸 (${state.track.segments.length}) 不一致，若需重新對齊請使用 Tab 1【有稿模式】`, "error");
+      addLog(`✔ 已將前 ${fillCount} 行文字依序填入時間軸 (文字共 ${lines.length} 行，時間軸共 ${segs.length} 段)`, "info");
     }
   });
+
+  // 綁定斷點分析、鎖定時間軸填字與拍點快修按鈕
+  if (el.btnAnalyzeBreakpoints) {
+    el.btnAnalyzeBreakpoints.addEventListener("click", runBreakpointAnalysis);
+  }
+  if (el.btnGotoBreakpointFlow) {
+    el.btnGotoBreakpointFlow.addEventListener("click", runBreakpointAnalysis);
+  }
+  if (el.btnTranscribeLocked) {
+    el.btnTranscribeLocked.addEventListener("click", runLockedTimelineTranscribe);
+  }
+  if (el.btnSetInPoint) {
+    el.btnSetInPoint.addEventListener("click", setInPointAtPlayhead);
+  }
+  if (el.btnSetOutPoint) {
+    el.btnSetOutPoint.addEventListener("click", setOutPointAtPlayhead);
+  }
+  if (el.btnSplitAtPlayhead) {
+    el.btnSplitAtPlayhead.addEventListener("click", splitSegmentAtPlayhead);
+  }
 
   // 1. 新增字幕段
   el.btnAddSegment.addEventListener("click", () => {

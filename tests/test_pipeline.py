@@ -3,6 +3,7 @@ from src.core.segmenter import split_words_into_segments, build_subtitle_track
 from src.core.exporter import to_srt, to_vtt, to_json, to_ass, parse_srt_content, split_vertical_columns
 from src.core.aligner import align_script_to_audio
 from src.core.font_manager import get_font_catalog
+from src.core.acoustic_analyzer import analyze_audio_breakpoints, snap_time_to_valley
 
 
 def test_segmentation_by_punctuation():
@@ -122,6 +123,20 @@ def test_font_catalog():
     assert len(catalog["presets"]) >= 5
 
 
+def test_acoustic_breakpoint_analyzer():
+    from pathlib import Path
+    sample_video = Path(__file__).resolve().parent.parent / "inputclip" / "test_video.mp4"
+    if sample_video.exists():
+        res = analyze_audio_breakpoints(str(sample_video), mode="dense")
+        assert res["segment_count"] >= 1
+        assert len(res["waveform_peaks"]) == 360
+        for seg in res["track"].segments:
+            assert seg.end > seg.start
+            assert seg.expected_chars is not None and seg.expected_chars >= 2
+        snapped = snap_time_to_valley(str(sample_video), 13.8)
+        assert abs(snapped - 13.8) <= 0.25
+
+
 if __name__ == "__main__":
     test_segmentation_by_punctuation()
     test_segmentation_by_pause()
@@ -130,4 +145,5 @@ if __name__ == "__main__":
     test_css_and_vertical_ass_wrapping()
     test_aligner_with_band_search()
     test_font_catalog()
+    test_acoustic_breakpoint_analyzer()
     print("All unit tests passed successfully!")

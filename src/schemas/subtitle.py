@@ -15,7 +15,8 @@ class SubtitleSegment(BaseModel):
     id: int = Field(..., description="字幕序號 (從 1 開始)")
     start: float = Field(..., ge=0.0, description="字幕起點 (秒)")
     end: float = Field(..., ge=0.0, description="字幕終點 (秒)")
-    text: str = Field(..., description="字幕文字內容")
+    text: str = Field(default="", description="字幕文字內容")
+    expected_chars: Optional[int] = Field(default=None, description="根據該段聲學時長與密度預估之合理字數")
     words: List[WordItem] = Field(default_factory=list, description="構成該句的逐字時間清單")
 
 

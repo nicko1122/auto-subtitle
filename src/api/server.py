@@ -17,6 +17,11 @@ from ..core.transcriber import transcribe_audio
 from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
 from ..core.proofreader import SubtitleProofreader
+from ..core.acoustic_analyzer import (
+    analyze_audio_breakpoints,
+    snap_time_to_valley,
+    transcribe_on_locked_timeline
+)
 from ..core.video_burner import burn_subtitles_to_video, get_video_info
 from ..core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
 from ..core.css_parser import parse_css_to_style_dict
@@ -92,6 +97,26 @@ class InstallFontRequest(BaseModel):
     preset_id: Optional[str] = None
     url: Optional[str] = None
     filename: Optional[str] = None
+
+
+class BreakpointAnalyzeRequest(BaseModel):
+    media_path: str
+    mode: str = "balanced"  # "dense" | "balanced" | "slow"
+
+
+class SnapSplitRequest(BaseModel):
+    media_path: str
+    time_sec: float
+
+
+class TranscribeLockedRequest(BaseModel):
+    media_path: str
+    track: SubtitleTrack
+    model: str = "small"
+    device: str = "cuda"
+    prompt: str = "繁體中文"
+    only_empty: bool = False
+    auto_proofread: bool = False
 
 
 # ---------------- API Endpoints ----------------
@@ -391,6 +416,56 @@ def _resolve_media_path(media_path: str) -> Path:
     if (INPUTCLIP_DIR / p.name).exists():
         return INPUTCLIP_DIR / p.name
     raise HTTPException(status_code=404, detail=f"找不到檔案: {media_path}")
+
+
+@app.post("/api/audio/breakpoints")
+def analyze_breakpoints_endpoint(req: BreakpointAnalyzeRequest):
+    """【階段一：音訊斷點分析】秒級掃描音訊能量與換氣斷點，建立 #1 ~ #N 時間軸骨架與波形資料"""
+    p = _resolve_media_path(req.media_path)
+    try:
+        res = analyze_audio_breakpoints(str(p), mode=req.mode)
+        return {
+            "status": "success",
+            "mode": res["mode"],
+            "duration": res["duration"],
+            "segment_count": res["segment_count"],
+            "waveform_peaks": res["waveform_peaks"],
+            "track": res["track"].model_dump()
+        }
+    except Exception as e:
+        logger.error(f"音訊斷點分析失敗: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/audio/snap-split")
+def snap_split_endpoint(req: SnapSplitRequest):
+    """在播放游標附近尋找聲學能量最低谷，讓手動切句不會切在字音正中間"""
+    p = _resolve_media_path(req.media_path)
+    try:
+        snapped = snap_time_to_valley(str(p), req.time_sec)
+        return {"status": "success", "snapped_time": snapped}
+    except Exception as e:
+        return {"status": "success", "snapped_time": round(req.time_sec, 2)}
+
+
+@app.post("/api/ai/transcribe-segments")
+def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
+    """【階段三：依鎖定時間軸填字】嚴格依照使用者已確認的每個 #index [start, end] 執行受控 Whisper 填字"""
+    p = _resolve_media_path(req.media_path)
+    try:
+        updated_track = transcribe_on_locked_timeline(
+            media_path=str(p),
+            track=req.track,
+            model_size=req.model,
+            device=req.device,
+            prompt=req.prompt,
+            only_empty=req.only_empty,
+            auto_proofread=req.auto_proofread
+        )
+        return {"status": "success", "track": updated_track.model_dump()}
+    except Exception as e:
+        logger.error(f"依鎖定時間軸辨識失敗: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/ai/transcribe")
