@@ -17,6 +17,13 @@ from src.core.aligner import align_script_to_audio
 from src.core.proofreader import SubtitleProofreader
 from src.core.video_burner import burn_subtitles_to_video
 from src.core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
+from src.core.font_manager import (
+    get_font_catalog,
+    install_font_from_file,
+    install_font_from_url,
+    install_preset_or_windows_font,
+    delete_custom_font
+)
 from src.schemas.subtitle import SegmentationConfig, SubtitleTrack, SubtitleStyle
 
 app = typer.Typer(
@@ -474,6 +481,77 @@ def burn_cmd(
         console.print(f"  ✔ 燒錄影片已產出: [bold green]{out_file}[/bold green]")
     except Exception as e:
         console.print(f"[bold red]壓制失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("fonts")
+def fonts_cmd(
+    action: str = typer.Argument("list", help="動作: list (列出字型清單), install (安裝字型), remove (移除字型)"),
+    target: Optional[str] = typer.Argument(None, help="安裝或移除目標: 精選代號 (如 openhuninn, lxgw-wenkai, iansui, win-msjhbd)、本機 .ttf/.otf 檔案路徑、或下載 URL"),
+):
+    """【字型管理】查看已安裝字型，或一鍵安裝開源繁中字型包、Windows 系統字型與本機 .ttf/.otf 檔案"""
+    action = action.lower().strip()
+
+    if action == "list":
+        catalog = get_font_catalog()
+        console.rule("[bold cyan]AutoSubtitle 字型管理庫[/bold cyan]")
+        console.print(f"專案字型目錄: [yellow]{catalog['fonts_dir']}[/yellow]\n")
+
+        t1 = Table(title="✔ 已安裝可用字型 (Web 預覽 & FFmpeg 燒錄皆可直接指定 --font)")
+        t1.add_column("類型", style="cyan")
+        t1.add_column("Font Family (CLI --font 參數值)", style="bold green")
+        t1.add_column("顯示名稱", style="white")
+        t1.add_column("檔案名稱", style="dim")
+        for f in catalog["installed"]:
+            cat_label = "自訂安裝" if f["category"] == "custom" else "系統內建"
+            t1.add_row(cat_label, f["family"], f["display_name"], f.get("filename") or "-")
+        console.print(t1)
+
+        t2 = Table(title="⬇ 可一鍵安裝之開源繁中字幕字型 (執行: fonts install <代號>)")
+        t2.add_column("代號 (ID)", style="bold yellow")
+        t2.add_column("字型名稱", style="cyan")
+        t2.add_column("狀態", style="green")
+        t2.add_column("特色說明", style="white")
+        for p in catalog["presets"]:
+            status_str = "✔ 已安裝" if p["installed"] else "未安裝"
+            t2.add_row(p["id"], p["display_name"], status_str, p["description"])
+        for w in catalog.get("windows_fonts", []):
+            status_str = "✔ 已匯入" if w["installed"] else "可從本機匯入"
+            t2.add_row(w["id"], w["display_name"], status_str, w["description"])
+        console.print(t2)
+        return
+
+    elif action == "install":
+        if not target:
+            console.print("[bold red]請提供要安裝的字型代號 (如 openhuninn)、本機 .ttf/.otf 路徑或 URL！[/bold red]")
+            raise typer.Exit(code=1)
+
+        console.print(f"[cyan]正在安裝字型: {target}...[/cyan]")
+        try:
+            p = Path(target)
+            if p.exists() and p.is_file():
+                info = install_font_from_file(str(p))
+            elif target.startswith("http://") or target.startswith("https://"):
+                info = install_font_from_url(target)
+            else:
+                info = install_preset_or_windows_font(target)
+            console.print(f"  ✔ 安裝成功！字型家族名稱 (Font Family): [bold green]{info['family']}[/bold green]")
+            console.print(f"  ✔ 儲存位置: [yellow]{info['absolute_path']} ({info['size_mb']} MB)[/yellow]")
+        except Exception as e:
+            console.print(f"[bold red]安裝失敗: {e}[/bold red]")
+            raise typer.Exit(code=1)
+
+    elif action in ("remove", "delete", "rm"):
+        if not target:
+            console.print("[bold red]請提供要移除的字型檔案名稱 (例如 jf-openhuninn-2.0.ttf)[/bold red]")
+            raise typer.Exit(code=1)
+        if delete_custom_font(target):
+            console.print(f"[bold green]✔ 已移除字型檔案: {target}[/bold green]")
+        else:
+            console.print(f"[bold red]找不到自訂字型檔案: {target}[/bold red]")
+            raise typer.Exit(code=1)
+    else:
+        console.print(f"[bold red]不支援的動作: {action} (可用: list, install, remove)[/bold red]")
         raise typer.Exit(code=1)
 
 

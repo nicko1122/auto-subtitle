@@ -128,6 +128,13 @@ const el = {
   inputPadBottom: document.getElementById("input-pad-bottom"),
   inputPadLeft: document.getElementById("input-pad-left"),
   selectFontName: document.getElementById("select-font-name"),
+  btnToggleFontManager: document.getElementById("btn-toggle-font-manager"),
+  fontManagerPanel: document.getElementById("font-manager-panel"),
+  installedFontCountBadge: document.getElementById("installed-font-count-badge"),
+  inputUploadFont: document.getElementById("input-upload-font"),
+  fontCatalogList: document.getElementById("font-catalog-list"),
+  inputFontUrl: document.getElementById("input-font-url"),
+  btnInstallFontUrl: document.getElementById("btn-install-font-url"),
   sliderFontSize: document.getElementById("slider-font-size"),
   valFontSize: document.getElementById("val-font-size"),
   pickerPrimaryColor: document.getElementById("picker-primary-color"),
@@ -824,6 +831,14 @@ async function handleBatchFileUpload(files) {
         if (el.btnModeScripted) el.btnModeScripted.click();
         if (el.alignScriptTextarea) el.alignScriptTextarea.value = s.content;
         addLog(`📄 偵測到原稿檔案 (${s.filename})，已自動載入至「有稿對齊」區！`, "success");
+      }
+
+      // 4. 若上傳包含 TTF / OTF / TTC / WOFF2 字型檔，自動載入字型並套用！
+      if (data.fonts && data.fonts.length > 0) {
+        await loadFontCatalog();
+        const f = data.fonts[0];
+        selectAndApplyFont(f.family, f.display_name);
+        addLog(`🔤 已成功安裝並套用字型：${f.display_name} (${f.family})`, "success");
       }
 
       // 刷新資產庫
@@ -1535,6 +1550,310 @@ function initStyleEditor() {
   });
 
   initPresets();
+  initFontManager();
+}
+
+// ---------------- 8.5 字型安裝與動態 @font-face 管理 ----------------
+function injectDynamicFontFaces(installedFonts) {
+  let styleEl = document.getElementById("dynamic-custom-fonts");
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "dynamic-custom-fonts";
+    document.head.appendChild(styleEl);
+  }
+
+  const rules = [];
+  installedFonts.forEach(f => {
+    if (f.url && f.family) {
+      rules.push(`
+@font-face {
+  font-family: '${f.family.replace(/'/g, "\\'")}';
+  src: url('${f.url}');
+  font-display: swap;
+}`);
+      // 嘗試透過 FontFace API 立即預載入至瀏覽器畫面
+      if (window.FontFace) {
+        try {
+          const ff = new FontFace(f.family, `url("${f.url}")`);
+          ff.load().then(loaded => {
+            document.fonts.add(loaded);
+            applySubtitleStyleToOverlay();
+          }).catch(() => {});
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+  });
+  styleEl.textContent = rules.join("\n");
+}
+
+function populateFontSelectDropdown(installedFonts) {
+  if (!el.selectFontName) return;
+  const currentFont = state.style.font_name || "Noto Sans CJK TC";
+  el.selectFontName.innerHTML = "";
+
+  const customList = installedFonts.filter(f => f.category === "custom");
+  const builtinList = installedFonts.filter(f => f.category !== "custom");
+
+  if (customList.length > 0) {
+    const grpCustom = document.createElement("optgroup");
+    grpCustom.label = `★ 已安裝自訂字型 (${customList.length})`;
+    customList.forEach(f => {
+      const opt = document.createElement("option");
+      opt.value = f.family;
+      opt.textContent = `★ ${f.display_name}`;
+      if (f.family === currentFont) opt.selected = true;
+      grpCustom.appendChild(opt);
+    });
+    el.selectFontName.appendChild(grpCustom);
+  }
+
+  const grpBuiltin = document.createElement("optgroup");
+  grpBuiltin.label = "系統內建字型";
+  builtinList.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.family;
+    opt.textContent = f.display_name;
+    if (f.family === currentFont) opt.selected = true;
+    grpBuiltin.appendChild(opt);
+  });
+  el.selectFontName.appendChild(grpBuiltin);
+
+  if (el.installedFontCountBadge) {
+    el.installedFontCountBadge.textContent = customList.length > 0
+      ? `已安裝 ${customList.length} 款自訂字型`
+      : `目前僅系統字型`;
+  }
+}
+
+function selectAndApplyFont(familyName, displayName) {
+  state.style.font_name = familyName;
+  if (el.selectFontName) {
+    el.selectFontName.value = familyName;
+  }
+  applySubtitleStyleToOverlay();
+  if (displayName) {
+    addLog(`🔤 已切換字幕字型為：${displayName} (${familyName})`, "info");
+  }
+}
+
+function renderFontManagerCatalog(catalog) {
+  if (!el.fontCatalogList) return;
+  el.fontCatalogList.innerHTML = "";
+
+  const allItems = [
+    ...(catalog.presets || []).map(p => ({ ...p, sourceType: "preset" })),
+    ...(catalog.windows_fonts || []).map(w => ({ ...w, sourceType: "windows" }))
+  ];
+
+  // 也找出使用者自己上傳但不在 presets 清單中的自訂字型
+  const presetFilenames = new Set(allItems.map(x => x.filename));
+  const userUploadedCustom = (catalog.installed || []).filter(
+    f => f.category === "custom" && !presetFilenames.has(f.filename)
+  );
+
+  userUploadedCustom.forEach(u => {
+    allItems.unshift({
+      id: u.id,
+      family: u.family,
+      display_name: u.display_name,
+      filename: u.filename,
+      description: `使用者上傳字型檔 (${u.size_mb} MB)`,
+      installed: true,
+      sourceType: "uploaded"
+    });
+  });
+
+  allItems.forEach(item => {
+    const row = document.createElement("div");
+    const isCurrent = (state.style.font_name === item.family && item.installed);
+    row.className = isCurrent
+      ? "flex items-center justify-between p-2 rounded bg-indigo-950/40 border border-indigo-500/50 transition"
+      : "flex items-center justify-between p-2 rounded bg-zinc-950/80 border border-zinc-800/90 hover:border-zinc-700 transition";
+
+    const tagHtml = item.sourceType === "windows"
+      ? `<span class="text-[9px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">本機 Windows</span>`
+      : (item.sourceType === "uploaded"
+        ? `<span class="text-[9px] px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">手動上傳</span>`
+        : `<span class="text-[9px] px-1 py-0.2 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">開源商用</span>`);
+
+    row.innerHTML = `
+      <div class="overflow-hidden pr-2 flex-1">
+        <div class="font-medium text-zinc-200 flex items-center gap-1.5 truncate">
+          <span class="truncate" style="${item.installed ? `font-family: '${item.family}', sans-serif;` : ''}">${item.display_name}</span>
+          ${tagHtml}
+        </div>
+        <div class="text-[10px] text-zinc-500 truncate">${item.description || item.family}</div>
+      </div>
+      <div class="flex items-center gap-1 shrink-0">
+        ${item.installed ? `
+          <button class="btn-use-font px-2 py-1 ${isCurrent ? 'bg-indigo-600 text-white' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30'} rounded text-[11px] transition">
+            ${isCurrent ? '✓ 使用中' : '套用此字型'}
+          </button>
+          <button class="btn-del-font px-1.5 py-1 text-zinc-500 hover:text-red-400 rounded text-[11px]" title="移除此字型">✕</button>
+        ` : `
+          <button class="btn-install-preset-font px-2.5 py-1 bg-indigo-600/25 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 rounded text-[11px] font-medium transition">
+            ${item.sourceType === 'windows' ? '📥 一鍵匯入' : '⬇ 一鍵安裝'}
+          </button>
+        `}
+      </div>
+    `;
+
+    const btnInstall = row.querySelector(".btn-install-preset-font");
+    if (btnInstall) {
+      btnInstall.addEventListener("click", async () => {
+        btnInstall.disabled = true;
+        btnInstall.textContent = "⏳ 安裝中...";
+        addLog(`正在安裝字型「${item.display_name}」...`);
+        try {
+          const res = await fetch("/api/fonts/install", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ preset_id: item.id })
+          });
+          const data = await res.json();
+          if (data.status === "success") {
+            applyFontCatalogData(data.catalog);
+            selectAndApplyFont(data.font.family, data.font.display_name);
+            addLog(`✔ 字型「${item.display_name}」安裝完成並已立即套用！`, "success");
+          } else {
+            throw new Error(data.detail || "安裝失敗");
+          }
+        } catch (err) {
+          addLog(`字型安裝失敗: ${err.message}`, "error");
+          btnInstall.disabled = false;
+          btnInstall.textContent = "重試安裝";
+        }
+      });
+    }
+
+    const btnUse = row.querySelector(".btn-use-font");
+    if (btnUse) {
+      btnUse.addEventListener("click", () => {
+        selectAndApplyFont(item.family, item.display_name);
+        renderFontManagerCatalog(catalog);
+      });
+    }
+
+    const btnDel = row.querySelector(".btn-del-font");
+    if (btnDel && item.filename) {
+      btnDel.addEventListener("click", async () => {
+        if (!confirm(`確定要移除字型「${item.display_name}」(${item.filename}) 嗎？`)) return;
+        try {
+          const res = await fetch(`/api/fonts/${encodeURIComponent(item.filename)}`, { method: "DELETE" });
+          const data = await res.json();
+          if (data.status === "success") {
+            if (state.style.font_name === item.family) {
+              state.style.font_name = "Noto Sans CJK TC";
+            }
+            applyFontCatalogData(data.catalog);
+            applySubtitleStyleToOverlay();
+            addLog(`已移除字型: ${item.display_name}`, "info");
+          }
+        } catch (err) {
+          addLog(`移除字型失敗: ${err.message}`, "error");
+        }
+      });
+    }
+
+    el.fontCatalogList.appendChild(row);
+  });
+}
+
+function applyFontCatalogData(catalog) {
+  if (!catalog) return;
+  injectDynamicFontFaces(catalog.installed || []);
+  populateFontSelectDropdown(catalog.installed || []);
+  renderFontManagerCatalog(catalog);
+}
+
+async function loadFontCatalog() {
+  try {
+    const res = await fetch("/api/fonts");
+    const catalog = await res.json();
+    applyFontCatalogData(catalog);
+  } catch (err) {
+    console.error("Failed to load font catalog:", err);
+  }
+}
+
+function initFontManager() {
+  if (el.btnToggleFontManager && el.fontManagerPanel) {
+    el.btnToggleFontManager.addEventListener("click", () => {
+      const isHidden = el.fontManagerPanel.classList.contains("hidden");
+      if (isHidden) {
+        el.fontManagerPanel.classList.remove("hidden");
+        loadFontCatalog();
+      } else {
+        el.fontManagerPanel.classList.add("hidden");
+      }
+    });
+  }
+
+  // 上傳本機 .ttf / .otf / .ttc 字型檔
+  if (el.inputUploadFont) {
+    el.inputUploadFont.addEventListener("change", async (e) => {
+      const files = e.target.files;
+      if (!files || !files.length) return;
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        formData.append("files", files[i]);
+      }
+      addLog(`正在上傳並解析 ${files.length} 個字型檔案...`);
+      try {
+        const res = await fetch("/api/fonts/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.status === "success" && data.installed && data.installed.length > 0) {
+          applyFontCatalogData(data.catalog);
+          const first = data.installed[0];
+          selectAndApplyFont(first.family, first.display_name);
+          addLog(`✔ 成功安裝並套用字型：${first.display_name} (Family: ${first.family})`, "success");
+        } else {
+          throw new Error(data.detail || "上傳字型失敗");
+        }
+      } catch (err) {
+        addLog(`上傳字型失敗: ${err.message}`, "error");
+      } finally {
+        el.inputUploadFont.value = "";
+      }
+    });
+  }
+
+  // 從遠端 URL 下載安裝字型
+  if (el.btnInstallFontUrl && el.inputFontUrl) {
+    el.btnInstallFontUrl.addEventListener("click", async () => {
+      const url = el.inputFontUrl.value.trim();
+      if (!url) {
+        addLog("請先輸入 .ttf 或 .otf 字型下載網址", "error");
+        return;
+      }
+      el.btnInstallFontUrl.disabled = true;
+      el.btnInstallFontUrl.textContent = "下載中...";
+      addLog(`正在從網址下載字型: ${url}...`);
+      try {
+        const res = await fetch("/api/fonts/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          el.inputFontUrl.value = "";
+          applyFontCatalogData(data.catalog);
+          selectAndApplyFont(data.font.family, data.font.display_name);
+          addLog(`✔ 網址字型安裝成功：${data.font.display_name} (${data.font.family})`, "success");
+        } else {
+          throw new Error(data.detail || "下載安裝失敗");
+        }
+      } catch (err) {
+        addLog(`網址安裝字型失敗: ${err.message}`, "error");
+      } finally {
+        el.btnInstallFontUrl.disabled = false;
+        el.btnInstallFontUrl.textContent = "網址安裝";
+      }
+    });
+  }
 }
 
 function syncStateToControls() {
@@ -1785,7 +2104,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   syncStateToControls();
   applySubtitleStyleToOverlay();
 
-  // 1. 讀取並渲染資產庫
+  // 1. 讀取並渲染字型庫與資產庫
+  await loadFontCatalog();
   await loadAssetLibrary();
 
   // 2. 自動載入使用者最新上傳的影片與配對字幕（或還原暫存字幕）

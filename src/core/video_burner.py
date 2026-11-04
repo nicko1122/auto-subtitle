@@ -7,6 +7,7 @@ from typing import Tuple, Optional, Union
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
 from .exporter import to_ass, save_file, parse_srt_content
+from .font_manager import FONTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +112,13 @@ def burn_subtitles_to_video(
     out_v.parent.mkdir(parents=True, exist_ok=True)
 
     # 5. 組裝 FFmpeg 指令
-    # 在 FFmpeg -vf 中使用 ass 濾鏡，路徑中的特殊字元做轉義
+    # 在 FFmpeg -vf 中使用 ass 濾鏡，路徑中的特殊字元做轉義，並掛載專案 fonts/ 自訂字型目錄
     ass_escaped = str(temp_ass_path).replace("\\", "/").replace(":", "\\:")
-    vf_filter = f"ass='{ass_escaped}'"
+    if FONTS_DIR.exists():
+        fonts_escaped = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
+        vf_filter = f"ass='{ass_escaped}':fontsdir='{fonts_escaped}'"
+    else:
+        vf_filter = f"ass='{ass_escaped}'"
 
     gpu_available = use_gpu and check_nvenc_support()
     if gpu_available:

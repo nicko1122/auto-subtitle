@@ -20,6 +20,15 @@ from ..core.proofreader import SubtitleProofreader
 from ..core.video_burner import burn_subtitles_to_video, get_video_info
 from ..core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
 from ..core.css_parser import parse_css_to_style_dict
+from ..core.font_manager import (
+    FONTS_DIR,
+    ALLOWED_FONT_EXTS,
+    get_font_catalog,
+    install_font_from_file,
+    install_font_from_url,
+    install_preset_or_windows_font,
+    delete_custom_font
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("auto-subtitle-api")
@@ -33,7 +42,7 @@ PRESETS_DIR = BASE_DIR / "presets"
 STATIC_DIR = BASE_DIR / "src" / "web" / "static"
 TEMPLATES_DIR = BASE_DIR / "src" / "web" / "templates"
 
-for d in (UPLOADS_DIR, OUTPUT_DIR, TEMP_DIR, STATIC_DIR, TEMPLATES_DIR, PRESETS_DIR):
+for d in (UPLOADS_DIR, OUTPUT_DIR, TEMP_DIR, STATIC_DIR, TEMPLATES_DIR, PRESETS_DIR, FONTS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Auto Subtitle Web Studio", version="1.0.0")
@@ -52,6 +61,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 app.mount("/inputclip", StaticFiles(directory=str(INPUTCLIP_DIR)), name="inputclip")
 app.mount("/presets", StaticFiles(directory=str(PRESETS_DIR)), name="presets")
+app.mount("/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 
 
 # ---------------- API Schemas ----------------
@@ -76,6 +86,12 @@ class AlignRequest(BaseModel):
 class ProofreadRequest(BaseModel):
     track: SubtitleTrack
     batch_size: int = 8
+
+
+class InstallFontRequest(BaseModel):
+    preset_id: Optional[str] = None
+    url: Optional[str] = None
+    filename: Optional[str] = None
 
 
 # ---------------- API Endpoints ----------------
@@ -199,17 +215,39 @@ async def list_css_presets():
 @app.post("/api/upload")
 async def upload_asset(files: List[UploadFile] = File(...)):
     """
-    支援單檔或多檔批量上傳 (影片、音訊、SRT字幕或文字檔)
+    支援單檔或多檔批量上傳 (影片、音訊、SRT字幕、文字檔或 TTF/OTF 字型檔)
     若包含 SRT / VTT 字幕，自動解析為帶有時間軸的 SubtitleTrack 回傳，實現直接載入！
     若包含 TXT 原稿，一併回傳原稿內容供有稿對齊直接使用！
+    若包含 TTF / OTF / TTC / WOFF2 字型檔，自動安裝至專案 fonts/ 目錄並回傳字型家族資訊！
     """
     uploaded_items = []
     parsed_tracks = []
     videos = []
     scripts = []
+    fonts = []
 
     for file in files:
         safe_name = Path(file.filename or "unnamed").name
+        ext = Path(safe_name).suffix.lower()
+
+        # 若為字型檔案 (.ttf / .otf / .ttc / .woff2)，直接安裝至 fonts/ 目錄
+        if ext in ALLOWED_FONT_EXTS:
+            font_dest = FONTS_DIR / safe_name
+            with font_dest.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            font_info = install_font_from_file(str(font_dest), custom_filename=safe_name)
+            fonts.append(font_info)
+            uploaded_items.append({
+                "name": safe_name,
+                "folder": "fonts",
+                "type": "font",
+                "url": font_info["url"],
+                "family": font_info["family"],
+                "display_name": font_info["display_name"],
+                "size_mb": font_info["size_mb"]
+            })
+            continue
+
         dest = UPLOADS_DIR / safe_name
         with dest.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -262,8 +300,61 @@ async def upload_asset(files: List[UploadFile] = File(...)):
         "uploaded": uploaded_items,
         "videos": videos,
         "tracks": parsed_tracks,
-        "scripts": scripts
+        "scripts": scripts,
+        "fonts": fonts
     }
+
+
+@app.get("/api/fonts")
+async def list_fonts_endpoint():
+    """取得已安裝字型、系統內建字型、可一鍵安裝開源字型包與本機 Windows 字型清單"""
+    return get_font_catalog()
+
+
+@app.post("/api/fonts/upload")
+async def upload_fonts_endpoint(files: List[UploadFile] = File(...)):
+    """上傳 .ttf / .otf / .ttc / .woff2 字型檔案安裝至專案 fonts/ 目錄"""
+    installed = []
+    for file in files:
+        safe_name = Path(file.filename or "unnamed.ttf").name
+        ext = Path(safe_name).suffix.lower()
+        if ext not in ALLOWED_FONT_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支援的字型格式 '{safe_name}'，請上傳 .ttf, .otf, .ttc 或 .woff2 檔案"
+            )
+        dest = FONTS_DIR / safe_name
+        with dest.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        info = install_font_from_file(str(dest), custom_filename=safe_name)
+        installed.append(info)
+    return {"status": "success", "installed": installed, "catalog": get_font_catalog()}
+
+
+@app.post("/api/fonts/install")
+def install_font_endpoint(req: InstallFontRequest):
+    """一鍵下載開源字型包、從自訂 URL 下載、或從本機 Windows 字型庫匯入字型"""
+    try:
+        if req.preset_id:
+            info = install_preset_or_windows_font(req.preset_id)
+        elif req.url:
+            info = install_font_from_url(req.url, filename=req.filename)
+        else:
+            raise HTTPException(status_code=400, detail="請提供 preset_id 或字型下載 url")
+        return {"status": "success", "font": info, "catalog": get_font_catalog()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"安裝字型失敗: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/fonts/{filename}")
+async def delete_font_endpoint(filename: str):
+    """移除專案 fonts/ 目錄下的自訂字型"""
+    if delete_custom_font(filename):
+        return {"status": "success", "deleted": Path(filename).name, "catalog": get_font_catalog()}
+    raise HTTPException(status_code=404, detail=f"找不到自訂字型檔案: {filename}")
 
 
 @app.delete("/api/assets/{filename}")

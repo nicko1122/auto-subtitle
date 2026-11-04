@@ -2,6 +2,7 @@ from src.schemas.subtitle import WordItem, SubtitleSegment, SubtitleTrack, Segme
 from src.core.segmenter import split_words_into_segments, build_subtitle_track
 from src.core.exporter import to_srt, to_vtt, to_json, to_ass, parse_srt_content, split_vertical_columns
 from src.core.aligner import align_script_to_audio
+from src.core.font_manager import get_font_catalog
 
 
 def test_segmentation_by_punctuation():
@@ -113,6 +114,14 @@ def test_aligner_with_band_search():
     assert aligned.segments[1].start >= 1.5
 
 
+def test_font_catalog():
+    catalog = get_font_catalog()
+    assert "installed" in catalog
+    assert "presets" in catalog
+    assert len(catalog["installed"]) >= 3
+    assert len(catalog["presets"]) >= 5
+
+
 if __name__ == "__main__":
     test_segmentation_by_punctuation()
     test_segmentation_by_pause()
@@ -120,4 +129,5 @@ if __name__ == "__main__":
     test_export_and_parse_srt()
     test_css_and_vertical_ass_wrapping()
     test_aligner_with_band_search()
+    test_font_catalog()
     print("All unit tests passed successfully!")
