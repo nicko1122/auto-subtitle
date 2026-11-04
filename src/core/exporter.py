@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 from typing import Optional
-from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
+from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
 
 
 def hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
@@ -178,6 +178,51 @@ def to_vtt(track: SubtitleTrack) -> str:
 def to_json(track: SubtitleTrack, indent: int = 2) -> str:
     """將 SubtitleTrack 序列化為格式化的 JSON 字串"""
     return track.model_dump_json(indent=indent)
+
+
+def parse_srt_content(content: str, source_file: str = "manual") -> SubtitleTrack:
+    """
+    強健解析 SRT 字串為 SubtitleTrack 物件
+    自動處理 UTF-8 BOM、CRLF/LF 換行與多行字幕
+    """
+    content = content.lstrip("\ufeff").strip()
+    blocks = re.split(r'\r?\n\s*\r?\n', content)
+    segments = []
+
+    for idx, b in enumerate(blocks, start=1):
+        lines = [l.strip() for l in b.splitlines() if l.strip()]
+        if not lines:
+            continue
+
+        time_line_idx = -1
+        seg_id = idx
+        for i, line in enumerate(lines[:3]):
+            if "-->" in line:
+                time_line_idx = i
+                break
+
+        if time_line_idx == -1:
+            continue
+
+        if time_line_idx > 0 and lines[0].isdigit():
+            seg_id = int(lines[0])
+
+        time_match = re.search(r'(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)', lines[time_line_idx])
+        if not time_match:
+            continue
+
+        def parse_t(t_str: str) -> float:
+            t_str = t_str.replace(",", ".")
+            parts = t_str.split(":")
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+
+        start_sec = parse_t(time_match.group(1))
+        end_sec = parse_t(time_match.group(2))
+        text = " ".join(lines[time_line_idx + 1:])
+        segments.append(SubtitleSegment(id=seg_id, start=start_sec, end=end_sec, text=text))
+
+    duration = segments[-1].end if segments else 0.0
+    return SubtitleTrack(source_file=source_file, duration=duration, segments=segments)
 
 
 def save_file(content: str, output_path: str, encoding: str = "utf-8") -> str:

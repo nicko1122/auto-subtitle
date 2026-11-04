@@ -68,8 +68,15 @@
   <main class="flex-1 flex overflow-hidden p-4 gap-4 max-w-[1920px] mx-auto w-full">
 
     <!-- 【左欄】影片播放器佔位與即時字幕預覽區 (佔 7/12 或 55%) -->
-    <section class="w-7/12 flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+    <section id="left-video-panel" class="w-7/12 flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl relative">
       
+      <!-- 拖曳覆蓋提示層 (Drag & Drop Glow Overlay) -->
+      <div id="drag-drop-overlay" class="absolute inset-0 z-40 bg-blue-950/80 backdrop-blur-sm border-2 border-dashed border-blue-400 flex flex-col items-center justify-center text-blue-200 hidden pointer-events-none transition-all">
+        <svg class="w-16 h-16 text-blue-400 mb-3 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <p class="text-base font-semibold">放開檔案以直接載入</p>
+        <p class="text-xs text-blue-300/80 mt-1">支援同時丟入 Video 影片 + SRT 字幕檔！</p>
+      </div>
+
       <!-- 影片頂部資訊條 -->
       <div class="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/60 text-xs">
         <div class="flex items-center gap-2">
@@ -78,10 +85,7 @@
           <span id="video-resolution-pill" class="text-zinc-500 hidden">(1920x1080)</span>
         </div>
         <div class="flex items-center gap-3">
-          <span id="overlay-toggle-hint" class="text-zinc-500 text-[11px]">雙向即時渲染中</span>
-          <button id="btn-load-sample-video" class="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded transition border border-zinc-700">
-            載入 inputclip 測試影片
-          </button>
+          <span class="text-zinc-500 text-[11px]">可直接拖放影片/SRT至此視窗</span>
         </div>
       </div>
 
@@ -108,10 +112,8 @@
         <!-- 初始無影片時的佔位提示 -->
         <div id="video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 gap-3">
           <svg class="w-16 h-16 stroke-current text-zinc-700" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
-          <p class="text-sm">尚未選取影片，請在右側【資產管理】上傳或載入測試影片</p>
-          <button onclick="document.getElementById('btn-load-sample-video').click()" class="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs transition">
-            一鍵載入 inputclip/test_video.mp4
-          </button>
+          <p class="text-sm">可直接將 <span class="text-blue-400 font-semibold">Video + SRT</span> 拖曳丟入此處，將直接載入時間軸！</p>
+          <p class="text-xs text-zinc-600">或從右側【資產管理】瀏覽已上傳資產庫</p>
         </div>
 
       </div>
@@ -140,7 +142,7 @@
               <svg id="icon-pause" class="w-4 h-4 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
             </button>
 
-            <!-- 前進/後退 5 秒 -->
+            <!-- 前進/後退 3 秒 -->
             <button id="btn-seek-backward" class="p-1.5 hover:bg-zinc-800 rounded text-zinc-300" title="倒退 3 秒 (鍵盤 J 或 左箭頭)">-3s</button>
             <button id="btn-seek-forward" class="p-1.5 hover:bg-zinc-800 rounded text-zinc-300" title="快進 3 秒 (鍵盤 L 或 右箭頭)">+3s</button>
 
@@ -201,76 +203,79 @@
         <!-- ======================= TAB 1: 資產管理 UI ======================= -->
         <div id="tab-assets" class="tab-pane space-y-4">
           
-          <!-- 區塊 1: 影片上傳與選取 -->
-          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-3">
-            <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
-              <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-              影片來源
-            </h3>
-            
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex flex-col items-center justify-center p-3 border-2 border-dashed border-zinc-700 hover:border-blue-500 rounded-lg cursor-pointer bg-zinc-900/50 hover:bg-zinc-900 transition">
-                <svg class="w-6 h-6 text-zinc-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-                <span class="text-xs text-zinc-300">上傳本機影片 (MP4/MOV)</span>
-                <input type="file" id="input-upload-video" accept="video/*" class="hidden">
-              </label>
-
-              <button id="btn-pick-sample-video" class="flex flex-col items-center justify-center p-3 border border-zinc-700 hover:border-zinc-500 rounded-lg bg-zinc-900/50 hover:bg-zinc-800 transition">
-                <svg class="w-6 h-6 text-indigo-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                <span class="text-xs text-zinc-300">使用 test_video.mp4</span>
-              </button>
-            </div>
-            
-            <div id="video-loaded-meta" class="text-xs text-zinc-400 p-2 bg-zinc-900 rounded border border-zinc-800/60 hidden">
-              目前載入: <span id="meta-video-name" class="text-zinc-200 font-mono"></span>
+          <!-- 直接載入現成時間軸的提示橫幅 (當有 SRT 時自動亮起) -->
+          <div id="timeline-ready-banner" class="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-lg flex items-start gap-2.5 hidden">
+            <svg class="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <div class="flex-1 text-xs">
+              <span class="font-semibold text-emerald-300 block mb-0.5">✔ 時間軸字幕已直接就緒（共 <span id="banner-seg-count">0</span> 句）！</span>
+              <p class="text-zinc-400 leading-relaxed">
+                SRT 字幕已自帶精確時間軸，無需再次透過 AI 辨識。您可直接播放預覽，或點擊下方切換進行編輯：
+              </p>
+              <div class="flex gap-2 mt-2">
+                <button onclick="document.querySelector('[data-tab=\'tab-style\']').click()" class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded transition text-[11px]">
+                  🎨 前往 Tab 3 調整樣式與位置 ➔
+                </button>
+                <button onclick="document.querySelector('[data-tab=\'tab-editor\']').click()" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition text-[11px]">
+                  ✍️ 前往 Tab 2 編輯文字 ➔
+                </button>
+              </div>
             </div>
           </div>
 
-          <!-- 區塊 2: AI 自動辨識 / 字幕來源操作 -->
+          <!-- 區塊 1: 檔案上傳區 (支援影片、SRT、TXT 批量或拖放) -->
           <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                上傳或拖入檔案 (Video / SRT / TXT)
+              </h3>
+              <span class="text-[11px] text-zinc-500">支援多選與直接拖入</span>
+            </div>
+            
+            <label class="flex flex-col items-center justify-center p-4 border-2 border-dashed border-zinc-700 hover:border-blue-500 rounded-lg cursor-pointer bg-zinc-900/50 hover:bg-zinc-900 transition text-center group">
+              <svg class="w-8 h-8 text-zinc-400 group-hover:text-blue-400 mb-1.5 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+              <span class="text-xs text-zinc-200 font-medium">點擊選取或拖曳檔案至此</span>
+              <span class="text-[11px] text-zinc-500 mt-0.5">支援可同時選取 <strong class="text-zinc-300">影片 + SRT</strong> 直接載入</span>
+              <input type="file" id="input-upload-files" multiple accept=".mp4,.mov,.mkv,.webm,.srt,.vtt,.json,.txt" class="hidden">
+            </label>
+          </div>
+
+          <!-- 區塊 2: 【已上傳資產媒體庫 (Asset Library)】讀出伺服器上現有檔案 -->
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                已儲存資產庫 (Asset Library)
+              </h3>
+              <button id="btn-refresh-assets" class="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                <span>🔄 重新整理</span>
+              </button>
+            </div>
+
+            <!-- 資產清單容器 -->
+            <div id="asset-library-container" class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              <div class="text-xs text-zinc-500 py-4 text-center">正在讀取資產庫...</div>
+            </div>
+          </div>
+
+          <!-- 區塊 3: AI 自動辨識 / 強制對齊 / LLM 校對 -->
+          <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800/80 space-y-2.5">
             <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
-              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              字幕生成與匯入
+              <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              AI 本地進階處理 (若無 SRT 時使用)
             </h3>
 
             <div class="space-y-2">
-              <!-- 按鈕 1: AI 語音辨識生成字幕 -->
-              <button id="btn-ai-transcribe" class="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
-                【AI 本地辨識】自動抽取音軌與斷句
+              <button id="btn-ai-transcribe" class="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-blue-400 border border-blue-500/30 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
+                【AI 本地辨識】使用 Whisper 從影片提取音軌並自動切分
               </button>
 
-              <div class="grid grid-cols-2 gap-2 pt-1">
-                <!-- 按鈕 2: 上傳 SRT 字幕 -->
-                <label class="py-2 px-3 border border-zinc-700 hover:border-zinc-500 rounded bg-zinc-900/80 hover:bg-zinc-800 text-xs text-center cursor-pointer transition text-zinc-300">
-                  <span>上傳 SRT / VTT 字幕</span>
-                  <input type="file" id="input-upload-srt" accept=".srt,.vtt,.json" class="hidden">
-                </label>
-
-                <!-- 按鈕 3: 上傳原稿歌詞 -->
-                <label class="py-2 px-3 border border-zinc-700 hover:border-zinc-500 rounded bg-zinc-900/80 hover:bg-zinc-800 text-xs text-center cursor-pointer transition text-zinc-300">
-                  <span>上傳歌詞/原稿 (TXT)</span>
-                  <input type="file" id="input-upload-txt" accept=".txt" class="hidden">
-                </label>
-              </div>
-
-              <!-- 快捷載入 inputclip 現成字幕按鈕 -->
-              <div class="flex gap-2 pt-1">
-                <button id="btn-load-sample-srt" class="flex-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 rounded text-[11px] text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
-                  載入 inputclip/audio.aligned.srt
-                </button>
-                <button id="btn-load-sample-txt" class="flex-1 py-1.5 px-2 bg-zinc-800 hover:bg-zinc-700 rounded text-[11px] text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
-                  載入 inputclip/audio-org.txt
-                </button>
-              </div>
-
-              <!-- 按鈕 4: 有稿模式強制對齊 -->
               <button id="btn-ai-align" class="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-500/30 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                【有稿模式】原稿與音軌強制時間軸對齊
+                【有稿模式】原稿/歌詞與音軌強制時間軸對齊
               </button>
 
-              <!-- 按鈕 5: Edge LLM 智慧校對 -->
               <button id="btn-ai-proofread" class="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-purple-400 border border-purple-500/30 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                 【無稿校對】Qwen2.5 本地 Edge LLM 錯別字校正
@@ -278,9 +283,9 @@
             </div>
           </div>
 
-          <!-- 處理狀態即時回饋盒 -->
-          <div id="process-log-box" class="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-mono text-zinc-400 max-h-32 overflow-y-auto space-y-1">
-            <div class="text-zinc-500">系統就緒，等待載入影音素材...</div>
+          <!-- 處理日誌回饋盒 -->
+          <div id="process-log-box" class="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-mono text-zinc-400 max-h-28 overflow-y-auto space-y-1">
+            <div class="text-zinc-500">系統就緒，請拖曳或選取檔案...</div>
           </div>
 
         </div>
@@ -289,18 +294,18 @@
         <!-- ======================= TAB 2: 字幕管理編輯器 ======================= -->
         <div id="tab-editor" class="tab-pane hidden space-y-3">
           
-          <!-- 上方功能操作按鈕列 (保留擴充與佔位) -->
+          <!-- 上方操作列 (佔位與實用功能) -->
           <div class="p-2 bg-zinc-950/70 rounded-lg border border-zinc-800 flex flex-wrap gap-1.5">
             <button id="btn-add-segment" class="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded text-xs transition">
               + 新增字幕段
             </button>
-            <button id="btn-merge-segments" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="合併相鄰段落 (佔位)">
+            <button id="btn-merge-segments" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
               合併相鄰
             </button>
-            <button id="btn-split-by-punct" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="依標點符號重新斷句 (佔位)">
+            <button id="btn-split-by-punct" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
               標點切分
             </button>
-            <button id="btn-offset-time" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition" title="全體時間軸平移 (佔位)">
+            <button id="btn-offset-time" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
               平移 ±0.5s
             </button>
             <button id="btn-clear-subtitles" class="px-2.5 py-1 bg-red-900/20 hover:bg-red-900/30 text-red-400 border border-red-800/30 rounded text-xs transition ml-auto">
@@ -308,7 +313,7 @@
             </button>
           </div>
 
-          <!-- 檢視模式切換：逐句時間軸 vs 全文多行文字框 -->
+          <!-- 檢視切換：逐句時間軸 vs 全文多行文字框 -->
           <div class="flex items-center justify-between text-xs px-1">
             <span class="text-zinc-400">字幕清單 (<span id="editor-seg-count">0</span> 句)</span>
             <div class="flex gap-2">
@@ -318,14 +323,14 @@
             </div>
           </div>
 
-          <!-- 模式 A: 逐句時間軸編輯清單 -->
+          <!-- 逐句時間軸編輯清單 -->
           <div id="segment-list-container" class="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
             <div class="text-center py-10 text-xs text-zinc-500">
-              尚無字幕資料，請至【資產管理】載入或自動生成字幕
+              尚無字幕資料，可直接拖入 SRT 或至【資產管理】載入
             </div>
           </div>
 
-          <!-- 模式 B: 全文文字框 (切換用) -->
+          <!-- 全文文字框 -->
           <div id="raw-text-container" class="hidden">
             <textarea 
               id="raw-subtitle-textarea" 
@@ -344,7 +349,7 @@
         <!-- ======================= TAB 3: 字幕樣式與位置編輯 ======================= -->
         <div id="tab-style" class="tab-pane hidden space-y-4">
           
-          <!-- 【關鍵功能】字幕逐行列出選擇控件 (選到該字幕即可出現在左邊影片上) -->
+          <!-- 字幕逐行選擇控件 (選到該字幕即可出現在左邊影片上) -->
           <div class="p-3 bg-blue-950/20 rounded-lg border border-blue-900/40 space-y-2">
             <label class="text-xs font-semibold text-blue-300 flex items-center justify-between">
               <span>🎯 選取特定字幕行預覽 (點選同步定位影片)</span>

@@ -44,6 +44,8 @@ const state = {
 const el = {
   video: document.getElementById("main-video"),
   placeholder: document.getElementById("video-placeholder"),
+  leftPanel: document.getElementById("left-video-panel"),
+  dragDropOverlay: document.getElementById("drag-drop-overlay"),
   overlayContainer: document.getElementById("subtitle-overlay-container"),
   overlay: document.getElementById("subtitle-overlay"),
   scrubber: document.getElementById("video-scrubber"),
@@ -60,19 +62,17 @@ const el = {
   segmentCountBadge: document.getElementById("segment-count-badge"),
   logBox: document.getElementById("process-log-box"),
 
-  // Tab 1
-  btnLoadSampleVideo: document.getElementById("btn-load-sample-video"),
-  btnPickSampleVideo: document.getElementById("btn-pick-sample-video"),
-  inputUploadVideo: document.getElementById("input-upload-video"),
-  btnLoadSampleSrt: document.getElementById("btn-load-sample-srt"),
-  btnLoadSampleTxt: document.getElementById("btn-load-sample-txt"),
-  inputUploadSrt: document.getElementById("input-upload-srt"),
-  inputUploadTxt: document.getElementById("input-upload-txt"),
+  // Tab 1: 資產管理
+  timelineReadyBanner: document.getElementById("timeline-ready-banner"),
+  bannerSegCount: document.getElementById("banner-seg-count"),
+  inputUploadFiles: document.getElementById("input-upload-files"),
+  assetLibraryContainer: document.getElementById("asset-library-container"),
+  btnRefreshAssets: document.getElementById("btn-refresh-assets"),
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
   btnAiAlign: document.getElementById("btn-ai-align"),
   btnAiProofread: document.getElementById("btn-ai-proofread"),
 
-  // Tab 2
+  // Tab 2: 字幕編輯
   btnAddSegment: document.getElementById("btn-add-segment"),
   btnClearSubtitles: document.getElementById("btn-clear-subtitles"),
   segmentListContainer: document.getElementById("segment-list-container"),
@@ -83,7 +83,7 @@ const el = {
   btnViewRaw: document.getElementById("btn-view-raw"),
   editorSegCount: document.getElementById("editor-seg-count"),
 
-  // Tab 3
+  // Tab 3: 樣式與位置
   selectSubtitleLine: document.getElementById("select-subtitle-line"),
   selectedSubBadge: document.getElementById("selected-sub-badge"),
   btnOrientH: document.getElementById("btn-orient-h"),
@@ -120,7 +120,7 @@ const el = {
   presetClassic: document.getElementById("preset-classic"),
   presetMinimal: document.getElementById("preset-minimal"),
 
-  // Tab 4
+  // Tab 4: 預覽與匯出
   summaryTotalLines: document.getElementById("summary-total-lines"),
   summaryDuration: document.getElementById("summary-duration"),
   btnExportSrt: document.getElementById("btn-export-srt"),
@@ -135,7 +135,7 @@ const el = {
 // 輔助日誌輸出
 function addLog(msg, type = "info") {
   const time = new Date().toLocaleTimeString();
-  const colorClass = type === "error" ? "text-red-400" : (type === "success" ? "text-emerald-400" : "text-zinc-400");
+  const colorClass = type === "error" ? "text-red-400 font-semibold" : (type === "success" ? "text-emerald-400 font-semibold" : "text-zinc-300");
   const div = document.createElement("div");
   div.className = colorClass;
   div.textContent = `[${time}] ${msg}`;
@@ -224,17 +224,14 @@ function applySubtitleStyleToOverlay() {
   const container = el.overlayContainer;
 
   // 1. 盒模型對齊
-  // 垂直對齊 (flex align-items)
   if (s.vertical_align === "top") container.style.alignItems = "flex-start";
   else if (s.vertical_align === "middle") container.style.alignItems = "center";
   else container.style.alignItems = "flex-end";
 
-  // 水平對齊 (flex justify-content)
   if (s.horizontal_align === "left") container.style.justifyContent = "flex-start";
   else if (s.horizontal_align === "right") container.style.justifyContent = "flex-end";
   else container.style.justifyContent = "center";
 
-  // Padding 邊距
   container.style.paddingTop = `${s.padding_top}px`;
   container.style.paddingRight = `${s.padding_right}px`;
   container.style.paddingBottom = `${s.padding_bottom}px`;
@@ -255,7 +252,7 @@ function applySubtitleStyleToOverlay() {
   const shadowDist = s.shadow_offset;
   overlay.style.textShadow = `${shadowDist}px ${shadowDist}px ${shadowDist * 1.5}px ${s.shadow_color}`;
 
-  // 直排 / 橫排 (CSS writing-mode)
+  // 直排 / 橫排
   if (s.orientation === "vertical") {
     overlay.style.writingMode = "vertical-rl";
     overlay.style.textAlign = s.vertical_align === "top" ? "start" : (s.vertical_align === "bottom" ? "end" : "center");
@@ -264,7 +261,6 @@ function applySubtitleStyleToOverlay() {
     overlay.style.textAlign = s.horizontal_align;
   }
 
-  // 3. 更新即時 CSS 代碼框
   updateCssCodeBox();
 }
 
@@ -295,14 +291,12 @@ function updateSubtitleOverlayOnTime(currentTime) {
     return;
   }
 
-  // 尋找當前時間點的字幕段
   const activeSeg = state.track.segments.find(seg => currentTime >= seg.start && currentTime <= seg.end);
 
   if (activeSeg) {
     renderOverlayText(activeSeg.text);
     highlightActiveSegmentInList(activeSeg.id);
   } else {
-    // 若影片暫停且使用者在 Tab 3 選定了某一行，保持顯示該行供微調
     if (el.video.paused && state.selectedSegmentIndex >= 0 && state.track.segments[state.selectedSegmentIndex]) {
       renderOverlayText(state.track.segments[state.selectedSegmentIndex].text);
     } else {
@@ -312,12 +306,7 @@ function updateSubtitleOverlayOnTime(currentTime) {
 }
 
 function renderOverlayText(text) {
-  if (state.style.orientation === "vertical") {
-    // 縱向文字微調
-    el.overlay.textContent = text;
-  } else {
-    el.overlay.textContent = text;
-  }
+  el.overlay.textContent = text;
 }
 
 // ---------------- 3. Tab 切換 ----------------
@@ -326,7 +315,6 @@ function initTabs() {
     btn.addEventListener("click", () => {
       const targetId = btn.dataset.tab;
 
-      // 切換按鈕樣式
       document.querySelectorAll(".tab-btn").forEach(b => {
         b.classList.remove("border-blue-500", "text-blue-400", "font-semibold", "bg-zinc-800/40");
         b.classList.add("border-transparent", "text-zinc-400");
@@ -334,12 +322,10 @@ function initTabs() {
       btn.classList.add("border-blue-500", "text-blue-400", "font-semibold", "bg-zinc-800/40");
       btn.classList.remove("border-transparent", "text-zinc-400");
 
-      // 切換面版顯示
       document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.add("hidden"));
       const targetPane = document.getElementById(targetId);
       if (targetPane) targetPane.classList.remove("hidden");
 
-      // 若切換到樣式頁，刷新預覽行
       if (targetId === "tab-style") {
         updateSubtitleSelectDropdown();
         applySubtitleStyleToOverlay();
@@ -348,89 +334,243 @@ function initTabs() {
   });
 }
 
-// ---------------- 4. Tab 1: 資產管理與 AI 呼叫 ----------------
-function initAssetManagement() {
-  // 載入 inputclip 測試影片
-  const loadSampleVideo = () => {
-    state.video.filename = "test_video.mp4";
-    state.video.url = "/inputclip/test_video.mp4";
-    state.video.path = "inputclip/test_video.mp4";
-    el.video.src = state.video.url;
-    el.videoFilename.textContent = "test_video.mp4 (測試素材)";
-    el.mediaBadge.textContent = "test_video.mp4";
-    addLog("已載入 inputclip/test_video.mp4", "success");
-  };
+// ---------------- 4. Tab 1: 資產媒體庫 (Asset Library) 與全域拖放 ----------------
+async function loadAssetLibrary() {
+  const container = el.assetLibraryContainer;
+  container.innerHTML = `<div class="text-xs text-zinc-500 py-3 text-center">正在讀取資產庫...</div>`;
 
-  el.btnLoadSampleVideo.addEventListener("click", loadSampleVideo);
-  el.btnPickSampleVideo.addEventListener("click", loadSampleVideo);
+  try {
+    const res = await fetch("/api/assets");
+    const data = await res.json();
+    const assets = data.assets || [];
 
-  // 本機上傳影片
-  el.inputUploadVideo.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    if (!assets.length) {
+      container.innerHTML = `<div class="text-xs text-zinc-500 py-4 text-center">資產庫目前為空，請拖入或上傳檔案</div>`;
+      return;
+    }
 
-    addLog(`開始上傳影片: ${file.name}...`);
-    const formData = new FormData();
-    formData.append("file", file);
+    container.innerHTML = "";
+    assets.forEach(asset => {
+      const isUpload = asset.folder === "uploads";
+      const card = document.createElement("div");
+      card.className = "flex items-center justify-between p-2 bg-zinc-900/80 hover:bg-zinc-800/90 rounded border border-zinc-800 text-xs transition";
 
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.status === "success") {
-        state.video.filename = data.filename;
-        state.video.url = data.url;
-        state.video.path = data.absolute_path;
-        el.video.src = data.url;
-        el.videoFilename.textContent = data.filename;
-        el.mediaBadge.textContent = data.filename;
-        addLog(`影片上傳成功: ${data.filename}`, "success");
+      // 類型圖示
+      let icon = "📄";
+      if (asset.type === "video") icon = "🎬";
+      else if (asset.type === "subtitle") icon = "📝";
+      else if (asset.type === "audio") icon = "🎵";
+
+      const badgeColor = isUpload ? "bg-blue-500/10 text-blue-400 border-blue-500/20" : "bg-zinc-700/30 text-zinc-400 border-zinc-700/50";
+      const sourceTag = isUpload ? "已上傳" : "內建模擬";
+
+      card.innerHTML = `
+        <div class="flex items-center gap-2 overflow-hidden flex-1 mr-2">
+          <span class="text-base">${icon}</span>
+          <div class="truncate">
+            <div class="font-medium text-zinc-200 truncate flex items-center gap-1.5">
+              <span>${asset.name}</span>
+              <span class="text-[9px] px-1.5 py-0.2 rounded border ${badgeColor}">${sourceTag}</span>
+            </div>
+            <div class="text-[10px] text-zinc-500 font-mono">${asset.size_mb} MB • ${asset.type.toUpperCase()}</div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1 shrink-0">
+          ${asset.type === "video" ? `
+            <button class="btn-load-this-video px-2 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded text-[11px] transition">
+              ▶ 載入影片
+            </button>
+            ${asset.paired_subtitle ? `
+              <button class="btn-load-paired-all px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded text-[11px] transition" title="同時載入影片與同名字幕">
+                ⚡ 同步載入
+              </button>
+            ` : ''}
+          ` : ''}
+
+          ${asset.type === "subtitle" ? `
+            <button class="btn-load-this-sub px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded text-[11px] transition">
+              📝 載入時間軸
+            </button>
+          ` : ''}
+
+          ${isUpload ? `
+            <button class="btn-delete-asset px-1.5 py-1 text-zinc-500 hover:text-red-400 rounded text-[11px]" title="刪除檔案">✕</button>
+          ` : ''}
+        </div>
+      `;
+
+      // 載入影片
+      const btnVideo = card.querySelector(".btn-load-this-video");
+      if (btnVideo) {
+        btnVideo.addEventListener("click", () => {
+          loadVideoAsset(asset);
+        });
       }
-    } catch (err) {
-      addLog(`上傳失敗: ${err.message}`, "error");
+
+      // 載入成對影片與字幕
+      const btnPaired = card.querySelector(".btn-load-paired-all");
+      if (btnPaired && asset.paired_subtitle) {
+        btnPaired.addEventListener("click", async () => {
+          loadVideoAsset(asset);
+          await loadSubtitleAsset(asset.paired_subtitle);
+          addLog(`⚡ 已同步載入 ${asset.name} 及其成對時間軸字幕！`, "success");
+        });
+      }
+
+      // 載入字幕
+      const btnSub = card.querySelector(".btn-load-this-sub");
+      if (btnSub) {
+        btnSub.addEventListener("click", () => {
+          loadSubtitleAsset(asset);
+        });
+      }
+
+      // 刪除資產
+      const btnDel = card.querySelector(".btn-delete-asset");
+      if (btnDel) {
+        btnDel.addEventListener("click", async () => {
+          if (confirm(`確定要從伺服器刪除 ${asset.name} 嗎？`)) {
+            await fetch(`/api/assets/${encodeURIComponent(asset.name)}`, { method: "DELETE" });
+            addLog(`已刪除資產: ${asset.name}`, "info");
+            loadAssetLibrary();
+          }
+        });
+      }
+
+      container.appendChild(card);
+    });
+
+  } catch (err) {
+    container.innerHTML = `<div class="text-xs text-red-400 py-3 text-center">讀取資產庫失敗: ${err.message}</div>`;
+  }
+}
+
+function loadVideoAsset(asset) {
+  state.video.filename = asset.name;
+  state.video.url = asset.url;
+  state.video.path = asset.absolute_path;
+  el.video.src = asset.url;
+  el.videoFilename.textContent = asset.name;
+  el.mediaBadge.textContent = asset.name;
+  el.placeholder.classList.add("hidden");
+  addLog(`已成功載入影片: ${asset.name}`, "success");
+}
+
+async function loadSubtitleAsset(asset) {
+  try {
+    const res = await fetch(asset.url);
+    const content = await res.text();
+    parseAndSetSrt(content, asset.name);
+    addLog(`✔ 現成時間軸字幕已直接載入: ${asset.name} (共 ${state.track.segments.length} 句)`, "success");
+  } catch (err) {
+    addLog(`載入字幕失敗: ${err.message}`, "error");
+  }
+}
+
+// ---------------- 5. 檔案上傳與全域拖放 (Drag & Drop) ----------------
+async function handleBatchFileUpload(files) {
+  if (!files || !files.length) return;
+
+  const formData = new FormData();
+  for (let i = 0; i < files.length; i++) {
+    formData.append("files", files[i]);
+  }
+
+  addLog(`正在上傳 ${files.length} 個檔案至資產庫...`);
+
+  try {
+    const res = await fetch("/api/upload", { method: "POST", body: formData });
+    const data = await res.json();
+
+    if (data.status === "success") {
+      addLog(`✔ 上傳成功: 共儲存 ${data.uploaded.length} 個檔案`, "success");
+
+      // 1. 若有上傳影片，立即載入最新影片至播放器
+      if (data.videos && data.videos.length > 0) {
+        const v = data.videos[0];
+        loadVideoAsset({
+          name: v.name,
+          url: v.url,
+          absolute_path: v.absolute_path
+        });
+      }
+
+      // 2. 【關鍵功能】若上傳包含 SRT / VTT 字幕，直接載入時間軸！
+      if (data.tracks && data.tracks.length > 0) {
+        const t = data.tracks[0];
+        setSubtitleTrack(t.track);
+        addLog(`🎉 偵測到現成時間軸字幕 (${t.filename})！已直接載入時間軸 (共 ${t.track.segments.length} 句)，無需重複 AI 辨識！`, "success");
+
+        // 自動定位播放器至第 1 句字幕
+        if (t.track.segments.length > 0) {
+          el.video.currentTime = t.track.segments[0].start;
+          renderOverlayText(t.track.segments[0].text);
+        }
+      }
+
+      // 刷新資產庫
+      loadAssetLibrary();
+    } else {
+      throw new Error(data.detail || "上傳失敗");
+    }
+  } catch (err) {
+    addLog(`上傳失敗: ${err.message}`, "error");
+  }
+}
+
+function initUniversalDragAndDrop() {
+  const panel = el.leftPanel;
+  const overlay = el.dragDropOverlay;
+
+  // 阻止瀏覽器預設開啟行為
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    window.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }, false);
+  });
+
+  // 拖入時高亮
+  window.addEventListener('dragover', (e) => {
+    overlay.classList.remove('hidden');
+  });
+
+  overlay.addEventListener('dragleave', (e) => {
+    overlay.classList.add('hidden');
+  });
+
+  window.addEventListener('drop', (e) => {
+    overlay.classList.add('hidden');
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length > 0) {
+      handleBatchFileUpload(dt.files);
     }
   });
 
-  // 載入 inputclip/audio.aligned.srt
-  el.btnLoadSampleSrt.addEventListener("click", async () => {
-    addLog("正在讀取 inputclip/audio.aligned.srt...");
-    try {
-      const res = await fetch("/inputclip/audio.aligned.srt");
-      const srtText = await res.text();
-      parseAndSetSrt(srtText, "inputclip/audio.aligned.srt");
-      addLog("成功載入 46 句已對齊字幕！", "success");
-    } catch (err) {
-      addLog(`載入 SRT 失敗: ${err.message}`, "error");
-    }
+  // 點擊上傳按鈕事件 (多選)
+  el.inputUploadFiles.addEventListener("change", (e) => {
+    handleBatchFileUpload(e.target.files);
   });
 
-  // 上傳本地 SRT
-  el.inputUploadSrt.addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      parseAndSetSrt(evt.target.result, file.name);
-      addLog(`成功匯入字幕: ${file.name} (共 ${state.track.segments.length} 句)`, "success");
-    };
-    reader.readAsText(file);
+  // 重新整理資產庫
+  el.btnRefreshAssets.addEventListener("click", () => {
+    loadAssetLibrary();
+    addLog("已重新整理資產庫", "info");
   });
+}
 
-  // 載入 inputclip/audio-org.txt
-  el.btnLoadSampleTxt.addEventListener("click", async () => {
-    try {
-      const res = await fetch("/inputclip/audio-org.txt");
-      const txt = await res.text();
-      sessionStorage.setItem("current_script_text", txt);
-      addLog("已載入 inputclip/audio-org.txt 原始歌詞", "success");
-    } catch (err) {
-      addLog(`讀取原稿失敗: ${err.message}`, "error");
-    }
-  });
-
+// ---------------- 6. AI 功能按鈕 ----------------
+function initAiButtons() {
   // AI 自動辨識
   el.btnAiTranscribe.addEventListener("click", async () => {
-    const media = state.video.path || "inputclip/test_video.mp4";
-    addLog(`【AI 辨識】正在以 Whisper (small) 辨識 ${media}...`);
+    const media = state.video.path;
+    if (!media) {
+      addLog("請先載入或上傳影片後再執行辨識", "error");
+      return;
+    }
+
+    addLog(`【AI 辨識】正在以 Whisper 辨識 ${state.video.filename}...`);
     el.btnAiTranscribe.disabled = true;
     el.btnAiTranscribe.textContent = "⏳ Whisper 語音辨識中...";
 
@@ -453,13 +593,17 @@ function initAssetManagement() {
       addLog(`辨識失敗: ${err.message}`, "error");
     } finally {
       el.btnAiTranscribe.disabled = false;
-      el.btnAiTranscribe.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>【AI 本地辨識】自動抽取音軌與斷句`;
+      el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>【AI 本地辨識】使用 Whisper 從影片提取音軌並自動切分`;
     }
   });
 
   // 有稿強制對齊
   el.btnAiAlign.addEventListener("click", async () => {
-    const media = state.video.path || "inputclip/test_video.mp4";
+    const media = state.video.path;
+    if (!media) {
+      addLog("請先載入影片後再執行對齊", "error");
+      return;
+    }
     const script = sessionStorage.getItem("current_script_text") || "inputclip/audio-org.txt";
     addLog(`【有稿對齊】正在將原稿與音軌強制對齊...`);
     el.btnAiAlign.disabled = true;
@@ -514,7 +658,7 @@ function initAssetManagement() {
   });
 }
 
-// 簡易 SRT 解析器
+// 簡易 SRT 解析器 (客戶端備援)
 function parseAndSetSrt(srtContent, sourceName = "manual") {
   const blocks = srtContent.trim().split(/\r?\n\s*\r?\n/);
   const segments = [];
@@ -522,23 +666,31 @@ function parseAndSetSrt(srtContent, sourceName = "manual") {
   blocks.forEach((block, idx) => {
     const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length >= 2) {
-      let timeLineIdx = 1;
-      let sId = parseInt(lines[0], 10);
-      if (isNaN(sId)) {
-        sId = idx + 1;
-        timeLineIdx = 0;
+      let timeLineIdx = -1;
+      let sId = idx + 1;
+      for (let i = 0; i < Math.min(3, lines.length); i++) {
+        if (lines[i].includes("-->")) {
+          timeLineIdx = i;
+          break;
+        }
       }
-      const timeMatch = lines[timeLineIdx].match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)/);
-      if (timeMatch) {
-        const parseT = (str) => {
-          str = str.replace(',', '.');
-          const [h, m, s] = str.split(':');
-          return parseFloat(h) * 3600 + parseFloat(m) * 60 + parseFloat(s);
-        };
-        const start = parseT(timeMatch[1]);
-        const end = parseT(timeMatch[2]);
-        const text = lines.slice(timeLineIdx + 1).join(" ");
-        segments.push({ id: sId, start, end, text, words: [] });
+
+      if (timeLineIdx !== -1) {
+        if (timeLineIdx > 0 && !isNaN(parseInt(lines[0], 10))) {
+          sId = parseInt(lines[0], 10);
+        }
+        const timeMatch = lines[timeLineIdx].match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)/);
+        if (timeMatch) {
+          const parseT = (str) => {
+            str = str.replace(',', '.');
+            const [h, m, s] = str.split(':');
+            return parseFloat(h) * 3600 + parseFloat(m) * 60 + parseFloat(s);
+          };
+          const start = parseT(timeMatch[1]);
+          const end = parseT(timeMatch[2]);
+          const text = lines.slice(timeLineIdx + 1).join(" ");
+          segments.push({ id: sId, start, end, text, words: [] });
+        }
       }
     }
   });
@@ -552,7 +704,7 @@ function parseAndSetSrt(srtContent, sourceName = "manual") {
   });
 }
 
-// ---------------- 5. Tab 2: 字幕管理編輯器 ----------------
+// ---------------- 7. Tab 2: 字幕管理編輯器 ----------------
 function setSubtitleTrack(track) {
   state.track = track;
   el.segmentCountBadge.textContent = `${track.segments.length} 句字幕`;
@@ -561,9 +713,13 @@ function setSubtitleTrack(track) {
   updateSubtitleSelectDropdown();
   updateSummary();
 
-  // 若尚未選取，預設選取第 1 句
-  if (track.segments.length > 0 && state.selectedSegmentIndex >= track.segments.length) {
+  // 顯示時間軸就緒提示
+  if (track.segments.length > 0) {
+    el.timelineReadyBanner.classList.remove("hidden");
+    el.bannerSegCount.textContent = track.segments.length;
     state.selectedSegmentIndex = 0;
+  } else {
+    el.timelineReadyBanner.classList.add("hidden");
   }
 }
 
@@ -572,11 +728,10 @@ function renderSegmentList() {
   container.innerHTML = "";
 
   if (!state.track.segments.length) {
-    container.innerHTML = `<div class="text-center py-10 text-xs text-zinc-500">尚無字幕資料，請至【資產管理】載入或自動生成字幕</div>`;
+    container.innerHTML = `<div class="text-center py-10 text-xs text-zinc-500">尚無字幕資料，可直接拖入 SRT 或至【資產管理】載入</div>`;
     return;
   }
 
-  // 同步全文框內容
   el.rawSubtitleTextarea.value = state.track.segments.map(s => s.text).join("\n");
 
   state.track.segments.forEach((seg, idx) => {
@@ -598,21 +753,18 @@ function renderSegmentList() {
       <input type="text" class="seg-text-input w-full bg-zinc-900 border border-zinc-800/80 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-blue-500" value="${seg.text}">
     `;
 
-    // 點擊卡片跳轉
     card.addEventListener("click", (e) => {
       if (e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON") {
         selectAndJumpToSegment(idx);
       }
     });
 
-    // 試聽按鈕
     card.querySelector(".btn-play-seg").addEventListener("click", () => {
       selectAndJumpToSegment(idx);
       el.video.currentTime = seg.start;
       el.video.play();
     });
 
-    // 文字即時修改
     card.querySelector(".seg-text-input").addEventListener("input", (e) => {
       seg.text = e.target.value;
       if (state.selectedSegmentIndex === idx) {
@@ -620,7 +772,6 @@ function renderSegmentList() {
       }
     });
 
-    // 刪除按鈕
     card.querySelector(".btn-del-seg").addEventListener("click", () => {
       state.track.segments.splice(idx, 1);
       renderSegmentList();
@@ -678,7 +829,6 @@ function initEditorViewToggle() {
     }
   });
 
-  // 新增字幕段
   el.btnAddSegment.addEventListener("click", () => {
     const curTime = el.video.currentTime || 0;
     const newId = state.track.segments.length + 1;
@@ -694,7 +844,6 @@ function initEditorViewToggle() {
     addLog(`新增字幕段 #${newId}`, "info");
   });
 
-  // 清空字幕
   el.btnClearSubtitles.addEventListener("click", () => {
     if (confirm("確定要清空所有字幕嗎？")) {
       setSubtitleTrack({ ...state.track, segments: [] });
@@ -703,7 +852,7 @@ function initEditorViewToggle() {
   });
 }
 
-// ---------------- 6. Tab 3: 字幕樣式與逐行選擇控件 ----------------
+// ---------------- 8. Tab 3: 字幕樣式與逐行選擇控件 ----------------
 function updateSubtitleSelectDropdown() {
   const sel = el.selectSubtitleLine;
   sel.innerHTML = "";
@@ -723,13 +872,11 @@ function updateSubtitleSelectDropdown() {
 }
 
 function initStyleEditor() {
-  // 【關鍵功能】字幕逐行選擇控件
   el.selectSubtitleLine.addEventListener("change", (e) => {
     const idx = parseInt(e.target.value, 10);
     selectAndJumpToSegment(idx);
   });
 
-  // 方向切換 (橫排 / 直排)
   el.btnOrientH.addEventListener("click", () => {
     state.style.orientation = "horizontal";
     el.btnOrientH.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
@@ -744,7 +891,6 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // 九宮格對齊按鈕
   document.querySelectorAll(".grid-align-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".grid-align-btn").forEach(b => {
@@ -760,7 +906,6 @@ function initStyleEditor() {
     });
   });
 
-  // X 軸滑桿 (Scrollbar)
   el.sliderPosX.addEventListener("input", (e) => {
     const val = parseInt(e.target.value, 10);
     if (val < 33) {
@@ -778,7 +923,6 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // Y 軸滑桿 (Scrollbar)
   el.sliderPosY.addEventListener("input", (e) => {
     const val = parseInt(e.target.value, 10);
     if (val < 33) {
@@ -796,13 +940,11 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // Padding 數值輸入
   el.inputPadTop.addEventListener("input", (e) => { state.style.padding_top = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
   el.inputPadRight.addEventListener("input", (e) => { state.style.padding_right = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
   el.inputPadBottom.addEventListener("input", (e) => { state.style.padding_bottom = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
   el.inputPadLeft.addEventListener("input", (e) => { state.style.padding_left = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
 
-  // 字型與字級
   el.selectFontName.addEventListener("change", (e) => { state.style.font_name = e.target.value; applySubtitleStyleToOverlay(); });
   el.sliderFontSize.addEventListener("input", (e) => {
     state.style.font_size = parseInt(e.target.value, 10);
@@ -810,18 +952,15 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // 文字填色
   el.pickerPrimaryColor.addEventListener("input", (e) => {
     state.style.primary_color = e.target.value.toUpperCase();
     el.labelPrimaryColor.textContent = state.style.primary_color;
     applySubtitleStyleToOverlay();
   });
 
-  // 粗體 / 斜體
   el.checkBold.addEventListener("change", (e) => { state.style.bold = e.target.checked; applySubtitleStyleToOverlay(); });
   el.checkItalic.addEventListener("change", (e) => { state.style.italic = e.target.checked; applySubtitleStyleToOverlay(); });
 
-  // 描邊字
   el.pickerOutlineColor.addEventListener("input", (e) => {
     state.style.outline_color = e.target.value.toUpperCase();
     el.labelOutlineColor.textContent = state.style.outline_color;
@@ -833,7 +972,6 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // 陰影字
   el.pickerShadowColor.addEventListener("input", (e) => {
     state.style.shadow_color = e.target.value.toUpperCase();
     el.labelShadowColor.textContent = state.style.shadow_color;
@@ -845,14 +983,12 @@ function initStyleEditor() {
     applySubtitleStyleToOverlay();
   });
 
-  // 複製 CSS 按鈕
   el.btnCopyCss.addEventListener("click", () => {
     navigator.clipboard.writeText(el.cssLiveCode.value);
     el.btnCopyCss.textContent = "已複製 ✔";
     setTimeout(() => { el.btnCopyCss.textContent = "複製 CSS"; }, 1500);
   });
 
-  // CSS 程式碼手動修改雙向同步
   el.cssLiveCode.addEventListener("change", async (e) => {
     try {
       const res = await fetch("/api/style/parse-css", {
@@ -872,7 +1008,6 @@ function initStyleEditor() {
     }
   });
 
-  // 預設樣式切換
   initPresets();
 }
 
@@ -979,14 +1114,13 @@ function initPresets() {
   });
 }
 
-// ---------------- 7. Tab 4: 預覽與匯出 ----------------
+// ---------------- 9. Tab 4: 預覽與匯出 ----------------
 function updateSummary() {
   el.summaryTotalLines.textContent = `${state.track.segments.length} 句`;
   el.summaryDuration.textContent = `${state.video.duration.toFixed(2)} 秒`;
 }
 
 function initExport() {
-  // 下載純文字檔案通用方法
   function downloadTextFile(content, filename) {
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -999,7 +1133,6 @@ function initExport() {
     URL.revokeObjectURL(url);
   }
 
-  // 產生 SRT
   el.btnExportSrt.addEventListener("click", () => {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
     let srt = "";
@@ -1018,7 +1151,6 @@ function initExport() {
     addLog("已匯出 subtitles.srt", "success");
   });
 
-  // 產生 WebVTT
   el.btnExportVtt.addEventListener("click", () => {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
     let vtt = "WEBVTT\n\n";
@@ -1037,16 +1169,18 @@ function initExport() {
     addLog("已匯出 subtitles.vtt", "success");
   });
 
-  // 產生 JSON
   el.btnExportJson.addEventListener("click", () => {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
     downloadTextFile(JSON.stringify(state.track, null, 2), "subtitles.json");
     addLog("已匯出 subtitles.json", "success");
   });
 
-  // 影片硬字幕壓制 (Hardcopy Burn-in)
   el.btnStartBurn.addEventListener("click", async () => {
-    const videoPath = state.video.path || "inputclip/test_video.mp4";
+    const videoPath = state.video.path;
+    if (!videoPath) {
+      addLog("請先載入或上傳影片後再執行壓制", "error");
+      return;
+    }
     if (!state.track.segments.length) {
       addLog("請先載入或生成字幕後再執行壓制", "error");
       return;
@@ -1077,6 +1211,8 @@ function initExport() {
           el.video.play();
           addLog("已切換播放器至壓制後影片", "info");
         };
+        // 壓制完成後刷新資產庫
+        loadAssetLibrary();
       } else {
         throw new Error(data.detail || "壓制失敗");
       }
@@ -1090,18 +1226,38 @@ function initExport() {
 }
 
 // ---------------- 應用程式啟動入口 ----------------
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
   initPlayer();
   initTabs();
-  initAssetManagement();
+  initUniversalDragAndDrop();
+  initAiButtons();
   initEditorViewToggle();
   initStyleEditor();
   initExport();
   applySubtitleStyleToOverlay();
 
-  // 自動預先載入 sample 影片以提供開箱即用的體驗
-  el.btnLoadSampleVideo.click();
-  // 自動載入已對齊的 SRT
-  el.btnLoadSampleSrt.click();
+  // 1. 讀取並渲染資產庫
+  await loadAssetLibrary();
+
+  // 2. 如果資產庫中已經有使用者上傳的影片 (例如 director-film.mp4)，自動載入！
+  try {
+    const res = await fetch("/api/assets");
+    const data = await res.json();
+    const assets = data.assets || [];
+
+    const userVideo = assets.find(a => a.folder === "uploads" && a.type === "video");
+    if (userVideo) {
+      loadVideoAsset(userVideo);
+      addLog(`已自動載入您先前上傳的影片: ${userVideo.name}`, "info");
+
+      // 若有成對字幕，也直接自動載入！
+      if (userVideo.paired_subtitle) {
+        await loadSubtitleAsset(userVideo.paired_subtitle);
+      }
+    }
+  } catch (e) {
+    console.error("Auto load check failed:", e);
+  }
+
   addLog("AutoSubtitle AI Studio 系統初始化完成！", "success");
 });

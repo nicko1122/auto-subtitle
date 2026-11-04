@@ -18,7 +18,7 @@ from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
 from ..core.proofreader import SubtitleProofreader
 from ..core.video_burner import burn_subtitles_to_video, get_video_info
-from ..core.exporter import to_srt, to_vtt, to_json, save_file
+from ..core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
 from ..core.css_parser import parse_css_to_style_dict
 
 logging.basicConfig(level=logging.INFO)
@@ -91,21 +91,77 @@ async def health_check():
     return {"status": "ok", "app": "Auto Subtitle Studio"}
 
 
-@app.get("/api/samples")
-async def list_sample_assets():
-    """取得現有測試素材清單 (包含 inputclip 內的檔案)"""
-    samples = []
-    if INPUTCLIP_DIR.exists():
-        for p in INPUTCLIP_DIR.glob("*"):
-            if p.is_file() and p.suffix.lower() in (".mp4", ".mov", ".wav", ".srt", ".vtt", ".txt", ".json"):
-                samples.append({
+def detect_file_type(p: Path) -> str:
+    ext = p.suffix.lower()
+    if ext in (".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv"):
+        return "video"
+    elif ext in (".srt", ".vtt", ".json"):
+        return "subtitle"
+    elif ext in (".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"):
+        return "audio"
+    elif ext in (".txt", ".lrc"):
+        return "text"
+    return "other"
+
+
+@app.get("/api/assets")
+async def list_assets():
+    """
+    列出伺服器上已儲存的全部資產 (uploads/ 以及 inputclip/)
+    自動偵測檔案類型、檔案大小、修改時間，並自動辨識成對的影片與字幕！
+    """
+    assets = []
+    seen_stems = {}
+
+    # 1. 先掃描 uploads 目錄
+    if UPLOADS_DIR.exists():
+        for p in sorted(UPLOADS_DIR.glob("*"), key=lambda f: f.stat().st_mtime, reverse=True):
+            if p.is_file() and not p.name.startswith("."):
+                f_type = detect_file_type(p)
+                size_mb = round(p.stat().st_size / (1024 * 1024), 2)
+                item = {
                     "name": p.name,
-                    "path": f"/inputclip/{p.name}",
+                    "stem": p.stem,
+                    "folder": "uploads",
+                    "url": f"/uploads/{p.name}",
                     "absolute_path": str(p),
-                    "size_mb": round(p.stat().st_size / (1024 * 1024), 2),
-                    "type": p.suffix.lower().lstrip(".")
+                    "size_mb": size_mb,
+                    "type": f_type,
+                    "modified_at": p.stat().st_mtime
+                }
+                assets.append(item)
+                seen_stems.setdefault((p.stem, f_type), item)
+
+    # 2. 掃描 inputclip 範例目錄
+    if INPUTCLIP_DIR.exists():
+        for p in sorted(INPUTCLIP_DIR.glob("*")):
+            if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in (".mp4", ".wav", ".srt", ".vtt", ".txt"):
+                f_type = detect_file_type(p)
+                size_mb = round(p.stat().st_size / (1024 * 1024), 2)
+                assets.append({
+                    "name": p.name,
+                    "stem": p.stem,
+                    "folder": "inputclip",
+                    "url": f"/inputclip/{p.name}",
+                    "absolute_path": str(p),
+                    "size_mb": size_mb,
+                    "type": f_type,
+                    "modified_at": p.stat().st_mtime
                 })
-    return {"samples": samples}
+
+    # 3. 關聯配對同檔名之影片與字幕 (例如 director-film.mp4 配對 director-film.srt)
+    for item in assets:
+        if item["type"] == "video":
+            stem = item["stem"]
+            folder = item["folder"]
+            # 尋找同目錄或 uploads 內的同名字幕
+            matched_sub = next(
+                (a for a in assets if a["type"] == "subtitle" and a["stem"] == stem),
+                None
+            )
+            item["paired_subtitle"] = matched_sub
+
+    return {"assets": assets}
 
 
 @app.get("/api/presets")
@@ -125,25 +181,68 @@ async def list_css_presets():
 
 
 @app.post("/api/upload")
-async def upload_asset(file: UploadFile = File(...)):
-    """上傳檔案 (影片、音訊、字幕或文字檔)"""
-    dest = UPLOADS_DIR / file.filename
-    with dest.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+async def upload_asset(files: List[UploadFile] = File(...)):
+    """
+    支援單檔或多檔批量上傳 (影片、音訊、SRT字幕或文字檔)
+    若包含 SRT / VTT 字幕，自動解析為帶有時間軸的 SubtitleTrack 回傳，實現直接載入！
+    """
+    uploaded_items = []
+    parsed_tracks = []
+    videos = []
 
-    # 若為影片，解析其時長與長寬
-    info = {"width": 1920, "height": 1080, "duration": 0.0}
-    if dest.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm"):
-        w, h, d = get_video_info(str(dest))
-        info = {"width": w, "height": h, "duration": d}
+    for file in files:
+        dest = UPLOADS_DIR / file.filename
+        with dest.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        f_type = detect_file_type(dest)
+        item_info = {
+            "name": file.filename,
+            "url": f"/uploads/{file.filename}",
+            "absolute_path": str(dest),
+            "size_mb": round(dest.stat().st_size / (1024 * 1024), 2),
+            "type": f_type
+        }
+
+        # 若為影片，解析解析度與時長
+        if f_type == "video":
+            w, h, d = get_video_info(str(dest))
+            item_info["width"] = w
+            item_info["height"] = h
+            item_info["duration"] = d
+            videos.append(item_info)
+
+        # 若為 SRT / VTT 字幕，立即解析為 SubtitleTrack
+        elif f_type == "subtitle" and dest.suffix.lower() in (".srt", ".vtt"):
+            try:
+                content = dest.read_text(encoding="utf-8")
+                track = parse_srt_content(content, source_file=file.filename)
+                parsed_tracks.append({
+                    "filename": file.filename,
+                    "url": f"/uploads/{file.filename}",
+                    "track": track.model_dump()
+                })
+            except Exception as e:
+                logger.warning(f"解析上傳之字幕失敗 ({file.filename}): {e}")
+
+        uploaded_items.append(item_info)
 
     return {
         "status": "success",
-        "filename": file.filename,
-        "url": f"/uploads/{file.filename}",
-        "absolute_path": str(dest),
-        "info": info
+        "uploaded": uploaded_items,
+        "videos": videos,
+        "tracks": parsed_tracks
     }
+
+
+@app.delete("/api/assets/{filename}")
+async def delete_asset(filename: str):
+    """刪除 uploads/ 內的資產"""
+    dest = UPLOADS_DIR / filename
+    if dest.exists() and dest.is_file():
+        dest.unlink()
+        return {"status": "success", "deleted": filename}
+    raise HTTPException(status_code=404, detail=f"找不到檔案: {filename}")
 
 
 @app.post("/api/style/parse-css")
@@ -166,7 +265,6 @@ async def transcribe_endpoint(
     """【步驟 1】AI 語音辨識與自動斷句生成 SubtitleTrack"""
     p = Path(media_path)
     if not p.exists():
-        # 嘗試相對或 inputclip
         if (BASE_DIR / media_path.lstrip("/")).exists():
             p = BASE_DIR / media_path.lstrip("/")
         elif (INPUTCLIP_DIR / p.name).exists():
@@ -185,7 +283,6 @@ async def transcribe_endpoint(
     else:
         audio_file = str(p)
 
-    # 執行 faster-whisper 辨識
     try:
         raw_res = transcribe_audio(
             audio_path=audio_file,
@@ -213,7 +310,6 @@ async def align_endpoint(req: AlignRequest):
         else:
             raise HTTPException(status_code=404, detail=f"找不到媒體檔案: {req.media_path}")
 
-    # 音軌
     is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm"]
     if is_video:
         wav_path = UPLOADS_DIR / f"{p.stem}_extracted.wav"
@@ -222,7 +318,6 @@ async def align_endpoint(req: AlignRequest):
     else:
         audio_file = str(p)
 
-    # 原稿
     script_source = req.script_text
     if not script_source and req.script_path:
         sp = Path(req.script_path)
@@ -238,12 +333,11 @@ async def align_endpoint(req: AlignRequest):
         raise HTTPException(status_code=400, detail="請提供原稿文字內容或原稿檔案路徑")
 
     try:
-        # 先以 small 模型辨識 Word-level 時間戳記
         trans_res = transcribe_audio(
             audio_path=audio_file,
             model_size="small",
             device="cuda",
-            vad_filter=False,  # 歌曲對齊通常關閉 VAD
+            vad_filter=False,
             word_timestamps=True,
             initial_prompt="繁體中文"
         )
@@ -278,7 +372,6 @@ async def burn_endpoint(req: BurnVideoRequest):
         else:
             raise HTTPException(status_code=404, detail=f"找不到來源影片: {req.video_path}")
 
-    # 樣式決定 (若提供 CSS，優先解析 CSS)
     if req.css:
         style = SubtitleStyle.from_css(req.css)
     elif req.style:
@@ -286,7 +379,6 @@ async def burn_endpoint(req: BurnVideoRequest):
     else:
         style = SubtitleStyle()
 
-    # 字幕來源決定
     if req.track:
         sub_source = req.track
     elif req.subtitle_path:
