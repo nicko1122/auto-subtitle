@@ -516,7 +516,7 @@ def transcribe_endpoint(
             audio_path=audio_file,
             model_size=model,
             device=device,
-            vad_filter=True,
+            vad_filter=False,
             initial_prompt=whisper_prompt
         )
         track = build_subtitle_track(raw_res)

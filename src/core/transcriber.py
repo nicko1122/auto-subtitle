@@ -20,7 +20,9 @@ def transcribe_audio(
     language: Optional[str] = None,
     initial_prompt: Optional[str] = None,
     beam_size: int = 5,
-    vad_filter: bool = True,
+    vad_filter: bool = False,
+    condition_on_previous_text: bool = False,
+    hallucination_silence_threshold: Optional[float] = 2.0,
     word_timestamps: bool = True
 ) -> Dict[str, Any]:
     """
@@ -61,13 +63,15 @@ def transcribe_audio(
     if model is None:
         raise RuntimeError("無法以任何配置載入 Whisper 模型！")
 
-    logger.info(f"開始辨識音訊: {audio_p.name}...")
+    logger.info(f"開始辨識音訊: {audio_p.name} (vad_filter={vad_filter}, condition_on_prev={condition_on_previous_text})...")
     segments_iter, info = model.transcribe(
         str(audio_p),
         beam_size=beam_size,
         language=language,
         initial_prompt=initial_prompt,
         vad_filter=vad_filter,
+        condition_on_previous_text=condition_on_previous_text,
+        hallucination_silence_threshold=hallucination_silence_threshold,
         word_timestamps=word_timestamps
     )
 
