@@ -60,6 +60,8 @@
       </div>
       <div class="h-3.5 w-px bg-zinc-800"></div>
       <div id="active-media-badge" class="px-2 py-0.5 bg-zinc-800 rounded text-zinc-300 text-[11px]">未載入影片</div>
+      <span id="package-save-status" class="text-xs text-zinc-400">未開啟資產包</span>
+      <button id="btn-save-package" class="px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded text-white text-xs" title="Ctrl+S">儲存字幕</button>
       <div id="segment-count-badge" class="px-2 py-0.5 bg-zinc-800 rounded text-zinc-300 text-[11px]">0 句字幕</div>
     </div>
   </header>
@@ -250,8 +252,8 @@
               </span>
               <label class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-medium cursor-pointer transition flex items-center gap-1 shadow shadow-blue-500/20">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                <span>➕ 上傳檔案 (影片 / SRT / TXT / 字型)</span>
-                <input type="file" id="input-upload-files" multiple accept=".mp4,.mov,.mkv,.webm,.srt,.vtt,.json,.txt,.ttf,.otf,.ttc,.woff2" class="hidden">
+                <span>➕ 匯入影片／原詞／SRT</span>
+                <input type="file" id="input-upload-files" multiple accept=".mp4,.mov,.mkv,.webm,.avi,.flv,.wav,.mp3,.m4a,.flac,.srt,.vtt,.json,.txt,.ttf,.otf,.ttc,.woff2" class="hidden">
               </label>
             </div>
 
@@ -302,35 +304,20 @@
             <div class="flex items-center justify-between">
               <span class="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
-                步驟 2：選擇現有資產 (Asset Library)
+                步驟 2：開啟資產包
               </span>
               <div class="flex items-center gap-2.5 text-[11px]">
-                <label class="flex items-center gap-1 text-zinc-400 cursor-pointer hover:text-zinc-200 select-none">
-                  <input type="checkbox" id="toggle-show-samples" class="rounded bg-zinc-900 border-zinc-700 text-blue-500 focus:ring-0">
-                  <span>顯示內建範例</span>
+                <label class="cursor-pointer text-blue-400 hover:text-blue-300">
+                  匯入資料夾
+                  <input type="file" id="input-upload-folder" webkitdirectory multiple class="hidden">
                 </label>
                 <button id="btn-refresh-assets" class="text-zinc-400 hover:text-blue-400 transition" title="重新整理">🔄</button>
               </div>
             </div>
 
-            <!-- 資產分類過濾 Tabs -->
-            <div class="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800/80 text-[11px]">
-              <button data-asset-filter="video" class="asset-filter-btn flex-1 py-1 px-2 rounded bg-blue-600 text-white font-medium transition">
-                🎬 影片 (<span id="count-filter-video">0</span>)
-              </button>
-              <button data-asset-filter="subtitle" class="asset-filter-btn flex-1 py-1 px-2 rounded text-zinc-400 hover:text-zinc-200 transition">
-                📝 字幕 SRT (<span id="count-filter-subtitle">0</span>)
-              </button>
-              <button data-asset-filter="text" class="asset-filter-btn flex-1 py-1 px-2 rounded text-zinc-400 hover:text-zinc-200 transition">
-                📄 原稿 TXT (<span id="count-filter-text">0</span>)
-              </button>
-              <button data-asset-filter="all" class="asset-filter-btn py-1 px-2.5 rounded text-zinc-400 hover:text-zinc-200 transition">
-                全部
-              </button>
-            </div>
-
+            <p class="text-[11px] text-zinc-500">每包一支影片、選填原詞與一份 SRT。開啟後一起載入，編輯自動存回同一份 SRT。</p>
             <!-- 資產清單容器 -->
-            <div id="asset-library-container" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            <div id="asset-library-container" class="space-y-1.5 max-h-64 overflow-y-auto pr-1">
               <div class="text-xs text-zinc-500 py-4 text-center">正在讀取資產庫...</div>
             </div>
           </div>
@@ -390,9 +377,7 @@
                     <span>📜 參考原稿 / 歌詞</span>
                     <span class="text-[10px] text-emerald-400/90 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/50">選填・自動對照校對</span>
                   </span>
-                  <select id="select-script-asset" class="bg-zinc-950 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] max-w-[170px] truncate">
-                    <option value="">從資產庫載入 .txt 檔</option>
-                  </select>
+
                 </div>
                 <textarea
                   id="align-script-textarea"
@@ -692,7 +677,7 @@
               <!-- 方式 1：一鍵下載精選開源繁中字幕字型 & 匯入本機 Windows 字型 -->
               <div class="space-y-1.5">
                 <div class="text-[11px] text-zinc-400 font-medium">✨ 一鍵安裝免費商用繁中字幕字型 / 匯入本機系統字型：</div>
-                <div id="font-catalog-list" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                <div id="font-catalog-list" class="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                   <div class="text-zinc-500 text-center py-2">正在讀取字型清單...</div>
                 </div>
               </div>

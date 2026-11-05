@@ -16,9 +16,12 @@ const state = {
     language: "zh",
     segments: []
   },
-  assets: [],
-  assetFilter: "video", // "video" | "subtitle" | "text" | "all"
-  showSamples: false,
+  packages: [],
+  activePackage: null,
+  packageLoading: false,
+  packageBusy: false,
+  savedSubtitle: "[]",
+  savedScript: "",
   selectedSegmentIndex: 0,
   waveformPeaks: [],
   autoPauseAt: null,
@@ -94,10 +97,9 @@ const el = {
   timelineReadyBanner: document.getElementById("timeline-ready-banner"),
   bannerSegCount: document.getElementById("banner-seg-count"),
   inputUploadFiles: document.getElementById("input-upload-files"),
-  toggleShowSamples: document.getElementById("toggle-show-samples"),
-  countFilterVideo: document.getElementById("count-filter-video"),
-  countFilterSubtitle: document.getElementById("count-filter-subtitle"),
-  countFilterText: document.getElementById("count-filter-text"),
+  inputUploadFolder: document.getElementById("input-upload-folder"),
+  packageSaveStatus: document.getElementById("package-save-status"),
+  btnSavePackage: document.getElementById("btn-save-package"),
   assetLibraryContainer: document.getElementById("asset-library-container"),
   btnRefreshAssets: document.getElementById("btn-refresh-assets"),
   btnModeUnscripted: document.getElementById("btn-mode-unscripted"),
@@ -107,7 +109,6 @@ const el = {
   checkAutoProofread: document.getElementById("check-auto-proofread"),
   selectLlmEngine: document.getElementById("select-llm-engine"),
   selectWhisperModel: document.getElementById("select-whisper-model"),
-  selectScriptAsset: document.getElementById("select-script-asset"),
   alignScriptTextarea: document.getElementById("align-script-textarea"),
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
   btnAiAlign: document.getElementById("btn-ai-align"),
@@ -800,16 +801,13 @@ function renderOverlayText(text) {
   }
 }
 
-// 本地暫存機制 (防止重新整理遺失進度)
 function saveSessionToStorage() {
   try {
     localStorage.setItem("autosub_style_v1", JSON.stringify(state.style));
-    if (state.track && state.track.segments && state.track.segments.length > 0) {
-      localStorage.setItem("autosub_track_v1", JSON.stringify(state.track));
-    }
-  } catch (e) {
-    // ignore storage quota errors
+  } catch (error) {
+    // Browser storage is optional; the SRT is saved on disk.
   }
+  schedulePackageSave();
 }
 
 // 更新頂部「當前工作台掛載看板 (Active Workspace Slots)」
@@ -891,221 +889,221 @@ function initTabs() {
 }
 
 // ---------------- 4. Tab 1: 分類資產媒體庫 (Categorized Asset Library) ----------------
-async function loadAssetLibrary() {
-  const container = el.assetLibraryContainer;
-  container.innerHTML = `<div class="text-xs text-zinc-500 py-3 text-center">正在讀取資產庫...</div>`;
+function subtitleFingerprint() {
+  return JSON.stringify(state.track.segments.map(segment => [segment.start, segment.end, segment.text]));
+}
 
-  try {
-    const res = await fetch("/api/assets");
-    const data = await res.json();
-    state.assets = data.assets || [];
+function packageHasChanges() {
+  return !!state.activePackage && !state.packageLoading && (
+    subtitleFingerprint() !== state.savedSubtitle || el.alignScriptTextarea.value !== state.savedScript
+  );
+}
 
-    // 若使用者尚未上傳任何檔案，自動開啟「顯示內建範例」避免空白
-    const hasUploaded = state.assets.some(a => !a.is_sample);
-    if (!hasUploaded && !state.showSamples) {
-      state.showSamples = true;
-      if (el.toggleShowSamples) el.toggleShowSamples.checked = true;
-    }
-
-    updateScriptSelectDropdown();
-    renderFilteredAssetLibrary();
-  } catch (err) {
-    container.innerHTML = `<div class="text-xs text-red-400 py-3 text-center">讀取資產庫失敗: ${err.message}</div>`;
+function setPackageSaveStatus(text, failed = false) {
+  if (el.packageSaveStatus) {
+    el.packageSaveStatus.textContent = text;
+    el.packageSaveStatus.className = failed ? "text-xs text-red-400" : "text-xs text-zinc-400";
   }
 }
 
-function updateScriptSelectDropdown() {
-  if (!el.selectScriptAsset) return;
-  const currentVal = el.selectScriptAsset.value;
-  el.selectScriptAsset.innerHTML = `<option value="">-- 直接在下方貼上歌詞/原稿文字 --</option>`;
+let packageSaveTimer = null;
+let packageSavePromise = null;
 
-  const textAssets = state.assets.filter(a => a.type === "text");
-  textAssets.forEach(a => {
-    const opt = document.createElement("option");
-    opt.value = a.absolute_path;
-    opt.dataset.url = a.url;
-    const tag = a.is_sample ? "[範例] " : "";
-    const lineInfo = a.line_count ? ` (${a.line_count} 行)` : "";
-    opt.textContent = `${tag}${a.name}${lineInfo}`;
-    el.selectScriptAsset.appendChild(opt);
-  });
+async function saveActivePackage() {
+  clearTimeout(packageSaveTimer);
+  if (packageSavePromise) return packageSavePromise;
+  packageSavePromise = (async () => {
+    while (packageHasChanges()) {
+      const current = state.activePackage;
+      const subtitle = subtitleFingerprint();
+      const script = el.alignScriptTextarea.value;
+      const payload = { path: current.path };
+      if (subtitle !== state.savedSubtitle) payload.track = state.track;
+      if (script !== state.savedScript) payload.script_text = script;
+      setPackageSaveStatus("正在儲存至資產包…");
+      const response = await fetch("/api/packages/save", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "儲存失敗");
+      state.savedSubtitle = subtitle;
+      state.savedScript = script;
+      state.activePackage = data.package;
+      state.packages = state.packages.map(item => item.path === current.path ? data.package : item);
+      state.track.source_file = data.package.subtitle ? data.package.subtitle.name : state.track.source_file;
+      renderFilteredAssetLibrary();
+    }
+    if (state.activePackage) setPackageSaveStatus("已儲存至資產包");
+  })();
+  try {
+    await packageSavePromise;
+  } catch (error) {
+    setPackageSaveStatus("儲存失敗，請重試", true);
+    throw error;
+  } finally {
+    packageSavePromise = null;
+  }
+}
 
-  if (currentVal) {
-    el.selectScriptAsset.value = currentVal;
+function schedulePackageSave() {
+  if (!packageHasChanges()) return;
+  setPackageSaveStatus("尚有變更，等待儲存…");
+  clearTimeout(packageSaveTimer);
+  packageSaveTimer = setTimeout(() => {
+    saveActivePackage().catch(error => addLog(`資產包儲存失敗：${error.message}`, "error"));
+  }, 600);
+}
+
+async function openPackage(path) {
+  if (state.packageBusy) return;
+  state.packageBusy = true;
+  showBusyOverlay("正在開啟資產包…");
+  try {
+    await saveActivePackage();
+    const response = await fetch("/api/packages/open", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "開啟失敗");
+    state.packageLoading = true;
+    state.activePackage = data.package;
+    state.waveformPeaks = [];
+    state.selectedSegmentIndex = 0;
+    state.autoPauseAt = null;
+    el.video.pause();
+    loadVideoAsset(data.package.media);
+    el.alignScriptTextarea.value = data.script_text;
+    if (data.script_text && el.btnModeScripted) el.btnModeScripted.click();
+    if (!data.script_text && el.btnModeUnscripted) el.btnModeUnscripted.click();
+    setSubtitleTrack(data.track);
+    state.savedSubtitle = subtitleFingerprint();
+    state.savedScript = data.script_text;
+    try { localStorage.setItem("autosub_package_v1", data.package.path); } catch (error) {}
+    setPackageSaveStatus(data.package.subtitle ? "已載入包內 SRT" : "尚無 SRT，編輯後自動建立");
+    renderFilteredAssetLibrary();
+    addLog(`已開啟資產包「${data.package.name}」，影片、原稿與字幕已同步載入`, "success");
+  } catch (error) {
+    addLog(`開啟資產包失敗：${error.message}`, "error");
+  } finally {
+    state.packageLoading = false;
+    state.packageBusy = false;
+    hideBusyOverlay();
+  }
+}
+
+function clearPackageWorkspace() {
+  state.packageLoading = true;
+  state.activePackage = null;
+  state.waveformPeaks = [];
+  state.video = { filename: "", path: "", url: "", duration: 0, width: 1920, height: 1080 };
+  el.video.pause();
+  el.video.removeAttribute("src");
+  el.video.load();
+  el.videoFilename.textContent = "未載入影片";
+  el.mediaBadge.textContent = "未載入影片";
+  el.placeholder.classList.remove("hidden");
+  if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.add("hidden");
+  el.alignScriptTextarea.value = "";
+  setSubtitleTrack({ source_file: "", segments: [], duration: 0, language: "zh" });
+  try { localStorage.removeItem("autosub_package_v1"); } catch (error) {}
+  setPackageSaveStatus("未開啟資產包");
+  state.packageLoading = false;
+}
+
+async function managePackage(action, item) {
+  if (state.packageBusy) return;
+  let destination = item.path;
+  if (action === "delete") {
+    if (!confirm(`刪除整個「${item.name}」資產包及其中的影片、原詞與 SRT？`)) return;
+  } else {
+    const value = prompt(action === "rename" ? "資產包的新名稱" : "資產庫內的目標路徑，例如：客戶A/訪談", action === "rename" ? item.name : item.path);
+    if (!value || !value.trim()) return;
+    if (action === "rename") {
+      if (/[\\/]/.test(value)) { addLog("名稱不能包含路徑分隔符號，請使用移動功能", "error"); return; }
+      const parent = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/") + 1) : "";
+      destination = parent + value.trim();
+    } else destination = value.trim();
+  }
+  state.packageBusy = true;
+  showBusyOverlay("正在更新資產包…");
+  let reopen = null;
+  try {
+    await saveActivePackage();
+    const response = await fetch(action === "delete" ? `/api/packages?path=${encodeURIComponent(item.path)}` : "/api/packages/move", {
+      method: action === "delete" ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      ...(action === "delete" ? {} : { body: JSON.stringify({ path: item.path, destination }) })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "操作失敗");
+    if (state.activePackage && state.activePackage.path === item.path) {
+      if (action === "delete") clearPackageWorkspace();
+      else reopen = data.package.path;
+    }
+    await loadAssetLibrary();
+  } catch (error) {
+    addLog(`資產包操作失敗：${error.message}`, "error");
+  } finally {
+    state.packageBusy = false;
+    hideBusyOverlay();
+  }
+  if (reopen) await openPackage(reopen);
+}
+
+async function loadAssetLibrary() {
+  try {
+    const response = await fetch("/api/assets");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "讀取失敗");
+    state.packages = data.packages || [];
+    renderFilteredAssetLibrary();
+  } catch (error) {
+    el.assetLibraryContainer.textContent = `讀取資產包失敗：${error.message}`;
   }
 }
 
 function renderFilteredAssetLibrary() {
   const container = el.assetLibraryContainer;
-  const visibleAssets = state.assets.filter(a => state.showSamples || !a.is_sample);
-
-  // 更新各分類數量徽章
-  const vCount = visibleAssets.filter(a => a.type === "video").length;
-  const sCount = visibleAssets.filter(a => a.type === "subtitle").length;
-  const tCount = visibleAssets.filter(a => a.type === "text").length;
-  if (el.countFilterVideo) el.countFilterVideo.textContent = vCount;
-  if (el.countFilterSubtitle) el.countFilterSubtitle.textContent = sCount;
-  if (el.countFilterText) el.countFilterText.textContent = tCount;
-
-  const filtered = state.assetFilter === "all"
-    ? visibleAssets
-    : visibleAssets.filter(a => a.type === state.assetFilter);
-
   container.innerHTML = "";
-
-  if (!filtered.length) {
-    const hiddenSampleCount = state.assets.filter(a => a.is_sample && (state.assetFilter === "all" || a.type === state.assetFilter)).length;
-    const emptyDiv = document.createElement("div");
-    emptyDiv.className = "text-xs text-zinc-500 py-4 text-center space-y-2";
-    emptyDiv.innerHTML = `<div>此分類目前沒有您上傳的檔案</div>`;
-    if (!state.showSamples && hiddenSampleCount > 0) {
-      const btnShow = document.createElement("button");
-      btnShow.className = "px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-[11px] transition";
-      btnShow.textContent = `點此顯示 ${hiddenSampleCount} 個內建範例檔`;
-      btnShow.addEventListener("click", () => {
-        state.showSamples = true;
-        if (el.toggleShowSamples) el.toggleShowSamples.checked = true;
-        renderFilteredAssetLibrary();
-      });
-      emptyDiv.appendChild(btnShow);
-    }
-    container.appendChild(emptyDiv);
+  if (!state.packages.length) {
+    const empty = document.createElement("div");
+    empty.className = "text-xs text-zinc-500 py-4 text-center";
+    empty.textContent = "選取影片、SRT 與原稿建立資產包，或匯入已整理好的資料夾";
+    container.appendChild(empty);
     return;
   }
-
-  filtered.forEach(asset => {
-    const isUpload = !asset.is_sample;
-    const isActiveVideo = (asset.type === "video" && state.video.filename === asset.name);
-    const isActiveSub = (asset.type === "subtitle" && state.track.source_file === asset.name && state.track.segments.length > 0);
-    const isActive = isActiveVideo || isActiveSub;
-
+  state.packages.forEach(item => {
     const card = document.createElement("div");
-    card.className = isActive
-      ? "flex items-center justify-between p-2 bg-blue-950/30 border border-blue-500/50 rounded-lg text-xs transition"
-      : "flex items-center justify-between p-2 bg-zinc-900/80 hover:bg-zinc-800/90 rounded-lg border border-zinc-800 text-xs transition";
-
-    let icon = "📄";
-    if (asset.type === "video") icon = "🎬";
-    else if (asset.type === "subtitle") icon = "📝";
-    else if (asset.type === "audio") icon = "🎵";
-
-    const badgeColor = isUpload
-      ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
-      : "bg-zinc-700/30 text-zinc-400 border-zinc-700/50";
-    const sourceTag = isUpload ? "已上傳" : "範例";
-
-    let metaDetail = `${asset.size_mb} MB`;
-    if (asset.type === "subtitle" && asset.segment_count !== undefined) {
-      metaDetail = `${asset.segment_count} 句字幕 • ${asset.name.split('.').pop().toUpperCase()}`;
-    } else if (asset.type === "text" && asset.line_count !== undefined) {
-      metaDetail = `${asset.line_count} 行原稿 • TXT`;
-    }
-
+    const active = state.activePackage && state.activePackage.path === item.path;
+    card.className = `p-3 rounded-lg border space-y-2 ${active ? 'bg-blue-950/30 border-blue-500/60' : 'bg-zinc-900 border-zinc-800'}`;
     card.innerHTML = `
-      <div class="flex items-center gap-2 overflow-hidden flex-1 mr-2">
-        <span class="text-base shrink-0">${icon}</span>
-        <div class="truncate">
-          <div class="font-medium text-zinc-200 truncate flex items-center gap-1.5">
-            <span class="truncate asset-name"></span>
-            <span class="text-[9px] px-1.5 py-0.2 rounded border shrink-0 ${badgeColor}">${sourceTag}</span>
-            ${isActive ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold shrink-0">● 使用中</span>` : ''}
-          </div>
-          <div class="text-[10px] text-zinc-500 font-mono">${metaDetail}</div>
-        </div>
+      <div class="flex items-center justify-between gap-2">
+        <span class="package-name font-medium text-xs text-zinc-200 truncate"></span>
+        <button class="package-open px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded">${active ? '重新載入' : '開啟資產包'}</button>
       </div>
-
-      <div class="flex items-center gap-1 shrink-0">
-        ${asset.type === "video" ? `
-          <button class="btn-load-this-video px-2 py-1 ${isActiveVideo ? 'bg-blue-600 text-white' : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30'} rounded text-[11px] transition">
-            ${isActiveVideo ? '✓ 已載入' : '▶ 載入影片'}
-          </button>
-          ${asset.paired_subtitle ? `
-            <button class="btn-load-paired-all px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded text-[11px] transition" title="同時載入影片與同名字幕">
-              ⚡ 影片+字幕
-            </button>
-          ` : ''}
-        ` : ''}
-
-        ${asset.type === "subtitle" ? `
-          <button class="btn-load-this-sub px-2 py-1 ${isActiveSub ? 'bg-emerald-600 text-white' : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30'} rounded text-[11px] transition">
-            ${isActiveSub ? '✓ 已掛載' : '📝 載入時間軸'}
-          </button>
-        ` : ''}
-
-        ${asset.type === "text" ? `
-          <button class="btn-use-this-script px-2 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded text-[11px] transition">
-            🎯 選為對齊原稿
-          </button>
-        ` : ''}
-
-        ${isUpload ? `
-          <button class="btn-delete-asset px-1.5 py-1 text-zinc-500 hover:text-red-400 rounded text-[11px]" title="刪除檔案">✕</button>
-        ` : ''}
-      </div>
-    `;
-    card.querySelector(".asset-name").textContent = asset.name;
-
-    // 載入影片
-    const btnVideo = card.querySelector(".btn-load-this-video");
-    if (btnVideo) {
-      btnVideo.addEventListener("click", () => {
-        loadVideoAsset(asset);
-      });
+      <div class="package-files text-[11px] text-zinc-400 break-all whitespace-pre-line"></div>
+      <div class="flex gap-3 text-[11px] text-zinc-500">
+        <button class="package-rename hover:text-zinc-200">重新命名</button>
+        <button class="package-move hover:text-zinc-200">移動</button>
+        <button class="package-delete hover:text-red-400">刪除整包</button>
+      </div>`;
+    if (item.error) {
+      card.textContent = `📁 ${item.path}：${item.error}`;
+      container.appendChild(card);
+      return;
     }
-
-    // 載入成對影片與字幕
-    const btnPaired = card.querySelector(".btn-load-paired-all");
-    if (btnPaired && asset.paired_subtitle) {
-      btnPaired.addEventListener("click", async () => {
-        loadVideoAsset(asset);
-        await loadSubtitleAsset(asset.paired_subtitle);
-        addLog(`⚡ 已同步載入 ${asset.name} 及其成對時間軸字幕！`, "success");
-      });
+    card.querySelector(".package-name").textContent = `📁 ${item.path}${active ? ' · 使用中' : ''}`;
+    card.querySelector(".package-files").textContent = [
+      `🎬 ${item.media.name}`,
+      item.subtitle ? `📝 ${item.subtitle.name} · ${item.subtitle.segment_count || 0} 句` : "📝 尚無 SRT",
+      item.script ? `📄 ${item.script.name}` : "📄 尚無原詞（選填）"
+    ].join("\n");
+    card.querySelector(".package-open").addEventListener("click", () => openPackage(item.path));
+    for (const action of ["rename", "move", "delete"]) {
+      card.querySelector(`.package-${action}`).addEventListener("click", () => managePackage(action, item));
     }
-
-    // 載入字幕
-    const btnSub = card.querySelector(".btn-load-this-sub");
-    if (btnSub) {
-      btnSub.addEventListener("click", () => {
-        loadSubtitleAsset(asset);
-      });
-    }
-
-    // 選為對齊原稿 (.txt)
-    const btnScript = card.querySelector(".btn-use-this-script");
-    if (btnScript) {
-      btnScript.addEventListener("click", async () => {
-        await selectScriptAssetForAlignment(asset);
-      });
-    }
-
-    // 刪除資產
-    const btnDel = card.querySelector(".btn-delete-asset");
-    if (btnDel) {
-      btnDel.addEventListener("click", async () => {
-        if (confirm(`確定要從伺服器刪除 ${asset.name} 嗎？`)) {
-          await fetch(`/api/assets/${encodeURIComponent(asset.name)}`, { method: "DELETE" });
-          addLog(`已刪除資產: ${asset.name}`, "info");
-          loadAssetLibrary();
-        }
-      });
-    }
-
     container.appendChild(card);
   });
-}
-
-async function selectScriptAssetForAlignment(asset) {
-  try {
-    const res = await fetch(asset.url);
-    const text = await res.text();
-    if (el.btnModeScripted) el.btnModeScripted.click();
-    if (el.selectScriptAsset) el.selectScriptAsset.value = asset.absolute_path;
-    if (el.alignScriptTextarea) el.alignScriptTextarea.value = text;
-    addLog(`📄 已載入原稿「${asset.name}」至步驟 3 有稿對齊區`, "success");
-  } catch (err) {
-    addLog(`讀取原稿失敗: ${err.message}`, "error");
-  }
 }
 
 function loadVideoAsset(asset) {
@@ -1113,104 +1111,45 @@ function loadVideoAsset(asset) {
   state.video.url = asset.url;
   state.video.path = asset.absolute_path;
   el.video.src = asset.url;
-  try {
-    el.video.load();
-  } catch (e) {
-    console.warn("Video load call error:", e);
-  }
+  el.video.load();
   el.videoFilename.textContent = asset.name;
   el.mediaBadge.textContent = asset.name;
   el.placeholder.classList.add("hidden");
   if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.remove("hidden");
   updateWorkspaceSlots();
-  renderFilteredAssetLibrary();
-  addLog(`已載入影片: ${asset.name}`, "success");
-}
-
-async function loadSubtitleAsset(asset) {
-  try {
-    const res = await fetch(asset.url);
-    const content = await res.text();
-    if (asset.name.toLowerCase().endsWith(".json")) {
-      const trackData = JSON.parse(content);
-      trackData.source_file = asset.name;
-      setSubtitleTrack(trackData);
-    } else {
-      parseAndSetSrt(content, asset.name);
-    }
-    renderFilteredAssetLibrary();
-    addLog(`✔ 現成時間軸字幕已掛載: ${asset.name} (共 ${state.track.segments.length} 句)`, "success");
-  } catch (err) {
-    addLog(`載入字幕失敗: ${err.message}`, "error");
-  }
 }
 
 // ---------------- 5. 檔案上傳與全域拖放 (Drag & Drop) ----------------
 async function handleBatchFileUpload(files) {
-  if (!files || !files.length) return;
-
-  const formData = new FormData();
-  for (let i = 0; i < files.length; i++) {
-    formData.append("files", files[i]);
-  }
-
-  addLog(`正在上傳 ${files.length} 個檔案至資產庫...`);
-
+  if (!files || !files.length || state.packageBusy) return;
+  state.packageBusy = true;
+  showBusyOverlay("正在匯入資產包…");
+  let openPath = null;
   try {
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
-    const data = await res.json();
-
-    if (data.status === "success") {
-      addLog(`✔ 上傳成功: 共儲存 ${data.uploaded.length} 個檔案`, "success");
-
-      // 1. 若有上傳影片，立即載入最新影片至播放器並切到影片分類
-      if (data.videos && data.videos.length > 0) {
-        const v = data.videos[0];
-        state.assetFilter = "video";
-        loadVideoAsset({
-          name: v.name,
-          url: v.url,
-          absolute_path: v.absolute_path
-        });
-      }
-
-      // 2. 若上傳包含 SRT / VTT 字幕，直接掛載時間軸！
-      if (data.tracks && data.tracks.length > 0) {
-        const t = data.tracks[0];
-        t.track.source_file = t.filename;
-        setSubtitleTrack(t.track);
-        addLog(`🎉 偵測到現成時間軸字幕 (${t.filename})！已直接掛載 (共 ${t.track.segments.length} 句)，無需重複 AI 辨識！`, "success");
-
-        if (t.track.segments.length > 0) {
-          el.video.currentTime = t.track.segments[0].start;
-          renderOverlayText(t.track.segments[0].text);
-        }
-      }
-
-      // 3. 若上傳包含 TXT 原稿，自動填入有稿對齊區
-      if (data.scripts && data.scripts.length > 0) {
-        const s = data.scripts[0];
-        if (el.btnModeScripted) el.btnModeScripted.click();
-        if (el.alignScriptTextarea) el.alignScriptTextarea.value = s.content;
-        addLog(`📄 偵測到原稿檔案 (${s.filename})，已自動載入至「有稿對齊」區！`, "success");
-      }
-
-      // 4. 若上傳包含 TTF / OTF / TTC / WOFF2 字型檔，自動載入字型並套用！
-      if (data.fonts && data.fonts.length > 0) {
-        await loadFontCatalog();
-        const f = data.fonts[0];
-        selectAndApplyFont(f.family, f.display_name);
-        addLog(`🔤 已成功安裝並套用字型：${f.display_name} (${f.family})`, "success");
-      }
-
-      // 刷新資產庫
-      await loadAssetLibrary();
-    } else {
-      throw new Error(data.detail || "上傳失敗");
+    await saveActivePackage();
+    const formData = new FormData();
+    const createsPackage = Array.from(files).some(file => /\.(mp4|mov|mkv|webm|avi|flv|wav|mp3|m4a|aac|flac|ogg)$/i.test(file.name));
+    if (!createsPackage && state.activePackage) formData.append("package_path", state.activePackage.path);
+    for (const file of files) formData.append("files", file, file.webkitRelativePath || file.name);
+    const response = await fetch("/api/upload", { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "匯入失敗");
+    await loadAssetLibrary();
+    if (data.packages.length) openPath = data.packages[0].path;
+    if (data.fonts.length) {
+      await loadFontCatalog();
+      selectAndApplyFont(data.fonts[0].family, data.fonts[0].display_name);
     }
-  } catch (err) {
-    addLog(`上傳失敗: ${err.message}`, "error");
+    addLog(`已匯入 ${data.packages.length} 個資產包`, "success");
+  } catch (error) {
+    addLog(`匯入失敗：${error.message}`, "error");
+  } finally {
+    state.packageBusy = false;
+    hideBusyOverlay();
+    el.inputUploadFiles.value = "";
+    if (el.inputUploadFolder) el.inputUploadFolder.value = "";
   }
+  if (openPath) await openPackage(openPath);
 }
 
 function initUniversalDragAndDrop() {
@@ -1240,34 +1179,20 @@ function initUniversalDragAndDrop() {
     }
   });
 
-  el.inputUploadFiles.addEventListener("change", (e) => {
-    handleBatchFileUpload(e.target.files);
+  el.inputUploadFiles.addEventListener("change", event => handleBatchFileUpload(event.target.files));
+  el.inputUploadFolder.addEventListener("change", event => handleBatchFileUpload(event.target.files));
+  el.btnRefreshAssets.addEventListener("click", loadAssetLibrary);
+  el.btnSavePackage.addEventListener("click", () => saveActivePackage().catch(error => addLog(error.message, "error")));
+  el.alignScriptTextarea.addEventListener("input", schedulePackageSave);
+  window.addEventListener("beforeunload", event => {
+    if (packageHasChanges()) { event.preventDefault(); event.returnValue = ""; }
   });
-
-  el.btnRefreshAssets.addEventListener("click", () => {
-    loadAssetLibrary();
-    addLog("已重新整理資產庫", "info");
+  window.addEventListener("keydown", event => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      saveActivePackage().catch(error => addLog(error.message, "error"));
+    }
   });
-
-  // 資產分類切換按鈕
-  document.querySelectorAll(".asset-filter-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      state.assetFilter = btn.dataset.assetFilter;
-      document.querySelectorAll(".asset-filter-btn").forEach(b => {
-        b.className = "asset-filter-btn flex-1 py-1 px-2 rounded text-zinc-400 hover:text-zinc-200 transition";
-      });
-      btn.className = "asset-filter-btn flex-1 py-1 px-2 rounded bg-blue-600 text-white font-medium transition";
-      renderFilteredAssetLibrary();
-    });
-  });
-
-  // 顯示內建範例開關
-  if (el.toggleShowSamples) {
-    el.toggleShowSamples.addEventListener("change", (e) => {
-      state.showSamples = e.target.checked;
-      renderFilteredAssetLibrary();
-    });
-  }
 }
 
 // ---------------- 6. AI 功能按鈕與模式切換 ----------------
@@ -1286,21 +1211,6 @@ function initAiButtons() {
       el.panelAiUnscripted.classList.add("hidden");
       el.btnModeScripted.className = "flex-1 py-1.5 px-2 rounded bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-medium transition";
       el.btnModeUnscripted.className = "flex-1 py-1.5 px-2 rounded text-zinc-400 hover:text-zinc-200 transition";
-    });
-  }
-
-  // 當從下拉選單選擇原稿檔時，自動載入內容預覽
-  if (el.selectScriptAsset) {
-    el.selectScriptAsset.addEventListener("change", async (e) => {
-      const opt = e.target.selectedOptions[0];
-      if (opt && opt.dataset.url) {
-        try {
-          const res = await fetch(opt.dataset.url);
-          el.alignScriptTextarea.value = await res.text();
-        } catch (err) {
-          console.error(err);
-        }
-      }
     });
   }
 
@@ -1381,10 +1291,9 @@ function initAiButtons() {
       }
 
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
-      const scriptPath = el.selectScriptAsset ? el.selectScriptAsset.value : "";
       const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
 
-      if (!scriptText && !scriptPath) {
+      if (!scriptText) {
         addLog("請先選擇原稿 .txt 檔案或在文字框貼上歌詞/原稿內容", "error");
         return;
       }
@@ -1397,7 +1306,6 @@ function initAiButtons() {
       try {
         const payload = { media_path: media, llm_provider: llmProvider };
         if (scriptText) payload.script_text = scriptText;
-        if (scriptPath) payload.script_path = scriptPath;
 
         const res = await fetch("/api/ai/align", {
           method: "POST",
@@ -1470,56 +1378,11 @@ function initAiButtons() {
 }
 
 // 強健 SRT / VTT 解析器 (客戶端)
-function parseAndSetSrt(srtContent, sourceName = "manual.srt") {
-  const clean = srtContent.replace(/^\uFEFF/, "").replace(/^WEBVTT[^\n]*\n+/i, "").trim();
-  const blocks = clean.split(/\r?\n\s*\r?\n/);
-  const segments = [];
-
-  blocks.forEach((block, idx) => {
-    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (lines.length >= 2) {
-      let timeLineIdx = -1;
-      let sId = idx + 1;
-      for (let i = 0; i < Math.min(3, lines.length); i++) {
-        if (lines[i].includes("-->")) {
-          timeLineIdx = i;
-          break;
-        }
-      }
-
-      if (timeLineIdx !== -1) {
-        if (timeLineIdx > 0 && !isNaN(parseInt(lines[0], 10))) {
-          sId = parseInt(lines[0], 10);
-        }
-        const timeMatch = lines[timeLineIdx].match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)/);
-        if (timeMatch) {
-          const parseT = (str) => {
-            str = str.replace(',', '.');
-            const [h, m, s] = str.split(':');
-            return parseFloat(h) * 3600 + parseFloat(m) * 60 + parseFloat(s);
-          };
-          const start = parseT(timeMatch[1]);
-          const end = parseT(timeMatch[2]);
-          const text = lines.slice(timeLineIdx + 1).join(" ");
-          segments.push({ id: sId, start, end, text, words: [] });
-        }
-      }
-    }
-  });
-
-  setSubtitleTrack({
-    version: "1.0.0",
-    source_file: sourceName,
-    duration: segments.length ? segments[segments.length - 1].end : 0,
-    language: "zh",
-    segments: segments
-  });
-}
-
 // ---------------- 7. Tab 2: 斷點校對與字幕管理編輯器 ----------------
 function drawWaveformTimeline() {
   if (!el.waveformCanvas || !el.waveformBarWrapper) return;
   if ((!state.waveformPeaks || !state.waveformPeaks.length) && (!state.track.segments || !state.track.segments.length)) {
+    el.waveformBarWrapper.classList.add("hidden");
     return;
   }
 
@@ -1596,8 +1459,8 @@ function normalizeTrackSegments() {
   state.track.segments.sort((a, b) => a.start - b.start);
   state.track.segments.forEach((seg, i) => {
     seg.id = i + 1;
-    seg.start = Math.max(0, Number(seg.start.toFixed(2)));
-    seg.end = Math.max(seg.start + 0.1, Number(seg.end.toFixed(2)));
+    seg.start = Math.max(0, Number(seg.start));
+    seg.end = Math.max(seg.start + 0.001, Number(seg.end));
     if (!seg.expected_chars) {
       seg.expected_chars = Math.max(2, Math.min(22, Math.round((seg.end - seg.start) * 3.3)));
     }
@@ -1605,6 +1468,9 @@ function normalizeTrackSegments() {
 }
 
 function setSubtitleTrack(track) {
+  if (state.activePackage) {
+    track.source_file = state.activePackage.subtitle ? state.activePackage.subtitle.name : state.activePackage.media.stem + ".srt";
+  }
   state.track = track;
   normalizeTrackSegments();
   el.segmentCountBadge.textContent = `${track.segments.length} 句字幕`;
@@ -2217,7 +2083,6 @@ function initEditorViewToggle() {
   // 5. 清空字幕
   el.btnClearSubtitles.addEventListener("click", () => {
     if (confirm("確定要清空目前時間軸上的所有字幕嗎？")) {
-      localStorage.removeItem("autosub_track_v1");
       setSubtitleTrack({ ...state.track, source_file: "", segments: [] });
       addLog("已清空字幕時間軸", "info");
     }
@@ -3370,26 +3235,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   await loadFontCatalog();
   await loadAssetLibrary();
 
-  // 2. 自動載入使用者最新上傳的影片與配對字幕（或還原暫存字幕）
-  try {
-    const userVideo = state.assets.find(a => !a.is_sample && a.type === "video");
-    if (userVideo) {
-      loadVideoAsset(userVideo);
-      if (userVideo.paired_subtitle) {
-        await loadSubtitleAsset(userVideo.paired_subtitle);
-      } else {
-        const savedTrack = localStorage.getItem("autosub_track_v1");
-        if (savedTrack) {
-          const parsed = JSON.parse(savedTrack);
-          if (parsed && parsed.segments && parsed.segments.length > 0) {
-            setSubtitleTrack(parsed);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error("Auto load check failed:", e);
-  }
+  let lastPackage = null;
+  try { lastPackage = localStorage.getItem("autosub_package_v1"); } catch (error) {}
+  const initial = state.packages.find(item => item.path === lastPackage && !item.error) || state.packages.find(item => !item.error);
+  if (initial) await openPackage(initial.path);
 
   updateWorkspaceSlots();
   addLog("AutoSubtitle AI Studio 系統初始化完成！(快捷鍵: Space 播放/暫停)", "success");

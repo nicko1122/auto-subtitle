@@ -4,6 +4,9 @@ import logging
 import shutil
 import uuid
 import ipaddress
+from urllib.parse import quote
+
+from . import asset_packages
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 
@@ -84,6 +87,19 @@ app.mount("/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 
 
 # ---------------- API Schemas ----------------
+class PackageRequest(BaseModel):
+    path: str
+
+
+class MovePackageRequest(PackageRequest):
+    destination: str
+
+
+class SavePackageRequest(PackageRequest):
+    track: Optional[SubtitleTrack] = None
+    script_text: Optional[str] = None
+
+
 class ParseCssRequest(BaseModel):
     css: str
 
@@ -173,7 +189,7 @@ def _inspect_asset_item(p: Path, folder: str, url_prefix: str) -> Dict[str, Any]
         "stem": p.stem,
         "folder": folder,
         "is_sample": (folder == "inputclip"),
-        "url": f"{url_prefix}/{p.name}",
+        "url": f"{url_prefix}/{quote(p.name)}",
         "absolute_path": str(p),
         "size_mb": size_mb,
         "type": f_type,
@@ -201,42 +217,104 @@ def _inspect_asset_item(p: Path, folder: str, url_prefix: str) -> Dict[str, Any]
     return item
 
 
+def _describe_package(directory: Path):
+    relative = directory.relative_to(UPLOADS_DIR).as_posix()
+    media, subtitle, script = asset_packages.package_files(directory)
+    prefix = "/uploads/" + quote(relative)
+    def inspect(path):
+        if path is None:
+            return None
+        item = _inspect_asset_item(path, "uploads", prefix)
+        item["package_path"] = relative
+        return item
+    return {
+        "path": relative, "name": directory.name,
+        "media": inspect(media), "subtitle": inspect(subtitle), "script": inspect(script),
+        "modified_at": max(p.stat().st_mtime for p in (media, subtitle, script) if p is not None),
+    }
+
+
 @app.get("/api/assets")
-async def list_assets():
-    """
-    列出伺服器上已儲存的資產 (uploads/ 使用者資產 以及 inputclip/ 精選範例)
-    自動排除暫存音軌 (*_extracted.wav) 與開發測試產物，並辨識成對的影片與字幕！
-    """
-    assets = []
-
-    # 1. 掃描 uploads 目錄 (使用者上傳資產)
-    if UPLOADS_DIR.exists():
-        for p in sorted(UPLOADS_DIR.glob("*"), key=lambda f: f.stat().st_mtime, reverse=True):
-            if not p.is_file() or p.name.startswith("."):
+def list_assets():
+    with asset_packages.mutation_lock:
+        packages = []
+        for path in asset_packages.list_packages(UPLOADS_DIR):
+            try:
+                packages.append(_describe_package(path))
+            except ValueError as error:
+                packages.append({"path": path.relative_to(UPLOADS_DIR).as_posix(), "name": path.name, "error": str(error)})
+        assets = []
+        for package in packages:
+            if "error" in package:
                 continue
-            # 排除舊版遺留的提取音軌或暫存檔
-            if p.name.endswith("_extracted.wav") or p.name.endswith(".temp_burn.ass"):
-                continue
-            assets.append(_inspect_asset_item(p, "uploads", "/uploads"))
+            package["media"]["paired_subtitle"] = package["subtitle"]
+            assets.extend(package[key] for key in ("media", "subtitle", "script") if package[key])
+        # Keep loose files visible to existing API clients without moving user files on startup.
+        for root, folder in ((UPLOADS_DIR, "uploads"), (INPUTCLIP_DIR, "inputclip")):
+            for path in root.glob("*"):
+                if path.is_file() and not path.is_symlink() and not path.name.startswith("."):
+                    assets.append(_inspect_asset_item(path, folder, "/" + folder))
+        return {"assets": assets, "packages": packages}
 
-    # 2. 掃描 inputclip 範例目錄 (僅保留乾淨的核心範例檔，過濾中間 json 與 vtt)
-    ALLOWED_SAMPLES = {"test_video.mp4", "audio.aligned.srt", "audio-org.txt", "audio.srt"}
-    if INPUTCLIP_DIR.exists():
-        for p in sorted(INPUTCLIP_DIR.glob("*")):
-            if p.is_file() and p.name in ALLOWED_SAMPLES:
-                assets.append(_inspect_asset_item(p, "inputclip", "/inputclip"))
 
-    # 3. 關聯配對同檔名之影片與字幕 (例如 director-film.mp4 配對 director-film.srt)
-    for item in assets:
-        if item["type"] == "video":
-            stem = item["stem"]
-            matched_sub = next(
-                (a for a in assets if a["type"] == "subtitle" and (a["stem"] == stem or a["stem"].startswith(stem + "."))),
-                None
-            )
-            item["paired_subtitle"] = matched_sub
+@app.post("/api/packages/open")
+def open_package(req: PackageRequest):
+    try:
+        with asset_packages.mutation_lock:
+            directory = asset_packages.resolve_package(UPLOADS_DIR, req.path)
+            package = _describe_package(directory)
+            media, subtitle, script = asset_packages.package_files(directory)
+            track = parse_srt_content(subtitle.read_text(encoding="utf-8-sig"), subtitle.name) if subtitle else SubtitleTrack(source_file=media.stem + ".srt")
+            return {"package": package, "track": track.model_dump(), "script_text": script.read_text(encoding="utf-8-sig") if script else ""}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    return {"assets": assets}
+
+@app.post("/api/packages/save")
+def save_package(req: SavePackageRequest):
+    try:
+        with asset_packages.mutation_lock:
+            directory = asset_packages.resolve_package(UPLOADS_DIR, req.path)
+            media, subtitle, script = asset_packages.package_files(directory)
+            if req.track is not None:
+                asset_packages.atomic_write(subtitle or directory / (media.stem + ".srt"), to_srt(req.track))
+            if req.script_text is not None:
+                asset_packages.atomic_write(script or directory / (media.stem + ".txt"), req.script_text)
+            return {"status": "success", "package": _describe_package(directory)}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/packages/move")
+def move_package(req: MovePackageRequest):
+    try:
+        with asset_packages.mutation_lock:
+            directory = asset_packages.move_package(UPLOADS_DIR, req.path, req.destination)
+            return {"status": "success", "package": _describe_package(directory)}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/packages")
+def delete_package(path: str):
+    try:
+        with asset_packages.mutation_lock:
+            directory = asset_packages.resolve_package(UPLOADS_DIR, path)
+            asset_packages.package_files(directory)
+            shutil.rmtree(directory)
+            return {"status": "success"}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/presets")
@@ -256,98 +334,58 @@ async def list_css_presets():
 
 
 @app.post("/api/upload")
-async def upload_asset(files: List[UploadFile] = File(...)):
-    """
-    支援單檔或多檔批量上傳 (影片、音訊、SRT字幕、文字檔或 TTF/OTF 字型檔)
-    若包含 SRT / VTT 字幕，自動解析為帶有時間軸的 SubtitleTrack 回傳，實現直接載入！
-    若包含 TXT 原稿，一併回傳原稿內容供有稿對齊直接使用！
-    若包含 TTF / OTF / TTC / WOFF2 字型檔，自動安裝至專案 fonts/ 目錄並回傳字型家族資訊！
-    """
-    uploaded_items = []
-    parsed_tracks = []
-    videos = []
-    scripts = []
+def upload_asset(files: List[UploadFile] = File(...), package_path: Optional[str] = Form(None)):
+    media_files = []
     fonts = []
-
     for file in files:
-        safe_name = Path(file.filename or "unnamed").name
-        ext = Path(safe_name).suffix.lower()
-
-        # 若為字型檔案 (.ttf / .otf / .ttc / .woff2)，直接安裝至 fonts/ 目錄
-        if ext in ALLOWED_FONT_EXTS:
-            font_dest = FONTS_DIR / safe_name
-            with font_dest.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            font_info = install_font_from_file(str(font_dest), custom_filename=safe_name)
-            fonts.append(font_info)
-            uploaded_items.append({
-                "name": safe_name,
-                "folder": "fonts",
-                "type": "font",
-                "url": font_info["url"],
-                "family": font_info["family"],
-                "display_name": font_info["display_name"],
-                "size_mb": font_info["size_mb"]
-            })
-            continue
-
-        if detect_file_type(Path(safe_name)) == "other":
-            raise HTTPException(status_code=400, detail="不支援的上傳格式")
-        dest = UPLOADS_DIR / safe_name
-        with dest.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        item_info = _inspect_asset_item(dest, "uploads", "/uploads")
-        f_type = item_info["type"]
-
-        # 若為影片，解析解析度與時長
-        if f_type == "video":
-            w, h, d = get_video_info(str(dest))
-            item_info["width"] = w
-            item_info["height"] = h
-            item_info["duration"] = d
-            videos.append(item_info)
-
-        # 若為 SRT / VTT / JSON 字幕，立即解析為 SubtitleTrack
-        elif f_type == "subtitle":
-            try:
-                content = dest.read_text(encoding="utf-8")
-                if dest.suffix.lower() == ".json":
-                    track = SubtitleTrack(**json.loads(content))
-                else:
-                    track = parse_srt_content(content, source_file=safe_name)
-                parsed_tracks.append({
-                    "filename": safe_name,
-                    "url": f"/uploads/{safe_name}",
-                    "track": track.model_dump()
-                })
-            except Exception as e:
-                logger.warning(f"解析上傳之字幕失敗 ({safe_name}): {e}")
-
-        # 若為 TXT 原稿/歌詞
-        elif f_type == "text":
-            try:
-                content = dest.read_text(encoding="utf-8")
-                scripts.append({
-                    "filename": safe_name,
-                    "url": f"/uploads/{safe_name}",
-                    "absolute_path": str(dest),
-                    "content": content,
-                    "line_count": item_info.get("line_count", 0)
-                })
-            except Exception as e:
-                logger.warning(f"讀取上傳之原稿失敗 ({safe_name}): {e}")
-
-        uploaded_items.append(item_info)
-
-    return {
-        "status": "success",
-        "uploaded": uploaded_items,
-        "videos": videos,
-        "tracks": parsed_tracks,
-        "scripts": scripts,
-        "fonts": fonts
-    }
+        name = Path(file.filename or "unnamed").name
+        if Path(name).suffix.lower() in ALLOWED_FONT_EXTS:
+            fonts.append(file)
+        else:
+            media_files.append((file.filename or "unnamed", file.file))
+    try:
+        if package_path and media_files:
+            with asset_packages.mutation_lock:
+                directory = asset_packages.resolve_package(UPLOADS_DIR, package_path)
+                suffixes = [Path(name).suffix.lower() for name, _ in media_files]
+                if any(suffix not in asset_packages.SUBTITLE_EXTENSIONS | asset_packages.SCRIPT_EXTENSIONS for suffix in suffixes):
+                    raise ValueError("補入資產包僅接受字幕或原稿；新增影片請建立新包")
+                if sum(suffix in asset_packages.SUBTITLE_EXTENSIONS for suffix in suffixes) > 1 or sum(suffix in asset_packages.SCRIPT_EXTENSIONS for suffix in suffixes) > 1:
+                    raise ValueError("一次補入一份工作字幕與一份原稿")
+                directories = [asset_packages.import_files(UPLOADS_DIR, "", media_files, target=directory)]
+        else:
+            groups = asset_packages.group_uploads(media_files)
+            directories = [asset_packages.import_files(UPLOADS_DIR, name, items) for name, items in groups.items()]
+        installed_fonts = []
+        for file in fonts:
+            name = Path(file.filename).name
+            dest = FONTS_DIR / name
+            with dest.open("wb") as output:
+                shutil.copyfileobj(file.file, output)
+            installed_fonts.append(install_font_from_file(str(dest), custom_filename=name))
+        packages = [_describe_package(path) for path in directories]
+        uploaded, videos, tracks, scripts = [], [], [], []
+        for package in packages:
+            media, subtitle, script = package["media"], package["subtitle"], package["script"]
+            if media["type"] == "video":
+                width, height, duration = get_video_info(media["absolute_path"])
+                media.update(width=width, height=height, duration=duration)
+            videos.append(media)
+            uploaded.extend(item for item in (media, subtitle, script) if item)
+            if subtitle:
+                content = Path(subtitle["absolute_path"]).read_text(encoding="utf-8")
+                tracks.append({"filename": subtitle["name"], "url": subtitle["url"], "track": parse_srt_content(content, subtitle["name"]).model_dump()})
+            if script:
+                scripts.append({**script, "content": Path(script["absolute_path"]).read_text(encoding="utf-8")})
+        uploaded.extend({**font, "type": "font", "folder": "fonts"} for font in installed_fonts)
+        return {
+            "status": "success", "packages": packages, "uploaded": uploaded,
+            "videos": videos, "tracks": tracks, "scripts": scripts, "fonts": installed_fonts,
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/fonts")

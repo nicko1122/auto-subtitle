@@ -9,8 +9,9 @@ class Element {
   set innerHTML(value) { this.html = value; }
   get innerHTML() { return this.html; }
   appendChild(node) { this.children.push(node); }
+  addEventListener() {}
   querySelector(selector) {
-    if (!['.asset-name', '.font-label', '.font-description'].includes(selector)) return null;
+    if (!['.package-name', '.package-files', '.package-open', '.package-rename', '.package-move', '.package-delete', '.font-label', '.font-description'].includes(selector)) return null;
     if (!this.nodes.has(selector)) this.nodes.set(selector, new Element());
     return this.nodes.get(selector);
   }
@@ -21,20 +22,20 @@ const context = {
   document: { createElement: () => new Element() },
   el: { assetLibraryContainer: assets, fontCatalogList: fonts },
   state: {
-    assets: [{ name: payload + '.txt', type: 'text', size_mb: 1, line_count: 1, is_sample: false }],
-    showSamples: true, assetFilter: 'all', video: {}, track: {}, style: {},
+    packages: [{ path: payload, name: payload, media: { name: payload + '.mp4' }, subtitle: { name: payload + '.srt', segment_count: 1 }, script: { name: payload + '.txt' } }],
+    activePackage: null, video: {}, track: {}, style: {},
   },
 };
 function evaluate(start, end) {
   const offset = source.indexOf(start);
   vm.runInNewContext(source.slice(offset, source.indexOf(end, offset)), context);
 }
-evaluate('function renderFilteredAssetLibrary()', '\nasync function selectScriptAssetForAlignment');
+evaluate('function renderFilteredAssetLibrary()', '\nfunction loadVideoAsset');
 evaluate('function renderFontManagerCatalog(', '\nfunction applyFontCatalogData');
 context.renderFilteredAssetLibrary();
 const card = assets.children[0];
 assert(!card.innerHTML.includes(payload));
-assert.equal(card.querySelector('.asset-name').textContent, payload + '.txt');
+assert.equal(card.querySelector('.package-name').textContent, '📁 ' + payload);
 context.renderFontManagerCatalog({ installed: [{
   category: 'custom', filename: 'test.ttf', family: payload + '"; color: red;', display_name: payload, size_mb: 1,
 }] });
