@@ -155,27 +155,46 @@ class SubtitleProofreader:
             api_key = self.cfg["OPENAI_API_KEY"].strip()
             base_url = (self.cfg.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
             url = f"{base_url}/chat/completions"
-            payload = {
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
+
+            def _do_openai_call(p: dict) -> str:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(p).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data["choices"][0]["message"]["content"]
+
+            base_payload: Dict[str, Any] = {
                 "model": self.model_name,
                 "messages": [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_input},
                 ],
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"},
             }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                return data["choices"][0]["message"]["content"]
+
+            # 針對不同相容模型（包括 o1 / o3 / gpt-6-luna / deepseek 等推論型模型，其不接受自訂 temperature 或 response_format）
+            try:
+                # 優先嘗試 response_format
+                p = dict(base_payload)
+                p["response_format"] = {"type": "json_object"}
+                return _do_openai_call(p)
+            except urllib.error.HTTPError as he:
+                err_text = ""
+                try:
+                    err_text = he.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                if any(k in err_text.lower() for k in ("temperature", "response_format", "invalid_request_error")):
+                    logger.info("偵測到模型對進階參數限制，自動降級以標準 prompt 重試...")
+                    return _do_openai_call(base_payload)
+                raise urllib.error.HTTPError(he.url, he.code, err_text or he.msg, he.hdrs, None)
 
         elif self.provider == "anthropic":
             api_key = self.cfg["ANTHROPIC_API_KEY"].strip()
@@ -273,24 +292,26 @@ class SubtitleProofreader:
         track: SubtitleTrack,
         batch_size: int = 25,
         reference_script: Optional[str] = None,
+        script_text: Optional[str] = None,
         progress_callback: Optional[callable] = None
     ) -> SubtitleTrack:
         """
         對完整 SubtitleTrack 進行分批雲端 API 校對，保持原始時間軸起訖點，替換文字內容。
         雲端 API Context 充足，預設一次可處理 25 句（整首歌通常 1 批即可秒速完成）。
         """
+        effective_script = reference_script or script_text
         all_segments = track.segments
         new_segments: List[SubtitleSegment] = []
 
         effective_batch_size = max(batch_size, 25)
         total_batches = (len(all_segments) + effective_batch_size - 1) // effective_batch_size
         logger.info(
-            f"開始以雲端 LLM ({self.provider}/{self.model_name}) 校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理 (附帶原詞: {bool(reference_script)})..."
+            f"開始以雲端 LLM ({self.provider}/{self.model_name}) 校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理 (附帶原詞: {bool(effective_script)})..."
         )
 
         for i in range(0, len(all_segments), effective_batch_size):
             batch = all_segments[i:i + effective_batch_size]
-            corrected_map = self.proofread_segments_batch(batch, reference_script=reference_script)
+            corrected_map = self.proofread_segments_batch(batch, reference_script=effective_script)
 
             for seg in batch:
                 corr_text = corrected_map.get(seg.id, seg.text)
