@@ -8,9 +8,11 @@ import csv
 import subprocess
 import uuid
 import tempfile
+import difflib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from pypinyin import lazy_pinyin
+from opencc import OpenCC
 
 from .env_utils import preload_cuda_libs
 preload_cuda_libs()
@@ -52,6 +54,69 @@ def compute_sha256_text(text: str) -> str:
 def clean_cjk(text: str) -> str:
     """去除標點與空格，僅保留文字用於對齊計算"""
     return re.sub(r"[^\w\u4e00-\u9fff]", "", text)
+
+
+def map_lyrics_to_asr_words(lines, segments):
+    """原版中文／拼音配對；每個字符沿用所屬 ASR 詞的完整時間窗。"""
+    converter = OpenCC("t2s")
+    def normalize(text):
+        return [char for char in converter.convert(text) if "\u4e00" <= char <= "\u9fff"]
+
+    reference, owners, spoken, words = [], [], [], []
+    lengths = []
+    for index, line in enumerate(lines):
+        chars = normalize(line)
+        lengths.append(len(chars))
+        reference.extend(chars)
+        owners.extend([index] * len(chars))
+    for segment in segments:
+        for word in segment.get("words", []):
+            chars = normalize(word["word"])
+            spoken.extend(chars)
+            words.extend([word] * len(chars))
+    ref_pinyin, spoken_pinyin = lazy_pinyin("".join(reference)), lazy_pinyin("".join(spoken))
+    n, m = len(reference), len(spoken)
+    previous = [j * .8 for j in range(m + 1)]
+    back = [bytearray(m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        back[i][0] = 1
+    for j in range(1, m + 1):
+        back[0][j] = 2
+
+    def cost(i, j):
+        if reference[i] == spoken[j]:
+            return 0.0
+        if ref_pinyin[i] == spoken_pinyin[j]:
+            return .2
+        return .65 if difflib.SequenceMatcher(None, ref_pinyin[i], spoken_pinyin[j]).ratio() >= .65 else 1.15
+
+    for i in range(1, n + 1):
+        current = [i * .8] + [0.0] * m
+        for j in range(1, m + 1):
+            options = (previous[j - 1] + cost(i - 1, j - 1), previous[j] + .8, current[j - 1] + .8)
+            action = min(range(3), key=options.__getitem__)
+            current[j], back[i][j] = options[action], action
+        previous = current
+    matched = [[] for _ in lines]
+    i, j = n, m
+    while i or j:
+        action = back[i][j]
+        if i and j and action == 0:
+            if cost(i - 1, j - 1) <= .65:
+                matched[owners[i - 1]].append(j - 1)
+            i, j = i - 1, j - 1
+        elif i and (action == 1 or not j):
+            i -= 1
+        else:
+            j -= 1
+    result = []
+    for indices, length in zip(matched, lengths):
+        anchors = []
+        for index in sorted(indices):
+            if not anchors or words[index] is not anchors[-1]:
+                anchors.append(words[index])
+        result.append({"words": anchors, "matched_characters": len(indices), "original_characters": length})
+    return result
 
 
 def is_hallucination_text(text: str) -> bool:
@@ -307,6 +372,7 @@ class LunaPipeline:
                     })
 
                 self.stable_ts_segments = align_segs
+                mapped_lines = map_lyrics_to_asr_words(self.org_lines, self.asr_clean_segments)
 
                 # 雙軌比對與異常標記
                 evidence_list = []
@@ -317,32 +383,22 @@ class LunaPipeline:
                     t_align_start = st_seg["start"] if st_seg else 0.0
                     t_align_end = st_seg["end"] if st_seg else 0.0
 
-                    # 尋找重疊度最高或最接近的 Whisper ASR segment
-                    matched_asr = None
-                    best_overlap = -1.0
-                    for s in self.asr_clean_segments:
-                        overlap = max(0.0, min(s["end"], t_align_end) - max(s["start"], t_align_start))
-                        if overlap > best_overlap:
-                            best_overlap = overlap
-                            matched_asr = s
-
-                    if not matched_asr or best_overlap == 0.0:
-                        closest_dist = float("inf")
-                        for s in self.asr_clean_segments:
-                            dist = abs(s["start"] - t_align_start)
-                            if dist < closest_dist:
-                                closest_dist = dist
-                                matched_asr = s
-
-                    t_asr_start = matched_asr["start"] if matched_asr else t_align_start
-                    t_asr_end = matched_asr["end"] if matched_asr else t_align_end
-                    asr_text = matched_asr["text"] if matched_asr else ""
+                    mapping = mapped_lines[line_idx - 1]
+                    anchors = mapping["words"]
+                    t_asr_start = min((word["start"] for word in anchors), default=t_align_start)
+                    t_asr_end = max((word["end"] for word in anchors), default=t_align_end)
+                    asr_text = "".join(word["word"] for word in anchors)
+                    default_candidate = "cand_asr" if anchors and t_asr_end > t_asr_start else "cand_stable_ts"
 
                     # 檢測異常指標
                     diff_start = abs(t_asr_start - t_align_start)
                     diff_end = abs(t_asr_end - t_align_end)
                     dur = t_align_end - t_align_start
                     anomalies = []
+                    if default_candidate != "cand_asr":
+                        anomalies.append("asr_mapping_missing")
+                    elif mapping["matched_characters"] < mapping["original_characters"] * .7:
+                        anomalies.append("asr_mapping_low_coverage")
                     if diff_start > 0.3:
                         anomalies.append(f"start_diff_gt_0.3s({diff_start:.2f}s)")
                     if diff_end > 0.3:
@@ -358,15 +414,17 @@ class LunaPipeline:
                             "source": "stable-ts full alignment",
                             "start": round(t_align_start, 3),
                             "end": round(t_align_end, 3)
-                        },
-                        "cand_asr": {
+                        }
+                    }
+                    if default_candidate == "cand_asr":
+                        candidates["cand_asr"] = {
                             "candidate_id": "cand_asr",
                             "source": f"native whisper {self.whisper_model}",
                             "start": round(t_asr_start, 3),
                             "end": round(t_asr_end, 3),
-                            "text": asr_text
+                            "text": asr_text,
+                            **mapping,
                         }
-                    }
 
                     # 【第 8 節】若有異常，執行局部切音重新對齊
                     if anomalies:
@@ -404,6 +462,7 @@ class LunaPipeline:
                         "line_id": line_idx,
                         "org_line": org_line,
                         "candidates": candidates,
+                        "default_candidate_id": default_candidate,
                         "diff_start": round(diff_start, 3),
                         "diff_end": round(diff_end, 3),
                         "anomalies": anomalies,
@@ -429,14 +488,15 @@ class LunaPipeline:
                 prev_line = self.cue_evidence[idx - 1] if idx > 0 else None
                 next_line = self.cue_evidence[idx + 1] if idx + 1 < len(self.cue_evidence) else None
 
-                prev_bound = f"上一句結束: {prev_line['candidates']['cand_stable_ts']['end']:.2f}s" if prev_line else "開頭"
-                next_bound = f"下一句開始: {next_line['candidates']['cand_stable_ts']['start']:.2f}s" if next_line else "曲尾"
+                prev_bound = f"上一句結束: {prev_line['candidates'][prev_line.get('default_candidate_id', 'cand_stable_ts')]['end']:.2f}s" if prev_line else "開頭"
+                next_bound = f"下一句開始: {next_line['candidates'][next_line.get('default_candidate_id', 'cand_stable_ts')]['start']:.2f}s" if next_line else "曲尾"
 
                 audit_payload.append({
                     "line_id": ev["line_id"],
                     "text": ev["org_line"],
                     "context": f"{prev_bound} | {next_bound}",
                     "candidates": ev["candidates"],
+                    "default_candidate_id": ev.get("default_candidate_id", "cand_stable_ts"),
                     "anomalies": ev["anomalies"]
                 })
 
@@ -446,37 +506,50 @@ class LunaPipeline:
 規則：
 1. 只能從該句提供的 candidates 中選擇候選邊界，嚴禁憑空編造秒數。
 2. 保持時間軸單調遞增，不能早於上一句結束時間，不能晚於下一句開始時間。
-3. 如果各候選差異小或原始對齊已合理，action 填 "keep"。
+3. keep 表示保留 default_candidate_id。原詞對應的 Whisper 逐詞映射是主時間；其他候選用於補缺與交叉檢查，沒有明確字詞證據時不要改動。
 4. 若選擇特定候選，action 填 "choose_candidate"，並指定 start_candidate_id 與 end_candidate_id (例如 "cand_local_retry", "cand_stable_ts", "cand_asr")。
-5. 必須以純 JSON 格式輸出：
-{
-  "decisions": [
-    {
-      "line_id": 14,
-      "action": "choose_candidate",
-      "start_candidate_id": "cand_local_retry",
-      "end_candidate_id": "cand_stable_ts",
-      "reason": "局部重跑補回開頭起音，且句尾與原對齊一致"
-    }
-  ]
-}"""
-            user_input = json.dumps(audit_payload, ensure_ascii=False, separators=(",", ":"))
+5. 必須回覆本批次每個 line_id，恰好一次，不得添加其他編號。
+6. 只輸出 JSON 物件，decisions 欄位為陣列。每項包含整數 line_id、action、start_candidate_id、end_candidate_id、reason。reason 最多 32 個字，不輸出推理過程。"""
 
             reasoner = None
+            batches = []
             try:
                 reasoner = LocalQwenReasoner(self.local_model_name) if self.llm_provider == "local" else CloudLunaReasoner()
-                raw_res = reasoner.decide(sys_prompt, user_input)
-                data = _extract_json_payload(raw_res)
-                items = data if isinstance(data, list) else data.get("decisions", [])
-                for it in items:
-                    lid = it.get("line_id")
-                    if lid:
-                        decisions_map[int(lid)] = it
+                for start in range(0, len(audit_payload), 4):
+                    payload = audit_payload[start:start + 4]
+                    candidates_by_line = {item["line_id"]: item["candidates"] for item in payload}
+                    expected = {item["line_id"] for item in payload}
+                    record = {"input": payload, "expected_ids": sorted(expected), "returned_ids": []}
+                    try:
+                        user_input = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                        raw_res = reasoner.decide(sys_prompt, user_input)
+                        record["response"] = raw_res
+                        data = _extract_json_payload(raw_res)
+                        items = data if isinstance(data, list) else data.get("decisions", [])
+                        for item in items:
+                            if not isinstance(item, dict) or type(item.get("line_id")) is not int:
+                                continue
+                            lid = item["line_id"]
+                            if lid not in expected or lid in record["returned_ids"]:
+                                continue
+                            action = item.get("action", "keep")
+                            if action not in ("keep", "choose_candidate"):
+                                continue
+                            if action == "choose_candidate" and any(item.get(field) not in candidates_by_line[lid] for field in ("start_candidate_id", "end_candidate_id")):
+                                continue
+                            decisions_map[lid] = item
+                            record["returned_ids"].append(lid)
+                    except Exception as error:
+                        record["error"] = str(error)
+                    record["missing_ids"] = sorted(expected - set(record["returned_ids"]))
+                    batches.append(record)
             except Exception as e:
                 print(f"  ⚠️ LLM 推理或 JSON 解析警告: {e}")
             finally:
                 if reasoner is not None:
                     reasoner.close()
+                with open(self.output_dir / "decision_batches.json", "w", encoding="utf-8") as stream:
+                    json.dump({"system": sys_prompt, "batches": batches}, stream, ensure_ascii=False, indent=2)
 
         # 彙整最終時間軸與記錄 corrections
         final_segments: List[SubtitleSegment] = []
@@ -488,15 +561,16 @@ class LunaPipeline:
             lid = ev["line_id"]
             org_line = ev["org_line"]
             cands = ev["candidates"]
-            def_st = cands["cand_stable_ts"]["start"]
-            def_et = cands["cand_stable_ts"]["end"]
+            default_candidate = ev.get("default_candidate_id", "cand_stable_ts")
+            def_st = cands[default_candidate]["start"]
+            def_et = cands[default_candidate]["end"]
 
             chosen_st = def_st
             chosen_et = def_et
-            st_source = "cand_stable_ts"
-            et_source = "cand_stable_ts"
+            st_source = default_candidate
+            et_source = default_candidate
             decision_action = "keep"
-            decision_reason = "雙軌時間吻合，自動採納 stable-ts"
+            decision_reason = "採用 Whisper 逐詞映射" if default_candidate == "cand_asr" else "保留強制對齊候選"
 
             if lid in decisions_map:
                 dec = decisions_map[lid]
@@ -517,6 +591,15 @@ class LunaPipeline:
             min_duration = min(0.001, self.audio_duration / len(self.cue_evidence))
             latest_end = self.audio_duration - (remaining - 1) * min_duration
             chosen_st = min(max(last_end, chosen_st), latest_end - min_duration)
+            if index + 1 < len(self.cue_evidence):
+                following = self.cue_evidence[index + 1]
+                next_source = following.get("default_candidate_id", "cand_stable_ts")
+                next_decision = decisions_map.get(following["line_id"], {})
+                if next_decision.get("action") == "choose_candidate" and next_decision.get("start_candidate_id") in following["candidates"]:
+                    next_source = next_decision["start_candidate_id"]
+                next_start = following["candidates"][next_source]["start"]
+                if next_start > chosen_st:
+                    chosen_et = min(chosen_et, next_start)
             chosen_et = min(max(chosen_et, chosen_st + min_duration), latest_end)
 
             is_modified = (abs(chosen_st - def_st) > 0.05 or abs(chosen_et - def_et) > 0.05)
@@ -533,7 +616,7 @@ class LunaPipeline:
                     "reason": decision_reason
                 })
 
-            status = "needs_review" if (ev["anomalies"] and not is_modified and decision_action == "keep") else "passed"
+            status = "needs_review" if (ev["anomalies"] and decision_action == "keep") or "asr_mapping_missing" in ev["anomalies"] else "passed"
             if def_et <= def_st or def_st >= self.audio_duration:
                 status = "needs_review"
                 decision_reason = "原始對齊缺少有效時間，已保留最短時間區間，請手動校對"
