@@ -235,7 +235,7 @@ def pipeline_cmd(
 def align_cmd(
     media_path: str = typer.Argument(..., help="來源影音或音訊檔案路徑 (MP4, WAV 等)"),
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
-    model: str = typer.Option("small", "-m", "--model", help="Whisper 模型 (建議 small 或 base)"),
+    model: str = typer.Option("large-v3-turbo", "-m", "--model", help="Whisper 模型 (建議 large-v3-turbo 或 small)"),
     device: str = typer.Option("cuda", "-d", "--device", help="運算裝置 (cuda, cpu, auto)"),
     no_vad: bool = typer.Option(False, "--no-vad", help="關閉 VAD 語音過濾 (適合背景音樂強烈或有微弱尾聲之歌曲)"),
     output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設為影音同目錄)"),

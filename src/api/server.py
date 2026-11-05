@@ -471,7 +471,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 @app.post("/api/ai/transcribe")
 def transcribe_endpoint(
     media_path: str = Form(...),
-    model: str = Form("small"),
+    model: str = Form("large-v3-turbo"),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(False)
@@ -535,7 +535,7 @@ def align_endpoint(req: AlignRequest):
     try:
         trans_res = transcribe_audio(
             audio_path=audio_file,
-            model_size="small",
+            model_size="large-v3-turbo",
             device="cuda",
             vad_filter=False,
             word_timestamps=True,

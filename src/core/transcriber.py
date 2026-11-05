@@ -14,7 +14,7 @@ from ..schemas.subtitle import WordItem
 
 def transcribe_audio(
     audio_path: str,
-    model_size: str = "base",
+    model_size: str = "large-v3-turbo",
     device: str = "auto",
     compute_type: str = "default",
     language: Optional[str] = None,
