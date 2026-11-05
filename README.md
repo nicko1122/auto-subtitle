@@ -31,8 +31,9 @@
   - 一鍵安裝開源繁中字幕字型（粉圓體、文楷、芫荽體等）。
   - 支援本機 Windows 系統字型匯入與自訂網址 / 本機檔案上傳安裝，Web 預覽與 FFmpeg 壓片字型即時無縫生效。
 
-### 3. 🛡️ 作業體驗防護（Semi-transparent Busy Modal）
+### 3. 🛡️ 作業體驗防護（Semi-transparent Busy Modal & 60FPS Sync）
 - 長時間 AI 辨識／對齊任務執行時，自動顯示半透明整頁遮罩（`#busy-overlay`）搭配紫藍漸層旋轉動畫與實時碼錶，防止介面誤觸或重疊請求。
+- 採用 `requestAnimationFrame` 60FPS 毫秒級即時比對，歌詞唱完的一瞬間立刻乾淨消失，無任何拖泥帶水的殘影。
 
 ---
 
@@ -114,34 +115,190 @@ python3 src/cli/main.py serve --host 0.0.0.0 --port 8000
 
 ---
 
-### 2. CLI 指令工具箱
+### 2. 📖 CLI 指令與完整參數手冊 (Command Reference)
+
+CLI 適合批次自動化、伺服器排程與無頭（Headless）作業。輸入 `python3 src/cli/main.py --help` 可查看總覽。
+
+#### 🔹 (1) `luna` / `align`：有稿歌詞雙軌對齊管線
+結合 Whisper 聲學逐詞特徵與原歌詞文字，經決策大腦裁決產出 7 項標準交付檔：
+```bash
+python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
+```
+| 參數名稱 | 縮寫 | 預設值 | 說明 |
+| :--- | :--- | :--- | :--- |
+| `media_path` | (必填) | - | 來源影音檔案路徑 (MP4, MKV, WAV 等) |
+| `script_path` | (必填) | - | 原歌詞或字幕文字檔案路徑 (.txt) |
+| `--llm` | - | `local` | 決策大腦模式：`local` (地端 Qwen GGUF) 或 `api` (雲端 OpenAI 相容) |
+| `-o`, `--output-dir` | `-o` | 來源檔同目錄 | 輸出交付產物之目錄 |
+
+#### 🔹 (2) `pipeline`：無稿全自動上字幕流水線
+針對演講、訪談或 Podcast，一鍵完成抽音、Whisper 辨識、智慧斷句並匯出字幕：
+```bash
+python3 src/cli/main.py pipeline <媒體檔案> [OPTIONS]
+```
+| 參數名稱 | 縮寫 | 預設值 | 說明 |
+| :--- | :--- | :--- | :--- |
+| `media_path` | (必填) | - | 來源影音檔案路徑 |
+| `-m`, `--model` | `-m` | `base` | Faster-Whisper 模型大小 (`tiny`, `base`, `small`, `medium`, `large-v3-turbo`) |
+| `-d`, `--device` | `-d` | `auto` | 運算裝置 (`auto`, `cuda`, `cpu`) |
+| `-l`, `--lang` | `-l` | 自動辨識 | 指定語言代碼 (如 `zh`, `en`, `ja`) |
+| `--prompt` | - | `繁體中文` | 引導詞 (預設引導模型產出正體中文) |
+| `-c`, `--max-chars`| `-c` | `16` | 單行字幕最大字數 (中文建議 12~18) |
+| `-p`, `--pause` | `-p` | `0.45` | 視為句子斷點的語音停頓時間 (秒) |
+| `-o`, `--output-dir`| `-o` | 來源同目錄 | 輸出目錄 |
+
+#### 🔹 (3) `burn`：影音硬字幕燒錄壓制 (Hardsub)
+以 GPU (NVENC) 或 CPU 將 ASS/SRT 字幕永久燒錄進 MP4 影片中：
+```bash
+python3 src/cli/main.py burn <影片路徑> <字幕路徑> [OPTIONS]
+```
+| 參數名稱 | 縮寫 | 預設值 | 說明 |
+| :--- | :--- | :--- | :--- |
+| `video_path` | (必填) | - | 來源影片路徑 (.mp4, .mov, .mkv 等) |
+| `subtitle_path`| (必填) | - | 字幕路徑 (.srt, .vtt, .json) |
+| `--css` | - | `None` | **標準 CSS 樣式字串** (支援 opacity, stroke, shadow, padding 等) |
+| `--css-file` | - | `None` | 外掛 `.css` 樣式檔案路徑 |
+| `--font` | - | `Noto Sans CJK TC` | 字型名稱 (支援所有已安裝開源字型) |
+| `-s`, `--size` | `-s` | `32` | 字級大小 (像素) |
+| `--color` | - | `#FFFFFF` | 字體顏色 (Hex) |
+| `--opacity` | - | `1.0` | **字體整體不透明度** (`0.0 ~ 1.0`) |
+| `--outline` | - | `2.5` | 外擴描邊粗細 (像素，0 為無描邊) |
+| `--outline-color`| - | `#000000` | 描邊顏色 (Hex) |
+| `--shadow` | - | `1.2` | 陰影偏移量 (像素) |
+| `-d`, `--direction`| `-d` | `horizontal` | 排版方向：`horizontal` (橫式) 或 `vertical` (直式) |
+| `--valign` | - | `bottom` | 垂直對齊：`top` (靠頂), `middle` (居中), `bottom` (靠底) |
+| `--halign` | - | `center` | 水平對齊：`left` (靠左), `center` (居中), `right` (靠右) |
+| `--padding` | - | `None` | CSS 邊距簡寫 (如 `"50 40"` 或 `"50 40 60 40"`) |
+| `--x`, `--y` | - | `None` | 精確絕對座標定位 (覆蓋九宮格排版) |
+| `--cpu` | - | `False` | 強制使用 CPU libx264 (預設自動啟用 NVIDIA NVENC) |
+| `-o`, `--output`| `-o` | `<影片名>.hardsub.mp4` | 輸出影片路徑 |
+
+#### 🔹 (4) `proofread`：地端 LLM 逐字稿校對
+調用本地 Qwen2.5-3B 模型全速修正語音辨識的同音異字：
+```bash
+python3 src/cli/main.py proofread <字幕檔.srt/.json> [OPTIONS]
+```
+| 參數名稱 | 縮寫 | 預設值 | 說明 |
+| :--- | :--- | :--- | :--- |
+| `input_file` | (必填) | - | 來源字幕檔案 (.srt, .json 或影音檔) |
+| `-b`, `--batch-size` | `-b` | `8` | 每次批次送入 LLM 校對的字幕句數 |
+| `--gpu-layers` | - | `-1` | GPU 卸載層數 (`-1` 為全層放入 VRAM 加速) |
+| `-o`, `--output`| `-o` | `<檔名>.proofread.srt` | 輸出校對後字幕檔路徑 |
+
+#### 🔹 (5) `fonts`：字型庫安裝與管理
+```bash
+# 查看所有可用、已安裝與本機 Windows 字型清單
+python3 src/cli/main.py fonts list
+
+# 一鍵安裝開源繁中字幕字型包 (openhuninn, lxgw-wenkai, iansui, win-msjhbd)
+python3 src/cli/main.py fonts install openhuninn
+
+# 從 URL 或本機 .ttf/.otf 安裝字型
+python3 src/cli/main.py fonts install https://example.com/CustomFont.ttf
+python3 src/cli/main.py fonts install /path/to/MyFont.otf
+
+# 移除自訂字型
+python3 src/cli/main.py fonts remove jf-openhuninn-2.0.ttf
+```
+
+#### 🔹 (6) 其它單元模組工具
+- **抽音**：`python3 src/cli/main.py extract <影片> -o <音訊.wav> --sr 16000`
+- **獨立辨識**：`python3 src/cli/main.py transcribe <音訊.wav> -m large-v3-turbo -d cuda`
+- **獨立斷句**：`python3 src/cli/main.py segment <raw.json> -c 16 -p 0.45`
+- **格式轉換**：`python3 src/cli/main.py export <track.json> -f srt -o <out.srt>`
+
+---
+
+## 🤖 自動化批次處理與 Agent 整合指南
+
+AutoSubtitle AI 的所有後端核心與 CLI 均具備純函式化、非互動式的無頭（Headless）設計，非常適合與 **Shell 腳本、排程任務、或是 AI Agent (如 Antigravity, LangChain, n8n, Dify)** 串接自動化。
+
+### 1. 批次處理腳本 (Batch Processing Script)
+將以下腳本儲存為 `batch_process.sh`，即可一鍵處理資料夾內所有影片並輸出含自訂品牌的壓制短影音：
 
 ```bash
-# 查看所有可用指令
-python3 src/cli/main.py --help
+#!/usr/bin/env bash
+set -e
 
-# 1. 🌙 執行 Whisper ＋ GPT-6 Luna 雙軌對齊管線
-python3 src/cli/main.py luna inputclip/test_video.mp4 inputclip/audio-org.txt \
-    --output-dir output_luna \
-    --llm-provider auto
+INPUT_DIR="./raw_videos"
+OUTPUT_DIR="./dist_videos"
+mkdir -p "$OUTPUT_DIR"
 
-# 2. 音軌抽離 (16kHz Mono WAV)
-python3 src/cli/main.py extract inputclip/test_video.mp4
-
-# 3. 有稿強制時間軸對齊 (原稿 TXT + 影音)
-python3 src/cli/main.py align inputclip/test_video.mp4 inputclip/audio-org.txt
-
-# 4. 地端 Qwen2.5 錯別字校對
-python3 src/cli/main.py proofread inputclip/audio.srt
-
-# 5. 影片硬字幕燒錄 (支援 CSS 樣式與透明度)
-python3 src/cli/main.py burn inputclip/test_video.mp4 inputclip/audio.aligned.srt \
-    --css "font-size: 36px; color: #FFD700; opacity: 0.85; -webkit-text-stroke: 3px #000;"
-
-# 6. 字型庫管理 (列出、安裝開源字型、匯入本機字型)
-python3 src/cli/main.py fonts list
-python3 src/cli/main.py fonts install openhuninn
+for video in "$INPUT_DIR"/*.mp4; do
+  [ -f "$video" ] || continue
+  filename=$(basename "$video")
+  stem="${filename%.*}"
+  lyrics="$INPUT_DIR/$stem.txt"
+  
+  echo "🎬 正在自動化處理: $filename ..."
+  
+  if [ -f "$lyrics" ]; then
+    # 有歌詞原稿：走 Luna 雙軌對齊管線
+    python3 src/cli/main.py luna "$video" "$lyrics" -o "$OUTPUT_DIR/$stem" --llm auto
+    sub_file="$OUTPUT_DIR/$stem/lyrics.srt"
+  else
+    # 無稿口播影片：走全自動辨識 + 智慧斷句流水線
+    python3 src/cli/main.py pipeline "$video" -m large-v3-turbo -d cuda -o "$OUTPUT_DIR/$stem"
+    # 地端 LLM 同音錯字校對
+    python3 src/cli/main.py proofread "$OUTPUT_DIR/$stem/$stem.srt" -o "$OUTPUT_DIR/$stem/$stem.proofread.srt"
+    sub_file="$OUTPUT_DIR/$stem/$stem.proofread.srt"
+  fi
+  
+  # 套用統一 CSS 樣式與透明度，以 NVENC GPU 燒錄壓制
+  python3 src/cli/main.py burn "$video" "$sub_file" \
+    --css "font-size: 34px; color: #FFD700; opacity: 0.9; -webkit-text-stroke: 2.5px #000; text-shadow: 2px 2px #000;" \
+    -o "$OUTPUT_DIR/${stem}_final.mp4"
+    
+  echo "✔ $stem 處理並壓制完成！"
+done
 ```
+
+### 2. Python 程式化 SDK 調用
+在自有 Python 程式或自動化工作流中直接調用核心模組：
+
+```python
+from pathlib import Path
+from src.core.luna_pipeline import run_luna_pipeline
+from src.core.video_burner import burn_subtitles_to_video
+from src.schemas.subtitle import SubtitleStyle
+
+# 1. 執行雙軌對齊
+track = run_luna_pipeline(
+    audio_path="inputclip/test_video.mp4",
+    lyrics_source="inputclip/audio-org.txt",
+    output_dir="output_run",
+    llm_provider="auto"
+)
+
+# 2. 宣告樣式 (支援標準 CSS 字串)
+style = SubtitleStyle.from_css(
+    "font-size: 36px; color: #FFFFFF; opacity: 0.85; -webkit-text-stroke: 3px #000;"
+)
+
+# 3. 壓制燒錄出片
+out_mp4 = burn_subtitles_to_video(
+    video_path="inputclip/test_video.mp4",
+    subtitles_source="output_run/lyrics.srt",
+    output_path="output_run/burned.mp4",
+    style=style,
+    use_gpu=True
+)
+print("輸出完成:", out_mp4)
+```
+
+### 3. REST API Webhook 自動化 (FastAPI)
+啟動 `serve` 服務後，外部系統可透過 HTTP REST 呼叫進行無人值守排程：
+- 完整的 Swagger 互動式文件：造訪 `http://localhost:8000/docs`
+- 常用 API 端點：
+  - `POST /api/ai/transcribe`：無稿辨識（接收媒體路徑與模型參數）
+  - `POST /api/ai/align`：Luna 歌詞雙軌對齊（接收媒體與歌詞文字）
+  - `POST /api/style/parse-css`：CSS 樣式雙向解析
+  - `POST /api/burn`：背景壓制燒錄硬字幕
+
+### 4. 🧠 Antigravity Workspace Skill 整合
+本專案已在倉庫內建標準 Antigravity Agent Skill：
+- 路徑：[`.agents/skills/auto-subtitle/SKILL.md`](file:///D:/projects/auto-subtitle/.agents/skills/auto-subtitle/SKILL.md)（與 `skills/auto-subtitle/SKILL.md`）
+- **功能**：任何使用 Antigravity / Gemini 的 AI 代理人皆可自動加載此技能，理解專案架構並自主執行音訊抽離、雙軌對齊、樣式調校與硬字幕燒錄作業。
 
 ---
 
@@ -161,6 +318,8 @@ PYTHONPATH=. python3 tests/test_api_endpoints.py
 
 ```text
 auto-subtitle/
+├── .agents/skills/auto-subtitle/ # Antigravity 專用 Agent Skill 定義檔
+│   └── SKILL.md
 ├── src/
 │   ├── api/             # FastAPI 後端服務 (資產庫、AI 路由、樣式解析、字型管理 API)
 │   ├── cli/             # Typer CLI 命令列介面

@@ -233,6 +233,7 @@ def pipeline_cmd(
 
 
 @app.command("align")
+@app.command("luna")
 def align_cmd(
     media_path: str = typer.Argument(..., help="來源影音或音訊檔案路徑 (MP4, WAV 等)"),
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
@@ -368,6 +369,7 @@ def burn_cmd(
     font: Optional[str] = typer.Option(None, "--font", help="字型名稱 (預設 Noto Sans CJK TC)"),
     size: Optional[int] = typer.Option(None, "--size", "-s", help="字型大小 (像素，預設 32)"),
     color: Optional[str] = typer.Option(None, "--color", help="主要字型顏色 (Hex，如 #FFFFFF, #FFFF00)"),
+    opacity: Optional[float] = typer.Option(None, "--opacity", help="字幕不透明度 (0.0~1.0，預設 1.0)"),
     outline_color: Optional[str] = typer.Option(None, "--outline-color", help="描邊顏色 (Hex，預設 #000000)"),
     outline: Optional[float] = typer.Option(None, "--outline", help="描邊粗細 (像素，預設 2.5)"),
     shadow: Optional[float] = typer.Option(None, "--shadow", help="陰影偏移量 (像素，預設 1.2)"),
@@ -415,6 +417,8 @@ def burn_cmd(
         style.font_size = size
     if color is not None:
         style.primary_color = color
+    if opacity is not None:
+        style.opacity = max(0.0, min(1.0, opacity))
     if outline_color is not None:
         style.outline_color = outline_color
     if outline is not None:
