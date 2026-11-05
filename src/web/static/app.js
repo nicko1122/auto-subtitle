@@ -1223,7 +1223,7 @@ function initAiButtons() {
         return;
       }
 
-      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3";
+      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
       const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
       const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
@@ -1892,7 +1892,7 @@ async function runLockedTimelineTranscribe() {
 
   const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
   const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
-  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3";
+  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
 
   addLog(`【階段 3：鎖定時間軸填字】正在嚴格依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (絕不改動起訖時間)...`);
   if (el.btnTranscribeLocked) {

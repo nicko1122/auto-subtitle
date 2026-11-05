@@ -117,7 +117,7 @@ class AlignRequest(BaseModel):
     script_text: Optional[str] = None
     script_path: Optional[str] = None
     llm_provider: Literal["local", "api"] = "local"
-    model: str = "large-v3"
+    model: str = "large-v3-turbo"
     device: str = "cuda"
     prompt: Optional[str] = "繁體中文"
     auto_proofread: bool = True
@@ -532,7 +532,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 @app.post("/api/ai/transcribe")
 def transcribe_endpoint(
     media_path: str = Form(...),
-    model: str = Form("large-v3"),
+    model: str = Form("large-v3-turbo"),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),

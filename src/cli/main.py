@@ -240,7 +240,7 @@ def align_cmd(
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
     llm_provider: str = typer.Option("local", "--llm", help="決策審核大腦 (local 或 api)"),
     output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設在影音同目錄建立獨立資料夾)"),
-    model: str = typer.Option("large-v3", "-m", "--model", help="原生 Whisper 模型 (預設完整版 large-v3)"),
+    model: str = typer.Option("large-v3-turbo", "-m", "--model", help="原生 Whisper 模型 (預設 large-v3-turbo)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     prompt: str = typer.Option("繁體中文", "--prompt", help="辨識引導詞"),
     audit: bool = typer.Option(True, "--audit/--no-audit", help="執行 LLM 時間候選審核"),

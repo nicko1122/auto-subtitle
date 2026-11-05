@@ -70,7 +70,7 @@ def unload_native_whisper_model(model):
         release_gpu_memory()
 
 
-def transcribe_native_audio(audio_path, model_size="large-v3", device="auto", initial_prompt=None):
+def transcribe_native_audio(audio_path, model_size="large-v3-turbo", device="auto", initial_prompt=None):
     audio_p = Path(audio_path).resolve()
     if not audio_p.is_file():
         raise FileNotFoundError(f"找不到音訊檔案: {audio_path}")

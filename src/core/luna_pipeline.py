@@ -199,7 +199,7 @@ class LunaPipeline:
         llm_provider: str = "local",  # "local" | "api"
         local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        whisper_model: str = "large-v3",
+        whisper_model: str = "large-v3-turbo",
         device: str = "auto",
         prompt: Optional[str] = None,
         llm_audit: bool = True,
@@ -778,7 +778,7 @@ def run_luna_pipeline(
     llm_provider: str = "local",
     local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    whisper_model: str = "large-v3",
+    whisper_model: str = "large-v3-turbo",
     device: str = "auto",
     prompt: Optional[str] = None,
     llm_audit: bool = True,

@@ -29,7 +29,7 @@ def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkey
     options = {'data': payload} if endpoint.endswith('transcribe') else {'json': payload}
     response = TestClient(server.app, base_url='http://localhost').post(endpoint, **options)
     assert response.status_code == 200, response.text
-    assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3')
+    assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3-turbo')
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
     assert pipeline.call_args.kwargs['llm_audit'] is audit
@@ -49,7 +49,7 @@ def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit)
     arguments.append('--audit' if audit else '--no-audit')
     result = CliRunner().invoke(cli.app, arguments)
     assert result.exit_code == 0, result.output
-    assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3')
+    assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3-turbo')
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
     assert pipeline.call_args.kwargs['llm_audit'] is audit
