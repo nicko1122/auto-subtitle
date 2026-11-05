@@ -111,17 +111,17 @@
             您的瀏覽器不支援 HTML5 影片播放。
           </video>
 
-          <!-- 即時字幕疊加渲染層：精確 100% 貼合在影片實體畫面上！ -->
-          <div id="subtitle-overlay-container" class="absolute inset-0 flex pointer-events-none overflow-hidden">
-            <div id="subtitle-overlay" class="transition-all duration-75 text-center leading-normal">
-              <!-- 動態插入字幕文字 -->
+          <!-- 即時字幕疊加渲染層：精確 100% 貼合在影片實體畫面上！(支援直接滑鼠拖曳定位) -->
+          <div id="subtitle-overlay-container" class="absolute inset-0 z-20 flex pointer-events-none overflow-hidden">
+            <div id="subtitle-overlay" class="pointer-events-auto cursor-move hover:ring-1 hover:ring-blue-400/80 hover:bg-blue-500/10 rounded px-1 transition-colors duration-75 text-center leading-normal select-none" title="可直接按住滑鼠拖曳調整字幕位置">
+              字幕樣式與位置即時預覽
             </div>
           </div>
 
           <!-- 畫面中央大播放圖示 (暫停時顯示，點擊播放) -->
-          <div id="video-center-play-badge" class="absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-200">
-            <div class="w-14 h-14 rounded-full bg-black/60 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white shadow-2xl transform transition group-hover:scale-110">
-              <svg class="w-7 h-7 ml-1 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <div id="video-center-play-badge" class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none transition-all duration-200">
+            <div class="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white/90 shadow-2xl transform transition group-hover:scale-110">
+              <svg class="w-6 h-6 ml-0.5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
             </div>
           </div>
 
@@ -532,12 +532,16 @@
           <!-- 字幕逐行選擇控件 (選到該字幕即可出現在左邊影片上) -->
           <div class="p-3 bg-blue-950/20 rounded-lg border border-blue-900/40 space-y-2">
             <label class="text-xs font-semibold text-blue-300 flex items-center justify-between">
-              <span>🎯 選取特定字幕行預覽 (點選同步定位影片)</span>
-              <span id="selected-sub-badge" class="text-[11px] text-blue-400">目前選擇: 第 1 句</span>
+              <span>🎯 選取字幕行或即時預覽文字 (支援直接拖曳畫面字幕)</span>
+              <span id="selected-sub-badge" class="text-[11px] text-blue-400">目前選擇: 預覽中</span>
             </label>
             <select id="select-subtitle-line" class="w-full bg-zinc-900 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
-              <option value="0">尚無字幕</option>
+              <option value="0">尚無字幕 (顯示預設範例文字)</option>
             </select>
+            <div class="flex items-center gap-1.5 pt-0.5">
+              <span class="text-[11px] text-zinc-400 shrink-0">預覽文字:</span>
+              <input type="text" id="input-style-preview-text" value="字幕樣式與位置即時預覽 Sample" class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-blue-500" placeholder="輸入文字即時預覽字幕外觀...">
+            </div>
           </div>
 
           <!-- 預設樣式快捷切換 (Presets) -->
@@ -561,7 +565,15 @@
 
           <!-- 位置調整 (X / Y Scrollbar、方向與九宮格對齊) -->
           <div class="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-3">
-            <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">位置與佈局 (Web 盒模型)</h4>
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">位置與佈局 (Web 盒模型 / 畫面拖曳)</h4>
+              <button id="btn-reset-position" class="px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded text-[10px] transition" title="重設為底部置中預設位置">
+                ↺ 重設預設位置
+              </button>
+            </div>
+            <div class="text-[11px] text-cyan-300/90 bg-cyan-950/30 border border-cyan-500/20 rounded px-2 py-1">
+              💡 可直接在左側影片畫面上**按住字幕拖曳位置**，或使用下方 X / Y 滑桿無死角平滑微調。
+            </div>
             
             <!-- 方向切換：橫排 vs 直排 -->
             <div class="flex items-center justify-between text-xs">
@@ -843,6 +855,6 @@
   </main>
 
   <!-- 引入前端邏輯腳本 -->
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261105_v4"></script>
 </body>
 </html>

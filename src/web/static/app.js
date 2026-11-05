@@ -22,6 +22,10 @@ const state = {
   selectedSegmentIndex: 0,
   waveformPeaks: [],
   autoPauseAt: null,
+  activeTab: "tab-assets",
+  previewScaleMode: "fit",
+  styleCustomized: false,
+  justDraggedSubtitle: false,
   style: {
     font_name: "Noto Sans CJK TC",
     font_size: 36,
@@ -48,6 +52,7 @@ const state = {
 // DOM 元素引用
 const el = {
   video: document.getElementById("main-video"),
+  videoViewport: document.getElementById("video-viewport"),
   videoStage: document.getElementById("video-stage"),
   btnScaleFit: document.getElementById("btn-scale-fit"),
   btnScaleCompact: document.getElementById("btn-scale-compact"),
@@ -132,6 +137,8 @@ const el = {
   // Tab 3: 樣式與位置
   selectSubtitleLine: document.getElementById("select-subtitle-line"),
   selectedSubBadge: document.getElementById("selected-sub-badge"),
+  inputStylePreviewText: document.getElementById("input-style-preview-text"),
+  btnResetPosition: document.getElementById("btn-reset-position"),
   btnOrientH: document.getElementById("btn-orient-h"),
   btnOrientV: document.getElementById("btn-orient-v"),
   sliderPosX: document.getElementById("slider-pos-x"),
@@ -244,13 +251,17 @@ function initPlayer() {
   // 點擊影片舞台直接播放/暫停
   if (el.videoStage) {
     el.videoStage.addEventListener("click", (e) => {
+      // 若剛完成拖曳字幕，或點擊在字幕覆蓋層上，不觸發影片播放切換
+      if (state.justDraggedSubtitle) return;
+      if (e.target === el.overlay || (el.overlay && el.overlay.contains(e.target))) return;
       // 若佔位提示尚未隱藏，不攔截點擊
       if (el.placeholder && !el.placeholder.classList.contains("hidden")) return;
       togglePlayPause();
     });
 
     // 雙擊畫面切換全螢幕
-    el.videoStage.addEventListener("dblclick", () => {
+    el.videoStage.addEventListener("dblclick", (e) => {
+      if (e.target === el.overlay || (el.overlay && el.overlay.contains(e.target))) return;
       if (!document.fullscreenElement) {
         el.videoStage.requestFullscreen().catch(() => {});
       } else {
@@ -268,7 +279,7 @@ function initPlayer() {
   v.addEventListener("pause", () => {
     el.iconPlay.classList.remove("hidden");
     el.iconPause.classList.add("hidden");
-    if (el.videoCenterPlayBadge && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
+    if (el.videoCenterPlayBadge && state.activeTab !== "tab-style" && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
       el.videoCenterPlayBadge.classList.remove("hidden");
     }
   });
@@ -331,22 +342,23 @@ function initPlayer() {
     el.videoResolutionPill.classList.remove("hidden");
     el.placeholder.classList.add("hidden");
 
-    // 若為直式短影音（寬度小於 600px，如 448x768 等小解析度），自適應縮減預設字級與邊距，防止字體過大爆框
-    if (state.video.width < 600 && state.style.font_size > 26) {
+    // 若為直式短影音（寬度小於 600px，如 448x768 等小解析度）且尚未手動自訂樣式，自適應縮減預設字級與邊距，防止字體過大爆框
+    if (!state.styleCustomized && state.video.width < 600 && state.style.font_size > 26) {
       state.style.font_size = 22;
-      el.sliderFontSize.value = 22;
-      el.valFontSize.textContent = "22px";
       state.style.padding_left = 16;
       state.style.padding_right = 16;
-      el.inputPadLeft.value = 16;
-      el.inputPadRight.value = 16;
+      state.style.padding_bottom = 45;
+      state.style.padding_top = 40;
+      syncStateToControls();
     }
 
     updateSummary();
     updateWorkspaceSlots();
+    syncVideoStageDimensions();
 
     // 重新計算字型與座標縮放比，確保預覽與實體影片原樣 100% 貼合
     applySubtitleStyleToOverlay();
+    ensureSubtitlePreviewVisible();
   });
 
   // 全域鍵盤快捷鍵 (Space 播放/暫停，左右鍵快進退，[ 設起點，] 設終點，S 游標處切開)
@@ -405,45 +417,42 @@ function initPlayer() {
 
   // 畫面大小切換 (Fit, Compact, Large)
   function setPreviewSize(mode) {
+    state.previewScaleMode = mode;
     if (!el.btnScaleFit) return;
     el.btnScaleFit.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
     el.btnScaleCompact.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
     el.btnScaleLarge.className = "px-2 py-0.5 rounded text-zinc-400 hover:text-white transition";
-    
-    el.videoStage.classList.remove("max-h-full", "max-h-[300px]", "max-h-[560px]");
-    el.video.classList.remove("max-h-full", "max-h-[300px]", "max-h-[560px]");
 
     if (mode === "compact") {
       el.btnScaleCompact.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
-      el.videoStage.classList.add("max-h-[300px]");
-      el.video.classList.add("max-h-[300px]");
     } else if (mode === "large") {
       el.btnScaleLarge.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
-      el.videoStage.classList.add("max-h-[560px]");
-      el.video.classList.add("max-h-[560px]");
     } else {
       el.btnScaleFit.className = "px-2 py-0.5 rounded bg-blue-600 text-white font-medium transition";
-      el.videoStage.classList.add("max-h-full");
-      el.video.classList.add("max-h-full");
     }
 
+    syncVideoStageDimensions();
     setTimeout(() => {
+      syncVideoStageDimensions();
       applySubtitleStyleToOverlay();
-    }, 50);
+    }, 30);
   }
 
   if (el.btnScaleFit) el.btnScaleFit.addEventListener("click", () => setPreviewSize("fit"));
   if (el.btnScaleCompact) el.btnScaleCompact.addEventListener("click", () => setPreviewSize("compact"));
   if (el.btnScaleLarge) el.btnScaleLarge.addEventListener("click", () => setPreviewSize("large"));
 
-  // 監聽視窗或影片尺寸變更，即時維持等比錨定
+  // 監聽視窗或影片容器尺寸變更，即時維持等比錨定
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => {
+      syncVideoStageDimensions();
       applySubtitleStyleToOverlay();
     });
-    ro.observe(el.video);
+    if (el.videoViewport) ro.observe(el.videoViewport);
+    if (el.video) ro.observe(el.video);
   } else {
     window.addEventListener("resize", () => {
+      syncVideoStageDimensions();
       applySubtitleStyleToOverlay();
     });
   }
@@ -473,18 +482,60 @@ function initPlayer() {
   });
 }
 
+// 精準計算並同步 #video-stage 與 #main-video 寬高 (完美支援 9:16 直式與 16:9 橫式，防止 CSS max-h-full 爆框裁切)
+function syncVideoStageDimensions() {
+  const vp = el.videoViewport;
+  const v = el.video;
+  const stage = el.videoStage;
+  if (!vp || !v || !stage) return;
+
+  // 若尚未載入任何影片，清除固定寬高讓 placeholder 正常展示
+  if (!state.video.filename && !v.videoWidth) {
+    stage.style.width = "";
+    stage.style.height = "";
+    v.style.width = "";
+    v.style.height = "";
+    return;
+  }
+
+  const vidW = v.videoWidth || state.video.width || 1920;
+  const vidH = v.videoHeight || state.video.height || 1080;
+
+  const availW = Math.max(180, vp.clientWidth - 24);
+  let availH = Math.max(180, vp.clientHeight - 24);
+
+  if (state.previewScaleMode === "compact") {
+    availH = Math.min(availH, 300);
+  } else if (state.previewScaleMode === "large") {
+    availH = Math.min(availH, 560);
+  }
+
+  const scale = Math.min(availW / vidW, availH / vidH);
+  const stageW = Math.max(120, Math.floor(vidW * scale));
+  const stageH = Math.max(90, Math.floor(vidH * scale));
+
+  stage.style.width = `${stageW}px`;
+  stage.style.height = `${stageH}px`;
+  v.style.width = `${stageW}px`;
+  v.style.height = `${stageH}px`;
+}
+
 // 取得預覽畫面相對於影片原生實體解析度的縮放比例
 function getPreviewScale() {
   const v = el.video;
-  if (!v || !v.videoHeight || !v.clientHeight) return 1.0;
-  return v.clientHeight / v.videoHeight;
+  const vidH = (v && v.videoHeight) || state.video.height || 1080;
+  const clientH = (el.videoStage && el.videoStage.clientHeight) || (v && v.clientHeight) || 0;
+  if (!vidH || !clientH) return 1.0;
+  return clientH / vidH;
 }
 
 // ---------------- 2. 即時字幕覆蓋層渲染 (CSS Box Model) ----------------
 function applySubtitleStyleToOverlay() {
+  syncVideoStageDimensions();
   const s = state.style;
   const overlay = el.overlay;
   const container = el.overlayContainer;
+  if (!overlay || !container) return;
   const scale = getPreviewScale();
 
   // 1. 盒模型對齊
@@ -509,7 +560,7 @@ function applySubtitleStyleToOverlay() {
 
   // 2. 文字外觀與特效 (依據影片原生解析度等比縮放)
   const fontSize = Math.max(10, Math.round(s.font_size * scale));
-  const outlineWidth = Math.max(0.5, (s.outline_width * scale).toFixed(1));
+  const outlineWidth = Math.max(0.0, (s.outline_width * scale)).toFixed(1);
   const shadowDist = (s.shadow_offset * scale).toFixed(1);
 
   overlay.style.fontFamily = `"${s.font_name}", sans-serif`;
@@ -520,10 +571,12 @@ function applySubtitleStyleToOverlay() {
   overlay.style.letterSpacing = `${(s.letter_spacing * scale).toFixed(1)}px`;
 
   // 描邊字
-  overlay.style.webkitTextStroke = `${outlineWidth}px ${s.outline_color}`;
+  overlay.style.webkitTextStroke = Number(outlineWidth) > 0 ? `${outlineWidth}px ${s.outline_color}` : "0px transparent";
 
   // 陰影字
-  overlay.style.textShadow = `${shadowDist}px ${shadowDist}px ${shadowDist * 1.5}px ${s.shadow_color}`;
+  overlay.style.textShadow = Number(shadowDist) > 0
+    ? `${shadowDist}px ${shadowDist}px ${(shadowDist * 1.5).toFixed(1)}px ${s.shadow_color}`
+    : "none";
 
   // 直排 / 橫排
   if (s.orientation === "vertical") {
@@ -539,6 +592,7 @@ function applySubtitleStyleToOverlay() {
 }
 
 function updateCssCodeBox() {
+  if (!el.cssLiveCode) return;
   const s = state.style;
   const writingMode = s.orientation === "vertical" ? "vertical-rl" : "horizontal-tb";
   const css = `/* Subtitle Web CSS Preset */
@@ -558,24 +612,76 @@ letter-spacing: ${s.letter_spacing}px;`;
   el.cssLiveCode.value = css;
 }
 
+// 確保在「3. 樣式與位置」或暫停調整樣式時，畫面上永遠有清晰可見的字幕預覽文字
+function ensureSubtitlePreviewVisible() {
+  if (!el.overlay) return;
+  const segs = (state.track && state.track.segments) ? state.track.segments : [];
+  if (segs.length > 0) {
+    if (state.selectedSegmentIndex < 0 || state.selectedSegmentIndex >= segs.length) {
+      state.selectedSegmentIndex = 0;
+    }
+    const curTime = el.video ? (el.video.currentTime || 0) : 0;
+    const activeSeg = segs.find(seg => curTime >= seg.start - 0.05 && curTime <= seg.end + 0.05);
+    const targetSeg = activeSeg || segs[state.selectedSegmentIndex];
+    const targetIdx = segs.indexOf(targetSeg);
+    if (targetIdx !== -1) state.selectedSegmentIndex = targetIdx;
+
+    const fallbackText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
+      ? el.inputStylePreviewText.value.trim()
+      : "字幕樣式與位置即時預覽 Sample";
+    const textToShow = (targetSeg && targetSeg.text && targetSeg.text.trim())
+      ? targetSeg.text
+      : `[#${targetSeg.id}] ${fallbackText}`;
+
+    renderOverlayText(textToShow);
+    if (el.inputStylePreviewText && document.activeElement !== el.inputStylePreviewText) {
+      el.inputStylePreviewText.value = (targetSeg && targetSeg.text && targetSeg.text.trim()) ? targetSeg.text : fallbackText;
+    }
+    if (el.selectSubtitleLine) {
+      el.selectSubtitleLine.value = String(state.selectedSegmentIndex);
+    }
+    if (el.selectedSubBadge && targetSeg) {
+      el.selectedSubBadge.textContent = `目前選擇: 第 ${targetSeg.id} 句 (${targetSeg.start.toFixed(2)}s)`;
+    }
+  } else {
+    const sampleText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
+      ? el.inputStylePreviewText.value.trim()
+      : "字幕樣式與位置即時預覽 Sample";
+    if (state.activeTab === "tab-style" || !el.overlay.textContent.trim()) {
+      renderOverlayText(sampleText);
+    }
+    if (el.selectedSubBadge) {
+      el.selectedSubBadge.textContent = "目前顯示: 樣式預覽範例文字";
+    }
+  }
+}
+
 // 根據時間戳更新字幕
 function updateSubtitleOverlayOnTime(currentTime) {
   if (!state.track.segments || state.track.segments.length === 0) {
-    el.overlay.textContent = "";
+    if (state.activeTab === "tab-style") {
+      ensureSubtitlePreviewVisible();
+    } else {
+      el.overlay.textContent = "";
+    }
     return;
   }
 
-  const activeSeg = state.track.segments.find(seg => currentTime >= seg.start && currentTime <= seg.end);
+  const activeSeg = state.track.segments.find(seg => currentTime >= seg.start - 0.05 && currentTime <= seg.end + 0.05);
 
   if (activeSeg) {
     const activeIdx = state.track.segments.indexOf(activeSeg);
     if (activeIdx !== -1) state.selectedSegmentIndex = activeIdx;
     renderOverlayText(activeSeg.text || `[#${activeSeg.id} 斷點區間]`);
     highlightActiveSegmentInList(activeSeg.id);
+    if (el.selectSubtitleLine && state.activeTab === "tab-style") {
+      el.selectSubtitleLine.value = String(state.selectedSegmentIndex);
+    }
   } else {
-    if (el.video.paused && state.selectedSegmentIndex >= 0 && state.track.segments[state.selectedSegmentIndex]) {
+    if ((el.video.paused || state.activeTab === "tab-style") && state.selectedSegmentIndex >= 0 && state.track.segments[state.selectedSegmentIndex]) {
       const selSeg = state.track.segments[state.selectedSegmentIndex];
-      renderOverlayText(selSeg.text || "");
+      const fallback = state.activeTab === "tab-style" ? `[#${selSeg.id} 字幕樣式預覽]` : "";
+      renderOverlayText(selSeg.text || fallback);
     } else {
       el.overlay.textContent = "";
     }
@@ -583,7 +689,9 @@ function updateSubtitleOverlayOnTime(currentTime) {
 }
 
 function renderOverlayText(text) {
-  el.overlay.textContent = text;
+  if (el.overlay) {
+    el.overlay.textContent = text;
+  }
 }
 
 // 本地暫存機制 (防止重新整理遺失進度)
@@ -645,6 +753,7 @@ function initTabs() {
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const targetId = btn.dataset.tab;
+      state.activeTab = targetId;
 
       document.querySelectorAll(".tab-btn").forEach(b => {
         b.classList.remove("border-blue-500", "text-blue-400", "font-semibold", "bg-zinc-800/40");
@@ -658,8 +767,16 @@ function initTabs() {
       if (targetPane) targetPane.classList.remove("hidden");
 
       if (targetId === "tab-style") {
+        // 在樣式與位置頁籤中隱藏中央大播放鈕，避免遮擋置中字幕與干擾滑鼠拖曳
+        if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.add("hidden");
         updateSubtitleSelectDropdown();
+        syncStateToControls();
         applySubtitleStyleToOverlay();
+        ensureSubtitlePreviewVisible();
+      } else {
+        if (el.video && el.video.paused && el.videoCenterPlayBadge && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
+          el.videoCenterPlayBadge.classList.remove("hidden");
+        }
       }
     });
   });
@@ -1370,17 +1487,21 @@ function setSubtitleTrack(track) {
   normalizeTrackSegments();
   el.segmentCountBadge.textContent = `${track.segments.length} 句字幕`;
   el.editorSegCount.textContent = track.segments.length;
+
+  if (track.segments.length > 0) {
+    state.selectedSegmentIndex = Math.max(0, Math.min(state.selectedSegmentIndex, track.segments.length - 1));
+  } else {
+    state.selectedSegmentIndex = 0;
+  }
+
   renderSegmentList();
   updateSubtitleSelectDropdown();
   updateSummary();
   updateWorkspaceSlots();
   renderFilteredAssetLibrary();
   drawWaveformTimeline();
+  ensureSubtitlePreviewVisible();
   saveSessionToStorage();
-
-  if (track.segments.length > 0) {
-    state.selectedSegmentIndex = Math.min(state.selectedSegmentIndex, track.segments.length - 1);
-  }
 }
 
 function renderSegmentList() {
@@ -1568,11 +1689,27 @@ function selectAndJumpToSegment(index) {
   const seg = state.track.segments[index];
   if (seg) {
     state.autoPauseAt = null;
-    el.video.currentTime = seg.start;
-    renderOverlayText(seg.text);
+    // 定位至該段起點後 +0.05s，確保浮點數不會落在 start 之前而被 timeupdate 清除
+    const targetSec = Math.min(seg.end, seg.start + 0.05);
+    if (el.video && !isNaN(targetSec)) {
+      try {
+        el.video.currentTime = targetSec;
+      } catch (e) {
+        // ignore seek before metadata
+      }
+    }
+    const textToShow = (seg.text && seg.text.trim()) ? seg.text : `[#${seg.id} 字幕樣式預覽]`;
+    renderOverlayText(textToShow);
+    if (el.inputStylePreviewText && seg.text && seg.text.trim()) {
+      el.inputStylePreviewText.value = seg.text;
+    }
     highlightActiveSegmentInList(seg.id);
-    el.selectedSubBadge.textContent = `目前選擇: 第 ${seg.id} 句 (${seg.start.toFixed(2)}s)`;
-    el.selectSubtitleLine.value = String(index);
+    if (el.selectedSubBadge) {
+      el.selectedSubBadge.textContent = `目前選擇: 第 ${seg.id} 句 (${seg.start.toFixed(2)}s)`;
+    }
+    if (el.selectSubtitleLine) {
+      el.selectSubtitleLine.value = String(index);
+    }
     drawWaveformTimeline();
   }
 }
@@ -1967,161 +2104,455 @@ function initEditorViewToggle() {
 // ---------------- 8. Tab 3: 字幕樣式與逐行選擇控件 ----------------
 function updateSubtitleSelectDropdown() {
   const sel = el.selectSubtitleLine;
+  if (!sel) return;
   sel.innerHTML = "";
 
-  if (!state.track.segments.length) {
-    sel.innerHTML = `<option value="0">尚無字幕</option>`;
+  if (!state.track.segments || !state.track.segments.length) {
+    sel.innerHTML = `<option value="0">尚無字幕 (顯示預設範例文字)</option>`;
     return;
   }
 
   state.track.segments.forEach((seg, idx) => {
     const opt = document.createElement("option");
     opt.value = String(idx);
-    opt.textContent = `#${seg.id} [${formatTime(seg.start)}]: ${seg.text}`;
+    const labelText = (seg.text && seg.text.trim()) ? seg.text : "[待填字幕斷點]";
+    opt.textContent = `#${seg.id} [${formatTime(seg.start)}]: ${labelText}`;
     if (idx === state.selectedSegmentIndex) opt.selected = true;
     sel.appendChild(opt);
   });
 }
 
+// 依據 X 百分比 (0=最左, 50=置中, 100=最右) 無死角平滑計算盒模型水平對齊與邊距
+function applySliderPositionX(pctX) {
+  state.styleCustomized = true;
+  const val = Math.max(0, Math.min(100, Math.round(pctX)));
+  const vidW = state.video.width || 1920;
+  const minPad = Math.max(10, Math.round(vidW * 0.025));
+
+  if (state.style.orientation === "vertical") {
+    state.style.horizontal_align = "right";
+    state.style.padding_right = Math.round(((100 - val) / 100) * (vidW * 0.86));
+    state.style.padding_left = minPad;
+    if (el.valPosX) el.valPosX.textContent = `距右 ${state.style.padding_right}px (${val}%)`;
+  } else {
+    if (state.style.horizontal_align === "left") {
+      state.style.padding_left = Math.round((val / 100) * (vidW * 0.80));
+      state.style.padding_right = minPad;
+      if (el.valPosX) el.valPosX.textContent = `靠左 距左 ${state.style.padding_left}px (${val}%)`;
+    } else if (state.style.horizontal_align === "right") {
+      state.style.padding_right = Math.round(((100 - val) / 100) * (vidW * 0.80));
+      state.style.padding_left = minPad;
+      if (el.valPosX) el.valPosX.textContent = `靠右 距右 ${state.style.padding_right}px (${val}%)`;
+    } else {
+      // 水平置中模式下，藉由左右非對稱內距平滑偏移中心點 (0~100 全程無死角，且與 FFmpeg ASS MarginL/MarginR 完全一致)
+      if (Math.abs(val - 50) <= 1) {
+        state.style.padding_left = minPad;
+        state.style.padding_right = minPad;
+        if (el.valPosX) el.valPosX.textContent = `水平置中 (50%)`;
+      } else if (val < 50) {
+        state.style.padding_left = minPad;
+        state.style.padding_right = minPad + Math.round(((50 - val) / 50) * (vidW * 0.78));
+        if (el.valPosX) el.valPosX.textContent = `偏左 ${val}% (右距 ${state.style.padding_right}px)`;
+      } else {
+        state.style.padding_right = minPad;
+        state.style.padding_left = minPad + Math.round(((val - 50) / 50) * (vidW * 0.78));
+        if (el.valPosX) el.valPosX.textContent = `偏右 ${val}% (左距 ${state.style.padding_left}px)`;
+      }
+    }
+  }
+
+  if (el.sliderPosX) el.sliderPosX.value = val;
+  if (el.inputPadLeft) el.inputPadLeft.value = state.style.padding_left;
+  if (el.inputPadRight) el.inputPadRight.value = state.style.padding_right;
+  updateGridButtonsHighlight();
+  applySubtitleStyleToOverlay();
+  ensureSubtitlePreviewVisible();
+}
+
+// 依據 Y 百分比 (0=最底, 50=正中, 100=最頂) 無死角平滑計算盒模型垂直對齊與邊距
+function applySliderPositionY(pctY) {
+  state.styleCustomized = true;
+  const val = Math.max(0, Math.min(100, Math.round(pctY)));
+  const vidH = state.video.height || 1080;
+  const minPad = Math.max(10, Math.round(vidH * 0.025));
+
+  if (state.style.orientation === "vertical") {
+    state.style.vertical_align = "top";
+    state.style.padding_top = Math.round(((100 - val) / 100) * (vidH * 0.75));
+    state.style.padding_bottom = minPad;
+    if (el.valPosY) el.valPosY.textContent = `距頂 ${state.style.padding_top}px (${val}%)`;
+  } else {
+    if (state.style.vertical_align === "top") {
+      state.style.padding_top = Math.round(((100 - val) / 100) * (vidH * 0.85));
+      state.style.padding_bottom = minPad;
+      if (el.valPosY) el.valPosY.textContent = `距頂 ${state.style.padding_top}px (${val}%)`;
+    } else {
+      // 以 bottom 為基準，從 0% (貼底) 到 100% (頂部) 全程平滑無死角移動，且與 FFmpeg ASS MarginV 100% 對應
+      state.style.vertical_align = "bottom";
+      state.style.padding_bottom = Math.round((val / 100) * (vidH * 0.86));
+      state.style.padding_top = minPad;
+      if (el.valPosY) el.valPosY.textContent = `距底 ${state.style.padding_bottom}px (${val}%)`;
+    }
+  }
+
+  if (el.sliderPosY) el.sliderPosY.value = val;
+  if (el.inputPadTop) el.inputPadTop.value = state.style.padding_top;
+  if (el.inputPadBottom) el.inputPadBottom.value = state.style.padding_bottom;
+  updateGridButtonsHighlight();
+  applySubtitleStyleToOverlay();
+  ensureSubtitlePreviewVisible();
+}
+
+function updateGridButtonsHighlight() {
+  const s = state.style;
+  document.querySelectorAll(".grid-align-btn").forEach(b => {
+    if (b.dataset.valign === s.vertical_align && b.dataset.halign === s.horizontal_align) {
+      b.classList.add("bg-blue-600", "text-white");
+      b.classList.remove("bg-zinc-800");
+    } else {
+      b.classList.remove("bg-blue-600", "text-white");
+      b.classList.add("bg-zinc-800");
+    }
+  });
+}
+
+// 支援直接在左側影片預覽畫布上按住字幕拖曳位置
+function initOverlayDirectDrag() {
+  const overlay = el.overlay;
+  if (!overlay) return;
+
+  let isDragging = false;
+  let startClientX = 0;
+  let startClientY = 0;
+  let startPctX = 50;
+  let startPctY = 10;
+
+  overlay.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    e.stopPropagation();
+    e.preventDefault();
+    isDragging = true;
+    state.justDraggedSubtitle = true;
+    startClientX = e.clientX;
+    startClientY = e.clientY;
+    startPctX = el.sliderPosX ? (parseFloat(el.sliderPosX.value) || 50) : 50;
+    startPctY = el.sliderPosY ? (parseFloat(el.sliderPosY.value) || 10) : 10;
+
+    overlay.classList.add("ring-2", "ring-blue-400", "bg-blue-500/20");
+    try {
+      overlay.setPointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
+  });
+
+  overlay.addEventListener("pointermove", (e) => {
+    if (!isDragging) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const stageW = Math.max(120, (el.videoStage && el.videoStage.clientWidth) || 360);
+    const stageH = Math.max(120, (el.videoStage && el.videoStage.clientHeight) || 360);
+
+    const dx = e.clientX - startClientX;
+    const dy = e.clientY - startClientY;
+
+    const newPctX = Math.max(0, Math.min(100, Math.round(startPctX + (dx / stageW) * 100)));
+    const newPctY = Math.max(0, Math.min(100, Math.round(startPctY - (dy / stageH) * 100)));
+
+    applySliderPositionX(newPctX);
+    applySliderPositionY(newPctY);
+  });
+
+  const endDrag = (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    overlay.classList.remove("ring-2", "ring-blue-400", "bg-blue-500/20");
+    try {
+      if (e && e.pointerId !== undefined) overlay.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // ignore
+    }
+    setTimeout(() => {
+      state.justDraggedSubtitle = false;
+    }, 180);
+  };
+
+  overlay.addEventListener("pointerup", endDrag);
+  overlay.addEventListener("pointercancel", endDrag);
+}
+
 function initStyleEditor() {
-  el.selectSubtitleLine.addEventListener("change", (e) => {
-    const idx = parseInt(e.target.value, 10);
-    selectAndJumpToSegment(idx);
-  });
+  if (el.selectSubtitleLine) {
+    el.selectSubtitleLine.addEventListener("change", (e) => {
+      const idx = parseInt(e.target.value, 10);
+      if (state.track.segments && state.track.segments[idx]) {
+        selectAndJumpToSegment(idx);
+      } else {
+        ensureSubtitlePreviewVisible();
+      }
+    });
+  }
 
-  el.btnOrientH.addEventListener("click", () => {
-    state.style.orientation = "horizontal";
-    el.btnOrientH.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
-    el.btnOrientV.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
-    applySubtitleStyleToOverlay();
-  });
+  if (el.inputStylePreviewText) {
+    el.inputStylePreviewText.addEventListener("input", (e) => {
+      const txt = e.target.value;
+      renderOverlayText(txt || "字幕樣式與位置即時預覽 Sample");
+      // 若目前已選取某句字幕，也可同步更新該句預覽
+      if (state.track.segments && state.track.segments[state.selectedSegmentIndex]) {
+        state.track.segments[state.selectedSegmentIndex].text = txt;
+        updateSubtitleSelectDropdown();
+        renderSegmentList();
+        saveSessionToStorage();
+      }
+    });
+  }
 
-  el.btnOrientV.addEventListener("click", () => {
-    state.style.orientation = "vertical";
-    el.btnOrientV.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
-    el.btnOrientH.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
-    applySubtitleStyleToOverlay();
-  });
+  if (el.btnResetPosition) {
+    el.btnResetPosition.addEventListener("click", () => {
+      state.styleCustomized = true;
+      const vidH = state.video.height || 1080;
+      const vidW = state.video.width || 1920;
+      state.style.orientation = "horizontal";
+      state.style.vertical_align = "bottom";
+      state.style.horizontal_align = "center";
+      state.style.padding_bottom = Math.round(vidH * 0.06);
+      state.style.padding_top = Math.round(vidH * 0.04);
+      state.style.padding_left = Math.round(vidW * 0.04);
+      state.style.padding_right = Math.round(vidW * 0.04);
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+      addLog("已重設字幕為預設底部置中位置", "info");
+    });
+  }
+
+  if (el.btnOrientH) {
+    el.btnOrientH.addEventListener("click", () => {
+      state.styleCustomized = true;
+      state.style.orientation = "horizontal";
+      el.btnOrientH.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
+      if (el.btnOrientV) el.btnOrientV.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+
+  if (el.btnOrientV) {
+    el.btnOrientV.addEventListener("click", () => {
+      state.styleCustomized = true;
+      state.style.orientation = "vertical";
+      el.btnOrientV.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
+      if (el.btnOrientH) el.btnOrientH.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
   document.querySelectorAll(".grid-align-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".grid-align-btn").forEach(b => {
-        b.classList.remove("bg-blue-600", "text-white");
-        b.classList.add("bg-zinc-800");
-      });
-      btn.classList.add("bg-blue-600", "text-white");
-      btn.classList.remove("bg-zinc-800");
+      state.styleCustomized = true;
+      const valign = btn.dataset.valign;
+      const halign = btn.dataset.halign;
+      const vidW = state.video.width || 1920;
+      const vidH = state.video.height || 1080;
+      const padH = Math.max(16, Math.round(vidW * 0.045));
+      const padV = Math.max(24, Math.round(vidH * 0.06));
 
-      state.style.vertical_align = btn.dataset.valign;
-      state.style.horizontal_align = btn.dataset.halign;
+      state.style.vertical_align = valign;
+      state.style.horizontal_align = halign;
+
+      if (valign === "top") {
+        state.style.padding_top = padV;
+        state.style.padding_bottom = 16;
+      } else if (valign === "middle") {
+        state.style.padding_top = 0;
+        state.style.padding_bottom = 0;
+      } else {
+        state.style.padding_bottom = padV;
+        state.style.padding_top = 16;
+      }
+
+      if (halign === "left") {
+        state.style.padding_left = padH;
+        state.style.padding_right = 16;
+      } else if (halign === "right") {
+        state.style.padding_right = padH;
+        state.style.padding_left = 16;
+      } else {
+        state.style.padding_left = 16;
+        state.style.padding_right = 16;
+      }
+
+      syncStateToControls();
       applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
     });
   });
 
-  el.sliderPosX.addEventListener("input", (e) => {
-    const val = parseInt(e.target.value, 10);
-    if (val < 33) {
-      state.style.horizontal_align = "left";
-      state.style.padding_left = Math.max(10, val * 4);
-      el.valPosX.textContent = `靠左 (${state.style.padding_left}px)`;
-    } else if (val > 66) {
-      state.style.horizontal_align = "right";
-      state.style.padding_right = Math.max(10, (100 - val) * 4);
-      el.valPosX.textContent = `靠右 (${state.style.padding_right}px)`;
-    } else {
-      state.style.horizontal_align = "center";
-      el.valPosX.textContent = "水平置中";
-    }
-    applySubtitleStyleToOverlay();
-  });
+  if (el.sliderPosX) {
+    el.sliderPosX.addEventListener("input", (e) => {
+      applySliderPositionX(parseFloat(e.target.value));
+    });
+  }
 
-  el.sliderPosY.addEventListener("input", (e) => {
-    const val = parseInt(e.target.value, 10);
-    if (val < 33) {
-      state.style.vertical_align = "bottom";
-      state.style.padding_bottom = Math.max(20, val * 5);
-      el.valPosY.textContent = `靠底 (${state.style.padding_bottom}px)`;
-    } else if (val > 66) {
-      state.style.vertical_align = "top";
-      state.style.padding_top = Math.max(20, (100 - val) * 5);
-      el.valPosY.textContent = `齊頭頂部 (${state.style.padding_top}px)`;
-    } else {
-      state.style.vertical_align = "middle";
-      el.valPosY.textContent = "垂直置中";
-    }
-    applySubtitleStyleToOverlay();
-  });
+  if (el.sliderPosY) {
+    el.sliderPosY.addEventListener("input", (e) => {
+      applySliderPositionY(parseFloat(e.target.value));
+    });
+  }
 
-  el.inputPadTop.addEventListener("input", (e) => { state.style.padding_top = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
-  el.inputPadRight.addEventListener("input", (e) => { state.style.padding_right = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
-  el.inputPadBottom.addEventListener("input", (e) => { state.style.padding_bottom = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
-  el.inputPadLeft.addEventListener("input", (e) => { state.style.padding_left = parseInt(e.target.value, 10) || 0; applySubtitleStyleToOverlay(); });
+  if (el.inputPadTop) {
+    el.inputPadTop.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.padding_top = Math.max(0, parseInt(e.target.value, 10) || 0);
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.inputPadRight) {
+    el.inputPadRight.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.padding_right = Math.max(0, parseInt(e.target.value, 10) || 0);
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.inputPadBottom) {
+    el.inputPadBottom.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.padding_bottom = Math.max(0, parseInt(e.target.value, 10) || 0);
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.inputPadLeft) {
+    el.inputPadLeft.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.padding_left = Math.max(0, parseInt(e.target.value, 10) || 0);
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.selectFontName.addEventListener("change", (e) => { state.style.font_name = e.target.value; applySubtitleStyleToOverlay(); });
-  el.sliderFontSize.addEventListener("input", (e) => {
-    state.style.font_size = parseInt(e.target.value, 10);
-    el.valFontSize.textContent = `${state.style.font_size}px`;
-    applySubtitleStyleToOverlay();
-  });
+  if (el.selectFontName) {
+    el.selectFontName.addEventListener("change", (e) => {
+      state.styleCustomized = true;
+      state.style.font_name = e.target.value;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.sliderFontSize) {
+    el.sliderFontSize.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.font_size = parseInt(e.target.value, 10);
+      if (el.valFontSize) el.valFontSize.textContent = `${state.style.font_size}px`;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.pickerPrimaryColor.addEventListener("input", (e) => {
-    state.style.primary_color = e.target.value.toUpperCase();
-    el.labelPrimaryColor.textContent = state.style.primary_color;
-    applySubtitleStyleToOverlay();
-  });
+  if (el.pickerPrimaryColor) {
+    el.pickerPrimaryColor.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.primary_color = e.target.value.toUpperCase();
+      if (el.labelPrimaryColor) el.labelPrimaryColor.textContent = state.style.primary_color;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.checkBold.addEventListener("change", (e) => { state.style.bold = e.target.checked; applySubtitleStyleToOverlay(); });
-  el.checkItalic.addEventListener("change", (e) => { state.style.italic = e.target.checked; applySubtitleStyleToOverlay(); });
+  if (el.checkBold) {
+    el.checkBold.addEventListener("change", (e) => {
+      state.styleCustomized = true;
+      state.style.bold = e.target.checked;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.checkItalic) {
+    el.checkItalic.addEventListener("change", (e) => {
+      state.styleCustomized = true;
+      state.style.italic = e.target.checked;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.pickerOutlineColor.addEventListener("input", (e) => {
-    state.style.outline_color = e.target.value.toUpperCase();
-    el.labelOutlineColor.textContent = state.style.outline_color;
-    applySubtitleStyleToOverlay();
-  });
-  el.sliderOutlineWidth.addEventListener("input", (e) => {
-    state.style.outline_width = parseFloat(e.target.value);
-    el.valOutlineWidth.textContent = `${state.style.outline_width}px`;
-    applySubtitleStyleToOverlay();
-  });
+  if (el.pickerOutlineColor) {
+    el.pickerOutlineColor.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.outline_color = e.target.value.toUpperCase();
+      if (el.labelOutlineColor) el.labelOutlineColor.textContent = state.style.outline_color;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.sliderOutlineWidth) {
+    el.sliderOutlineWidth.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.outline_width = parseFloat(e.target.value);
+      if (el.valOutlineWidth) el.valOutlineWidth.textContent = `${state.style.outline_width}px`;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.pickerShadowColor.addEventListener("input", (e) => {
-    state.style.shadow_color = e.target.value.toUpperCase();
-    el.labelShadowColor.textContent = state.style.shadow_color;
-    applySubtitleStyleToOverlay();
-  });
-  el.sliderShadowOffset.addEventListener("input", (e) => {
-    state.style.shadow_offset = parseFloat(e.target.value);
-    el.valShadowOffset.textContent = `${state.style.shadow_offset}px`;
-    applySubtitleStyleToOverlay();
-  });
+  if (el.pickerShadowColor) {
+    el.pickerShadowColor.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.shadow_color = e.target.value.toUpperCase();
+      if (el.labelShadowColor) el.labelShadowColor.textContent = state.style.shadow_color;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+  if (el.sliderShadowOffset) {
+    el.sliderShadowOffset.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.shadow_offset = parseFloat(e.target.value);
+      if (el.valShadowOffset) el.valShadowOffset.textContent = `${state.style.shadow_offset}px`;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
 
-  el.btnCopyCss.addEventListener("click", () => {
-    navigator.clipboard.writeText(el.cssLiveCode.value);
-    el.btnCopyCss.textContent = "已複製 ✔";
-    setTimeout(() => { el.btnCopyCss.textContent = "複製 CSS"; }, 1500);
-  });
+  if (el.btnCopyCss) {
+    el.btnCopyCss.addEventListener("click", () => {
+      navigator.clipboard.writeText(el.cssLiveCode.value);
+      el.btnCopyCss.textContent = "已複製 ✔";
+      setTimeout(() => { el.btnCopyCss.textContent = "複製 CSS"; }, 1500);
+    });
+  }
 
-  el.cssLiveCode.addEventListener("change", async (e) => {
-    try {
-      const res = await fetch("/api/style/parse-css", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ css: e.target.value })
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        Object.assign(state.style, data.style);
-        syncStateToControls();
-        applySubtitleStyleToOverlay();
-        addLog("已由自訂 CSS 更新樣式參數", "info");
+  if (el.cssLiveCode) {
+    el.cssLiveCode.addEventListener("change", async (e) => {
+      try {
+        const res = await fetch("/api/style/parse-css", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ css: e.target.value })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          state.styleCustomized = true;
+          Object.assign(state.style, data.style);
+          syncStateToControls();
+          applySubtitleStyleToOverlay();
+          ensureSubtitlePreviewVisible();
+          addLog("已由自訂 CSS 更新樣式參數", "info");
+        }
+      } catch (err) {
+        addLog(`CSS 解析錯誤: ${err.message}`, "error");
       }
-    } catch (err) {
-      addLog(`CSS 解析錯誤: ${err.message}`, "error");
-    }
-  });
+    });
+  }
 
   initPresets();
   initFontManager();
+  initOverlayDirectDrag();
 }
 
 // ---------------- 8.5 字型安裝與動態 @font-face 管理 ----------------
@@ -2429,105 +2860,191 @@ function initFontManager() {
 
 function syncStateToControls() {
   const s = state.style;
-  el.sliderFontSize.value = s.font_size;
-  el.valFontSize.textContent = `${s.font_size}px`;
-  el.pickerPrimaryColor.value = s.primary_color;
-  el.labelPrimaryColor.textContent = s.primary_color;
-  el.pickerOutlineColor.value = s.outline_color;
-  el.labelOutlineColor.textContent = s.outline_color;
-  el.sliderOutlineWidth.value = s.outline_width;
-  el.valOutlineWidth.textContent = `${s.outline_width}px`;
-  el.pickerShadowColor.value = s.shadow_color;
-  el.labelShadowColor.textContent = s.shadow_color;
-  el.sliderShadowOffset.value = s.shadow_offset;
-  el.valShadowOffset.textContent = `${s.shadow_offset}px`;
-  el.checkBold.checked = s.bold;
-  el.checkItalic.checked = s.italic;
-  el.inputPadTop.value = s.padding_top;
-  el.inputPadRight.value = s.padding_right;
-  el.inputPadBottom.value = s.padding_bottom;
-  el.inputPadLeft.value = s.padding_left;
+  if (el.sliderFontSize) el.sliderFontSize.value = s.font_size;
+  if (el.valFontSize) el.valFontSize.textContent = `${s.font_size}px`;
+  if (el.pickerPrimaryColor) el.pickerPrimaryColor.value = s.primary_color;
+  if (el.labelPrimaryColor) el.labelPrimaryColor.textContent = s.primary_color;
+  if (el.pickerOutlineColor) el.pickerOutlineColor.value = s.outline_color;
+  if (el.labelOutlineColor) el.labelOutlineColor.textContent = s.outline_color;
+  if (el.sliderOutlineWidth) el.sliderOutlineWidth.value = s.outline_width;
+  if (el.valOutlineWidth) el.valOutlineWidth.textContent = `${s.outline_width}px`;
+  if (el.pickerShadowColor) el.pickerShadowColor.value = s.shadow_color;
+  if (el.labelShadowColor) el.labelShadowColor.textContent = s.shadow_color;
+  if (el.sliderShadowOffset) el.sliderShadowOffset.value = s.shadow_offset;
+  if (el.valShadowOffset) el.valShadowOffset.textContent = `${s.shadow_offset}px`;
+  if (el.checkBold) el.checkBold.checked = s.bold;
+  if (el.checkItalic) el.checkItalic.checked = s.italic;
+  if (el.inputPadTop) el.inputPadTop.value = s.padding_top;
+  if (el.inputPadRight) el.inputPadRight.value = s.padding_right;
+  if (el.inputPadBottom) el.inputPadBottom.value = s.padding_bottom;
+  if (el.inputPadLeft) el.inputPadLeft.value = s.padding_left;
+  if (el.selectFontName && s.font_name) el.selectFontName.value = s.font_name;
 
+  // 同步文字方向按鈕外觀
   if (s.orientation === "vertical") {
-    el.btnOrientV.click();
+    if (el.btnOrientV) el.btnOrientV.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
+    if (el.btnOrientH) el.btnOrientH.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
   } else {
-    el.btnOrientH.click();
+    if (el.btnOrientH) el.btnOrientH.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
+    if (el.btnOrientV) el.btnOrientV.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
   }
+
+  // 反推並同步 X / Y 滑桿與文字標籤
+  const vidW = state.video.width || 1920;
+  const vidH = state.video.height || 1080;
+
+  let pctX = 50;
+  if (s.orientation === "vertical" || s.horizontal_align === "right") {
+    pctX = Math.max(0, Math.min(100, Math.round(100 - (s.padding_right / Math.max(1, vidW * 0.82)) * 100)));
+    if (el.valPosX) el.valPosX.textContent = `靠右 距右 ${s.padding_right}px (${pctX}%)`;
+  } else if (s.horizontal_align === "left") {
+    pctX = Math.max(0, Math.min(100, Math.round((s.padding_left / Math.max(1, vidW * 0.82)) * 100)));
+    if (el.valPosX) el.valPosX.textContent = `靠左 距左 ${s.padding_left}px (${pctX}%)`;
+  } else {
+    const diff = (s.padding_left || 0) - (s.padding_right || 0);
+    if (Math.abs(diff) <= 4) {
+      pctX = 50;
+      if (el.valPosX) el.valPosX.textContent = "水平置中 (50%)";
+    } else if (diff < 0) {
+      pctX = Math.max(0, Math.round(50 - (Math.abs(diff) / Math.max(1, vidW * 0.78)) * 50));
+      if (el.valPosX) el.valPosX.textContent = `偏左 ${pctX}%`;
+    } else {
+      pctX = Math.min(100, Math.round(50 + (diff / Math.max(1, vidW * 0.78)) * 50));
+      if (el.valPosX) el.valPosX.textContent = `偏右 ${pctX}%`;
+    }
+  }
+  if (el.sliderPosX) el.sliderPosX.value = pctX;
+
+  let pctY = 10;
+  if (s.orientation === "vertical" || s.vertical_align === "top") {
+    pctY = Math.max(0, Math.min(100, Math.round(100 - (s.padding_top / Math.max(1, vidH * 0.80)) * 100)));
+    if (el.valPosY) el.valPosY.textContent = `距頂 ${s.padding_top}px (${pctY}%)`;
+  } else if (s.vertical_align === "middle") {
+    pctY = 50;
+    if (el.valPosY) el.valPosY.textContent = "垂直置中 (50%)";
+  } else {
+    pctY = Math.max(0, Math.min(100, Math.round((s.padding_bottom / Math.max(1, vidH * 0.86)) * 100)));
+    if (el.valPosY) el.valPosY.textContent = `距底 ${s.padding_bottom}px (${pctY}%)`;
+  }
+  if (el.sliderPosY) el.sliderPosY.value = pctY;
+
+  updateGridButtonsHighlight();
 }
 
 function initPresets() {
-  el.presetYoutube.addEventListener("click", () => {
-    Object.assign(state.style, {
-      font_size: 38,
-      primary_color: "#FFD700",
-      outline_color: "#000000",
-      outline_width: 3.2,
-      shadow_color: "#000000",
-      shadow_offset: 2.5,
-      bold: true,
-      orientation: "horizontal",
-      vertical_align: "bottom",
-      horizontal_align: "center",
-      padding_bottom: 60
-    });
-    syncStateToControls();
-    applySubtitleStyleToOverlay();
-  });
+  // 根據目前載入影片尺寸等比縮放 Preset 預設字級與邊距，兼顧 448x768 短影音與 1920x1080 橫式影片
+  function getVideoRefScale() {
+    const minDim = Math.min(state.video.width || 1920, state.video.height || 1080);
+    return Math.max(0.52, Math.min(1.2, minDim / 1080));
+  }
 
-  el.presetTiktok.addEventListener("click", () => {
-    Object.assign(state.style, {
-      font_size: 34,
-      primary_color: "#FFFFFF",
-      outline_color: "#111111",
-      outline_width: 2.5,
-      shadow_color: "#000000",
-      shadow_offset: 2.0,
-      bold: true,
-      orientation: "vertical",
-      vertical_align: "top",
-      horizontal_align: "right",
-      padding_top: 60,
-      padding_right: 60
+  if (el.presetYoutube) {
+    el.presetYoutube.addEventListener("click", () => {
+      state.styleCustomized = true;
+      const k = getVideoRefScale();
+      Object.assign(state.style, {
+        font_size: Math.round(38 * k),
+        primary_color: "#FFD700",
+        outline_color: "#000000",
+        outline_width: Number((3.2 * k).toFixed(1)),
+        shadow_color: "#000000",
+        shadow_offset: Number((2.5 * k).toFixed(1)),
+        bold: true,
+        orientation: "horizontal",
+        vertical_align: "bottom",
+        horizontal_align: "center",
+        padding_bottom: Math.round(60 * k),
+        padding_top: Math.round(40 * k),
+        padding_left: Math.round(32 * k),
+        padding_right: Math.round(32 * k)
+      });
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+      addLog("🌟 已套用「YouTube 醒目金黃」字幕樣式", "success");
     });
-    syncStateToControls();
-    applySubtitleStyleToOverlay();
-  });
+  }
 
-  el.presetClassic.addEventListener("click", () => {
-    Object.assign(state.style, {
-      font_size: 32,
-      primary_color: "#FFFFFF",
-      outline_color: "#000000",
-      outline_width: 2.0,
-      shadow_color: "#000000",
-      shadow_offset: 1.5,
-      bold: true,
-      orientation: "horizontal",
-      vertical_align: "bottom",
-      horizontal_align: "center",
-      padding_bottom: 50
+  if (el.presetTiktok) {
+    el.presetTiktok.addEventListener("click", () => {
+      state.styleCustomized = true;
+      const k = getVideoRefScale();
+      Object.assign(state.style, {
+        font_size: Math.round(34 * k),
+        primary_color: "#FFFFFF",
+        outline_color: "#111111",
+        outline_width: Number((2.5 * k).toFixed(1)),
+        shadow_color: "#000000",
+        shadow_offset: Number((2.0 * k).toFixed(1)),
+        bold: true,
+        orientation: "vertical",
+        vertical_align: "top",
+        horizontal_align: "right",
+        padding_top: Math.round(60 * k),
+        padding_right: Math.round(50 * k),
+        padding_left: Math.round(24 * k),
+        padding_bottom: Math.round(40 * k)
+      });
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+      addLog("📱 已套用「TikTok 右側直排」字幕樣式", "success");
     });
-    syncStateToControls();
-    applySubtitleStyleToOverlay();
-  });
+  }
 
-  el.presetMinimal.addEventListener("click", () => {
-    Object.assign(state.style, {
-      font_size: 30,
-      primary_color: "#E2E8F0",
-      outline_color: "#0F172A",
-      outline_width: 1.5,
-      shadow_color: "#000000",
-      shadow_offset: 1.0,
-      bold: false,
-      orientation: "horizontal",
-      vertical_align: "bottom",
-      horizontal_align: "center",
-      padding_bottom: 45
+  if (el.presetClassic) {
+    el.presetClassic.addEventListener("click", () => {
+      state.styleCustomized = true;
+      const k = getVideoRefScale();
+      Object.assign(state.style, {
+        font_size: Math.round(34 * k),
+        primary_color: "#FFFFFF",
+        outline_color: "#000000",
+        outline_width: Number((2.2 * k).toFixed(1)),
+        shadow_color: "#000000",
+        shadow_offset: Number((1.5 * k).toFixed(1)),
+        bold: true,
+        orientation: "horizontal",
+        vertical_align: "bottom",
+        horizontal_align: "center",
+        padding_bottom: Math.round(52 * k),
+        padding_top: Math.round(40 * k),
+        padding_left: Math.round(32 * k),
+        padding_right: Math.round(32 * k)
+      });
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+      addLog("🎬 已套用「經典電影白字」字幕樣式", "success");
     });
-    syncStateToControls();
-    applySubtitleStyleToOverlay();
-  });
+  }
+
+  if (el.presetMinimal) {
+    el.presetMinimal.addEventListener("click", () => {
+      state.styleCustomized = true;
+      const k = getVideoRefScale();
+      Object.assign(state.style, {
+        font_size: Math.round(30 * k),
+        primary_color: "#E2E8F0",
+        outline_color: "#0F172A",
+        outline_width: Number((1.5 * k).toFixed(1)),
+        shadow_color: "#000000",
+        shadow_offset: Number((1.0 * k).toFixed(1)),
+        bold: false,
+        orientation: "horizontal",
+        vertical_align: "bottom",
+        horizontal_align: "center",
+        padding_bottom: Math.round(46 * k),
+        padding_top: Math.round(40 * k),
+        padding_left: Math.round(32 * k),
+        padding_right: Math.round(32 * k)
+      });
+      syncStateToControls();
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+      addLog("📺 已套用「現代電視置中」字幕樣式", "success");
+    });
+  }
 }
 
 // ---------------- 9. Tab 4: 預覽與匯出 ----------------
@@ -2665,15 +3182,24 @@ window.addEventListener("DOMContentLoaded", async () => {
     // ignore
   }
 
-  initPlayer();
-  initTabs();
-  initUniversalDragAndDrop();
-  initAiButtons();
-  initEditorViewToggle();
-  initStyleEditor();
-  initExport();
-  syncStateToControls();
-  applySubtitleStyleToOverlay();
+  const safeInit = (fn, name) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`Init error in ${name}:`, err);
+    }
+  };
+
+  safeInit(initPlayer, "initPlayer");
+  safeInit(initTabs, "initTabs");
+  safeInit(initUniversalDragAndDrop, "initUniversalDragAndDrop");
+  safeInit(initAiButtons, "initAiButtons");
+  safeInit(initEditorViewToggle, "initEditorViewToggle");
+  safeInit(initStyleEditor, "initStyleEditor");
+  safeInit(initExport, "initExport");
+  safeInit(syncStateToControls, "syncStateToControls");
+  safeInit(applySubtitleStyleToOverlay, "applySubtitleStyleToOverlay");
+  safeInit(ensureSubtitlePreviewVisible, "ensureSubtitlePreviewVisible");
 
   // 1. 讀取並渲染字型庫與資產庫
   await loadFontCatalog();
