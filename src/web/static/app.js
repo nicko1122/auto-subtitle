@@ -304,18 +304,57 @@ function initPlayer() {
     });
   }
 
+  // 高精度 60FPS 字幕同步渲染迴圈 (播放中即時比對起訖時間，段落結束毫秒級清空消失)
+  let _subSyncRaf = null;
+  function startSubtitleSyncLoop() {
+    if (_subSyncRaf) cancelAnimationFrame(_subSyncRaf);
+    function tick() {
+      if (v && !v.paused && !v.ended) {
+        updateSubtitleOverlayOnTime(v.currentTime);
+        _subSyncRaf = requestAnimationFrame(tick);
+      } else {
+        _subSyncRaf = null;
+      }
+    }
+    _subSyncRaf = requestAnimationFrame(tick);
+  }
+
+  function stopSubtitleSyncLoop() {
+    if (_subSyncRaf) {
+      cancelAnimationFrame(_subSyncRaf);
+      _subSyncRaf = null;
+    }
+  }
+
   v.addEventListener("play", () => {
     el.iconPlay.classList.add("hidden");
     el.iconPause.classList.remove("hidden");
     if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.add("hidden");
+    startSubtitleSyncLoop();
+  });
+
+  v.addEventListener("playing", () => {
+    if (el.videoBufferingSpinner) el.videoBufferingSpinner.classList.add("hidden");
+    startSubtitleSyncLoop();
   });
 
   v.addEventListener("pause", () => {
+    stopSubtitleSyncLoop();
     el.iconPlay.classList.remove("hidden");
     el.iconPause.classList.add("hidden");
     if (el.videoCenterPlayBadge && state.activeTab !== "tab-style" && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
       el.videoCenterPlayBadge.classList.remove("hidden");
     }
+    updateSubtitleOverlayOnTime(v.currentTime);
+  });
+
+  v.addEventListener("ended", () => {
+    stopSubtitleSyncLoop();
+    updateSubtitleOverlayOnTime(v.currentTime);
+  });
+
+  v.addEventListener("seeked", () => {
+    updateSubtitleOverlayOnTime(v.currentTime);
   });
 
   v.addEventListener("waiting", () => {
@@ -392,7 +431,7 @@ function initPlayer() {
 
     // 重新計算字型與座標縮放比，確保預覽與實體影片原樣 100% 貼合
     applySubtitleStyleToOverlay();
-    ensureSubtitlePreviewVisible();
+    updateSubtitleOverlayOnTime(v.currentTime || 0);
   });
 
   // 全域鍵盤快捷鍵 (Space 播放/暫停，左右鍵快進退，[ 設起點，] 設終點，S 游標處切開)
@@ -410,10 +449,12 @@ function initPlayer() {
       e.preventDefault();
       state.autoPauseAt = null;
       v.currentTime = Math.max(0, v.currentTime - 3);
+      updateSubtitleOverlayOnTime(v.currentTime);
     } else if (e.code === "ArrowRight" || e.key === "l" || e.key === "L") {
       e.preventDefault();
       state.autoPauseAt = null;
       v.currentTime = Math.min(v.duration || 0, v.currentTime + 3);
+      updateSubtitleOverlayOnTime(v.currentTime);
     } else if (e.key === "[") {
       e.preventDefault();
       setInPointAtPlayhead();
@@ -436,6 +477,7 @@ function initPlayer() {
         const targetTime = ratio * dur;
         state.autoPauseAt = null;
         v.currentTime = targetTime;
+        updateSubtitleOverlayOnTime(targetTime);
         const foundIdx = state.track.segments.findIndex(s => targetTime >= s.start && targetTime <= s.end);
         if (foundIdx !== -1) {
           state.selectedSegmentIndex = foundIdx;
@@ -495,12 +537,19 @@ function initPlayer() {
   el.scrubber.addEventListener("input", (e) => {
     if (v.duration) {
       v.currentTime = (e.target.value / 100) * v.duration;
+      updateSubtitleOverlayOnTime(v.currentTime);
     }
   });
 
   // 快進快退
-  document.getElementById("btn-seek-backward").addEventListener("click", () => { v.currentTime = Math.max(0, v.currentTime - 3); });
-  document.getElementById("btn-seek-forward").addEventListener("click", () => { v.currentTime = Math.min(v.duration, v.currentTime + 3); });
+  document.getElementById("btn-seek-backward").addEventListener("click", () => {
+    v.currentTime = Math.max(0, v.currentTime - 3);
+    updateSubtitleOverlayOnTime(v.currentTime);
+  });
+  document.getElementById("btn-seek-forward").addEventListener("click", () => {
+    v.currentTime = Math.min(v.duration, v.currentTime + 3);
+    updateSubtitleOverlayOnTime(v.currentTime);
+  });
 
   // 音量與倍速
   el.volumeSlider.addEventListener("input", (e) => { v.volume = parseFloat(e.target.value); });
@@ -664,7 +713,7 @@ letter-spacing: ${s.letter_spacing}px;`;
   el.cssLiveCode.value = css;
 }
 
-// 確保在「3. 樣式與位置」或暫停調整樣式時，畫面上永遠有清晰可見的字幕預覽文字
+// 確保在「3. 樣式與位置」調整樣式時，畫面上能即時預覽外觀效果
 function ensureSubtitlePreviewVisible() {
   if (!el.overlay) return;
   const segs = (state.track && state.track.segments) ? state.track.segments : [];
@@ -673,56 +722,58 @@ function ensureSubtitlePreviewVisible() {
       state.selectedSegmentIndex = 0;
     }
     const curTime = el.video ? (el.video.currentTime || 0) : 0;
-    const activeSeg = segs.find(seg => curTime >= seg.start - 0.05 && curTime <= seg.end + 0.05);
-    const targetSeg = activeSeg || segs[state.selectedSegmentIndex];
-    const targetIdx = segs.indexOf(targetSeg);
-    if (targetIdx !== -1) state.selectedSegmentIndex = targetIdx;
+    const activeSeg = segs.find(seg => curTime >= seg.start && curTime <= seg.end);
 
-    const fallbackText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
-      ? el.inputStylePreviewText.value.trim()
-      : "字幕樣式與位置即時預覽 Sample";
-    const textToShow = (targetSeg && targetSeg.text && targetSeg.text.trim())
-      ? targetSeg.text
-      : `[#${targetSeg.id}] ${fallbackText}`;
-
-    renderOverlayText(textToShow);
-    if (el.inputStylePreviewText && document.activeElement !== el.inputStylePreviewText) {
-      el.inputStylePreviewText.value = (targetSeg && targetSeg.text && targetSeg.text.trim()) ? targetSeg.text : fallbackText;
-    }
-    if (el.selectSubtitleLine) {
-      el.selectSubtitleLine.value = String(state.selectedSegmentIndex);
-    }
-    if (el.selectedSubBadge && targetSeg) {
-      el.selectedSubBadge.textContent = `目前選擇: 第 ${targetSeg.id} 句 (${targetSeg.start.toFixed(2)}s)`;
+    if (activeSeg) {
+      renderOverlayText(activeSeg.text || `[#${activeSeg.id}]`);
+      if (el.selectedSubBadge) {
+        el.selectedSubBadge.textContent = `目前選擇: 第 ${activeSeg.id} 句 (${activeSeg.start.toFixed(2)}s)`;
+      }
+    } else {
+      // 若當前時間不在任何字幕時間軸區間內：
+      // 僅在使用者處於【3. 樣式與位置】頁籤且影片為【暫停狀態】（手動調整樣式滑桿）時顯示所選字幕供外觀微調
+      if (state.activeTab === "tab-style" && (el.video ? el.video.paused : true)) {
+        const targetSeg = segs[state.selectedSegmentIndex] || segs[0];
+        const fallbackText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
+          ? el.inputStylePreviewText.value.trim()
+          : "字幕樣式與位置即時預覽 Sample";
+        const textToShow = (targetSeg && targetSeg.text && targetSeg.text.trim())
+          ? targetSeg.text
+          : `[#${targetSeg ? targetSeg.id : 1}] ${fallbackText}`;
+        renderOverlayText(textToShow);
+        if (el.selectedSubBadge && targetSeg) {
+          el.selectedSubBadge.textContent = `樣式預覽: 第 ${targetSeg.id} 句 (${targetSeg.start.toFixed(2)}s)`;
+        }
+      } else {
+        // 其餘情況（播放中、或非樣式頁籤），不在時間軸內一律消失！
+        renderOverlayText("");
+      }
     }
   } else {
-    const sampleText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
-      ? el.inputStylePreviewText.value.trim()
-      : "字幕樣式與位置即時預覽 Sample";
-    if (state.activeTab === "tab-style" || !el.overlay.textContent.trim()) {
+    if (state.activeTab === "tab-style") {
+      const sampleText = (el.inputStylePreviewText && el.inputStylePreviewText.value.trim())
+        ? el.inputStylePreviewText.value.trim()
+        : "字幕樣式與位置即時預覽 Sample";
       renderOverlayText(sampleText);
-    }
-    if (el.selectedSubBadge) {
-      el.selectedSubBadge.textContent = "目前顯示: 樣式預覽範例文字";
+    } else {
+      renderOverlayText("");
     }
   }
 }
 
-// 根據時間戳更新字幕
+// 根據時間戳更新字幕 (關鍵修正：不在時間軸內的字幕必須立即消失！)
 function updateSubtitleOverlayOnTime(currentTime) {
-  if (!state.track.segments || state.track.segments.length === 0) {
-    if (state.activeTab === "tab-style") {
-      ensureSubtitlePreviewVisible();
-    } else {
-      el.overlay.textContent = "";
-    }
+  const segs = (state.track && state.track.segments) ? state.track.segments : [];
+  if (segs.length === 0) {
+    renderOverlayText("");
     return;
   }
 
-  const activeSeg = state.track.segments.find(seg => currentTime >= seg.start - 0.05 && currentTime <= seg.end + 0.05);
+  // 嚴格判定當前時間是否落入字幕區間 [seg.start, seg.end]
+  const activeSeg = segs.find(seg => currentTime >= seg.start && currentTime <= seg.end);
 
   if (activeSeg) {
-    const activeIdx = state.track.segments.indexOf(activeSeg);
+    const activeIdx = segs.indexOf(activeSeg);
     if (activeIdx !== -1) state.selectedSegmentIndex = activeIdx;
     renderOverlayText(activeSeg.text || `[#${activeSeg.id} 斷點區間]`);
     highlightActiveSegmentInList(activeSeg.id);
@@ -730,19 +781,22 @@ function updateSubtitleOverlayOnTime(currentTime) {
       el.selectSubtitleLine.value = String(state.selectedSegmentIndex);
     }
   } else {
-    if ((el.video.paused || state.activeTab === "tab-style") && state.selectedSegmentIndex >= 0 && state.track.segments[state.selectedSegmentIndex]) {
-      const selSeg = state.track.segments[state.selectedSegmentIndex];
-      const fallback = state.activeTab === "tab-style" ? `[#${selSeg.id} 字幕樣式預覽]` : "";
-      renderOverlayText(selSeg.text || fallback);
-    } else {
-      el.overlay.textContent = "";
-    }
+    // 當前時間點不在任何字幕區間內，字幕必須立即消失！
+    renderOverlayText("");
+    highlightActiveSegmentInList(null);
   }
 }
 
 function renderOverlayText(text) {
   if (el.overlay) {
-    el.overlay.textContent = text;
+    const str = (text !== null && text !== undefined) ? String(text).replace(/\\N/g, "\n") : "";
+    el.overlay.textContent = str;
+    el.overlay.style.whiteSpace = "pre-wrap";
+    if (!str.trim()) {
+      el.overlay.style.display = "none";
+    } else {
+      el.overlay.style.display = "";
+    }
   }
 }
 
@@ -829,6 +883,8 @@ function initTabs() {
         if (el.video && el.video.paused && el.videoCenterPlayBadge && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
           el.videoCenterPlayBadge.classList.remove("hidden");
         }
+        // 切換離開樣式頁籤時，立即校準時間軸狀態：若不在時間軸內立即消失
+        updateSubtitleOverlayOnTime(el.video ? el.video.currentTime : 0);
       }
     });
   });
@@ -1565,7 +1621,7 @@ function setSubtitleTrack(track) {
   updateWorkspaceSlots();
   renderFilteredAssetLibrary();
   drawWaveformTimeline();
-  ensureSubtitlePreviewVisible();
+  updateSubtitleOverlayOnTime(el.video ? (el.video.currentTime || 0) : 0);
   saveSessionToStorage();
 }
 
