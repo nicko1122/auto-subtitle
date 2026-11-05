@@ -68,6 +68,20 @@ def test_mapping_overlap_caps_previous_end_without_delaying_next_onset(tmp_path)
     assert [(item.start, item.end) for item in final] == [(0, 1.5), (1.5, 3)]
 
 
+def test_disabling_audit_does_not_allocate_or_apply_an_llm(tmp_path, monkeypatch):
+    factory = Mock(side_effect=AssertionError('LLM must remain unloaded'))
+    monkeypatch.setattr(luna_pipeline, 'LocalQwenReasoner', factory)
+    pipeline = luna_pipeline.LunaPipeline('unused', '', output_dir=str(tmp_path), llm_audit=False)
+    pipeline.audio_duration = 4
+    pipeline.cue_evidence = [cue(1, 1, 2, True)]
+    (tmp_path / 'decision_batches.json').write_text('previous audit')
+    result = pipeline.step_5_and_6_luna_decision()
+    assert (result[0].start, result[0].end) == (1, 2)
+    assert pipeline.reviews[0]['status'] == 'needs_review'
+    factory.assert_not_called()
+    assert not (tmp_path / 'decision_batches.json').exists()
+
+
 @pytest.mark.parametrize('reply', ['valid', 'unexpected_id', 'invalid_candidate', 'fractional_id', 'boolean_id'])
 def test_luna_batches_word_evidence_and_keeps_invalid_decisions_for_review(tmp_path, monkeypatch, reply):
     requests = []

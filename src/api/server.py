@@ -120,6 +120,7 @@ class AlignRequest(BaseModel):
     model: str = "large-v3"
     device: str = "cuda"
     prompt: Optional[str] = "繁體中文"
+    auto_proofread: bool = True
 
 
 class ProofreadRequest(BaseModel):
@@ -575,6 +576,7 @@ def transcribe_endpoint(
                 whisper_model=model,
                 device=device,
                 prompt=prompt,
+                llm_audit=auto_proofread,
             )
             return {
                 "status": "success",
@@ -662,6 +664,7 @@ def align_endpoint(req: AlignRequest):
             whisper_model=req.model,
             device=req.device,
             prompt=req.prompt,
+            llm_audit=req.auto_proofread,
         )
         return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
     except Exception as e:

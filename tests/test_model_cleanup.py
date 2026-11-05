@@ -181,3 +181,15 @@ def test_luna_closes_qwen_after_reasoning_failure(tmp_path, monkeypatch):
     pipeline.cue_evidence = [{'line_id': 1, 'org_line': '歌詞', 'candidates': {'cand_stable_ts': {'start': 0, 'end': 1}}, 'needs_review': True, 'anomalies': ['test']}]
     assert pipeline.step_5_and_6_luna_decision()[0].text == '歌詞'
     engine.close.assert_called_once()
+
+
+def test_luna_run_releases_memory_after_failure(tmp_path, monkeypatch):
+    pipeline = luna_pipeline.LunaPipeline('unused', '', output_dir=str(tmp_path), llm_audit=False)
+    error = RuntimeError('inference failed')
+    monkeypatch.setattr(pipeline, 'step_1_prepare_and_manifest', Mock(side_effect=error))
+    cleanup = Mock()
+    monkeypatch.setattr(luna_pipeline, 'release_gpu_memory', cleanup)
+    with pytest.raises(RuntimeError) as caught:
+        pipeline.run()
+    assert caught.value is error
+    cleanup.assert_called_once()

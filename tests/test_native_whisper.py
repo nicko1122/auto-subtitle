@@ -13,7 +13,8 @@ from src.schemas.subtitle import SubtitleTrack
 
 @pytest.mark.parametrize('endpoint', ['/api/ai/transcribe', '/api/ai/align'])
 @pytest.mark.parametrize('model', [None, 'small'])
-def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkeypatch, endpoint, model):
+@pytest.mark.parametrize('audit', [True, False])
+def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkeypatch, endpoint, model, audit):
     for name in ('UPLOADS_DIR', 'OUTPUT_DIR', 'TEMP_DIR'):
         directory = tmp_path / name
         directory.mkdir()
@@ -22,7 +23,7 @@ def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkey
     media.touch()
     pipeline = Mock(return_value=SubtitleTrack(source_file='test', segments=[]))
     monkeypatch.setattr(server, 'run_luna_pipeline', pipeline)
-    payload = {'media_path': str(media), 'script_text': '訪談逐字稿', 'device': 'cpu', 'prompt': '訪談'}
+    payload = {'media_path': str(media), 'script_text': '訪談逐字稿', 'device': 'cpu', 'prompt': '訪談', 'auto_proofread': audit}
     if model is not None:
         payload['model'] = model
     options = {'data': payload} if endpoint.endswith('transcribe') else {'json': payload}
@@ -31,10 +32,12 @@ def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkey
     assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3')
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
+    assert pipeline.call_args.kwargs['llm_audit'] is audit
 
 
 @pytest.mark.parametrize('model', [None, 'small'])
-def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model):
+@pytest.mark.parametrize('audit', [True, False])
+def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit):
     media, script = tmp_path / 'audio.wav', tmp_path / 'lyrics.txt'
     media.touch()
     script.write_text('歌詞')
@@ -43,11 +46,13 @@ def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model):
     arguments = ['luna', str(media), str(script), '-d', 'cpu', '--prompt', '訪談', '-o', str(tmp_path / 'output')]
     if model:
         arguments.extend(['-m', model])
+    arguments.append('--audit' if audit else '--no-audit')
     result = CliRunner().invoke(cli.app, arguments)
     assert result.exit_code == 0, result.output
     assert pipeline.call_args.kwargs['whisper_model'] == (model or 'large-v3')
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
+    assert pipeline.call_args.kwargs['llm_audit'] is audit
 
 
 def test_luna_uses_selected_native_model_for_both_phases(tmp_path, monkeypatch):

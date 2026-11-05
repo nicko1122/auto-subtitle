@@ -243,6 +243,7 @@ def align_cmd(
     model: str = typer.Option("large-v3", "-m", "--model", help="原生 Whisper 模型 (預設完整版 large-v3)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     prompt: str = typer.Option("繁體中文", "--prompt", help="辨識引導詞"),
+    audit: bool = typer.Option(True, "--audit/--no-audit", help="執行 LLM 時間候選審核"),
 ):
     """【有稿模式】利用完整 Luna Pipeline 進行原歌詞強制對齊、雙軌審核與時間軸修正"""
     input_p = Path(media_path).resolve()
@@ -281,6 +282,7 @@ def align_cmd(
         whisper_model=model,
         device=device,
         prompt=prompt,
+        llm_audit=audit,
     )
 
     console.rule("[bold green]有稿對齊完成[/bold green]")

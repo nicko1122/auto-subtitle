@@ -143,6 +143,8 @@ python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 
 中文原詞先經繁簡正規化與整串拼音比對，映射回 Whisper 逐詞時間；詞內字元共用完整詞時間窗。映射有效時作為主時間，缺少有效映射才保留強制對齊候選並標記待確認。LLM 每批審核最多 4 句，`decision_batches.json` 保存證據、回覆及漏答編號；未提供的句號或候選不會套用。原稿文字與 0.16 秒閱讀延長規則保留。
 
+取消介面的「AI 決策與錯字校對」、API 傳入 `auto_proofread=false`，或有詞 CLI 使用 `--no-audit`，即可保留 Whisper 映射與待複核標記，不載入 LLM 或套用其時間建議。
+
 | 參數名稱 | 縮寫 | 預設值 | 說明 |
 | :--- | :--- | :--- | :--- |
 | `media_path` | (必填) | - | 來源影音檔案路徑 (MP4, MKV, WAV 等) |
@@ -152,6 +154,7 @@ python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 | `-m`, `--model` | `-m` | `large-v3` | 原生 Whisper 模型 |
 | `-d`, `--device` | `-d` | `auto` | `auto`、`cuda` 或 `cpu` |
 | `--prompt` | — | `繁體中文` | 辨識引導詞 |
+| `--audit` / `--no-audit` | — | `--audit` | 是否執行 LLM 時間候選審核 |
 
 #### 🔹 (2) `pipeline`：無稿全自動上字幕流水線
 針對演講、訪談或 Podcast，一鍵完成抽音、Whisper 辨識、智慧斷句並匯出字幕：

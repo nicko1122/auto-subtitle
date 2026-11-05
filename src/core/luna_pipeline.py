@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 from pypinyin import lazy_pinyin
 from opencc import OpenCC
 
-from .env_utils import preload_cuda_libs
+from .env_utils import preload_cuda_libs, release_gpu_memory
 preload_cuda_libs()
 
 import stable_whisper
@@ -202,6 +202,7 @@ class LunaPipeline:
         whisper_model: str = "large-v3",
         device: str = "auto",
         prompt: Optional[str] = None,
+        llm_audit: bool = True,
     ):
         self.audio_path = str(Path(audio_path).resolve())
         self.lyrics_source = lyrics_source
@@ -214,6 +215,7 @@ class LunaPipeline:
         self.whisper_model = whisper_model
         self.device = device
         self.prompt = prompt or "繁體中文"
+        self.llm_audit = llm_audit
 
         self.manifest: Dict[str, Any] = {}
         self.raw_asr: Dict[str, Any] = {}
@@ -290,6 +292,7 @@ class LunaPipeline:
             "whisper_backend": "native",
             "alignment_tool": "stable-ts 2.19.1",
             "llm_provider": self.llm_provider,
+            "llm_audit_enabled": self.llm_audit,
             "llm_model": self.local_model_name if self.llm_provider == "local" else "gpt-6-luna",
             "reading_extension_sec": 0.16,
             "anomaly_threshold_sec": 0.3
@@ -477,11 +480,14 @@ class LunaPipeline:
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""
+        decision_path = self.output_dir / "decision_batches.json"
+        decision_path.unlink(missing_ok=True)
         anomaly_lines = [ev for ev in self.cue_evidence if ev.get("needs_review")]
-        self._notify(4, 5, f"啟動決策大腦 ({self.llm_provider})，審核 {len(anomaly_lines)} 句異常候選邊界...")
+        message = f"啟動決策大腦 ({self.llm_provider})，審核 {len(anomaly_lines)} 句異常候選邊界..." if self.llm_audit else f"保留逐詞映射，{len(anomaly_lines)} 句候選差異標記待複核..."
+        self._notify(4, 5, message)
 
         decisions_map: Dict[int, Dict[str, Any]] = {}
-        if anomaly_lines:
+        if anomaly_lines and self.llm_audit:
             audit_payload = []
             for ev in anomaly_lines:
                 idx = ev["line_id"] - 1
@@ -548,7 +554,7 @@ class LunaPipeline:
             finally:
                 if reasoner is not None:
                     reasoner.close()
-                with open(self.output_dir / "decision_batches.json", "w", encoding="utf-8") as stream:
+                with decision_path.open("w", encoding="utf-8") as stream:
                     json.dump({"system": sys_prompt, "batches": batches}, stream, ensure_ascii=False, indent=2)
 
         # 彙整最終時間軸與記錄 corrections
@@ -755,11 +761,14 @@ class LunaPipeline:
 
     def run(self) -> SubtitleTrack:
         """端到端執行完整管線並回傳 SubtitleTrack"""
-        self.step_1_prepare_and_manifest()
-        self.step_2_whisper_full_asr()
-        self.step_3_and_4_alignment_and_evidence()
-        final_segs = self.step_5_and_6_luna_decision()
-        return self.step_7_display_rules_and_export(final_segs)
+        try:
+            self.step_1_prepare_and_manifest()
+            self.step_2_whisper_full_asr()
+            self.step_3_and_4_alignment_and_evidence()
+            final_segs = self.step_5_and_6_luna_decision()
+            return self.step_7_display_rules_and_export(final_segs)
+        finally:
+            release_gpu_memory()
 
 
 def run_luna_pipeline(
@@ -772,6 +781,7 @@ def run_luna_pipeline(
     whisper_model: str = "large-v3",
     device: str = "auto",
     prompt: Optional[str] = None,
+    llm_audit: bool = True,
 ) -> SubtitleTrack:
     """高階調用函式：供 Web API 直接呼叫"""
     pipeline = LunaPipeline(
@@ -784,5 +794,6 @@ def run_luna_pipeline(
         whisper_model=whisper_model,
         device=device,
         prompt=prompt,
+        llm_audit=llm_audit,
     )
     return pipeline.run()

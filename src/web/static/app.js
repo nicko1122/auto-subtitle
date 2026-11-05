@@ -1230,7 +1230,8 @@ function initAiButtons() {
 
       if (scriptText) {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
-        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (決策大腦: ${brainName})...`);
+        const auditDescription = autoProofread ? `決策大腦: ${brainName}` : "AI 審核已關閉，保留 Whisper 時間結果";
+        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (${auditDescription})...`);
       } else {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
         addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
