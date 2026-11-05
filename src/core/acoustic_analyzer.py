@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
-from .env_utils import preload_cuda_libs, release_gpu_memory
-from .transcriber import load_whisper_model
+from .env_utils import preload_cuda_libs
+from .transcriber import load_whisper_model, unload_whisper_model
 from ..schemas.subtitle import SubtitleSegment, SubtitleTrack
 
 logger = logging.getLogger(__name__)
@@ -334,7 +334,6 @@ def transcribe_on_locked_timeline(
        徹底杜絕密集歌詞跨句暴衝、不成句或拖長音重複幻覺！
     """
     from faster_whisper.audio import decode_audio
-    from faster_whisper import WhisperModel
     from .proofreader import SubtitleProofreader
 
     p = Path(media_path).resolve()
@@ -348,10 +347,9 @@ def transcribe_on_locked_timeline(
 
     model = load_whisper_model(model_size, device)
 
-    updated_segments: List[SubtitleSegment] = []
-    prev_text_context = prompt or "繁體中文"
-
     try:
+        updated_segments: List[SubtitleSegment] = []
+        prev_text_context = prompt or "繁體中文"
         for seg in track.segments:
             existing_text = (seg.text or "").strip()
             # 若使用者勾選「僅填補空白段」且該段已有手動輸入的文字，直接保留
@@ -402,8 +400,7 @@ def transcribe_on_locked_timeline(
                 )
             )
     finally:
-        del model
-        release_gpu_memory()
+        unload_whisper_model(model)
 
     new_track = SubtitleTrack(
         version=track.version,

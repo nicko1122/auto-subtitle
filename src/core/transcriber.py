@@ -25,9 +25,20 @@ def load_whisper_model(model_size, device="auto", compute_type="default", loader
             logger.info(f"Whisper: device={target}, compute_type={dtype}")
             return model
         except (RuntimeError, ValueError) as error:
-            last_error = error
+            # Failed loader tracebacks can retain a partially initialized GPU model.
+            last_error = error.with_traceback(None)
             logger.warning(f"Whisper {target}/{dtype} 載入失敗: {error}")
+            release_gpu_memory()
     raise RuntimeError("無法載入 Whisper 模型") from last_error
+
+
+def unload_whisper_model(model):
+    try:
+        model.model.unload_model()
+    except RuntimeError as error:
+        logger.warning(f"Whisper 卸載失敗: {error}")
+    finally:
+        release_gpu_memory()
 
 
 def transcribe_audio(
@@ -57,55 +68,54 @@ def transcribe_audio(
     
     model = load_whisper_model(model_size, device, compute_type)
 
-    logger.info(f"開始辨識音訊: {audio_p.name} (vad_filter={vad_filter}, condition_on_prev={condition_on_previous_text})...")
-    segments_iter, info = model.transcribe(
-        str(audio_p),
-        beam_size=beam_size,
-        language=language,
-        initial_prompt=initial_prompt,
-        vad_filter=vad_filter,
-        condition_on_previous_text=condition_on_previous_text,
-        hallucination_silence_threshold=hallucination_silence_threshold,
-        word_timestamps=word_timestamps
-    )
+    try:
+        logger.info(f"開始辨識音訊: {audio_p.name} (vad_filter={vad_filter}, condition_on_prev={condition_on_previous_text})...")
+        segments_iter, info = model.transcribe(
+            str(audio_p),
+            beam_size=beam_size,
+            language=language,
+            initial_prompt=initial_prompt,
+            vad_filter=vad_filter,
+            condition_on_previous_text=condition_on_previous_text,
+            hallucination_silence_threshold=hallucination_silence_threshold,
+            word_timestamps=word_timestamps
+        )
 
-    raw_segments: List[Dict[str, Any]] = []
-    all_words: List[WordItem] = []
+        raw_segments: List[Dict[str, Any]] = []
+        all_words: List[WordItem] = []
 
-    for seg in segments_iter:
-        seg_words: List[Dict[str, Any]] = []
-        if seg.words:
-            for w in seg.words:
-                item = {
-                    "word": w.word,
-                    "start": round(w.start, 3),
-                    "end": round(w.end, 3),
-                    "probability": round(w.probability, 3)
-                }
-                seg_words.append(item)
-                all_words.append(WordItem(**item))
+        for seg in segments_iter:
+            seg_words: List[Dict[str, Any]] = []
+            if seg.words:
+                for w in seg.words:
+                    item = {
+                        "word": w.word,
+                        "start": round(w.start, 3),
+                        "end": round(w.end, 3),
+                        "probability": round(w.probability, 3)
+                    }
+                    seg_words.append(item)
+                    all_words.append(WordItem(**item))
 
-        raw_segments.append({
-            "id": seg.id,
-            "start": round(seg.start, 3),
-            "end": round(seg.end, 3),
-            "text": seg.text.strip(),
-            "words": seg_words
-        })
+            raw_segments.append({
+                "id": seg.id,
+                "start": round(seg.start, 3),
+                "end": round(seg.end, 3),
+                "text": seg.text.strip(),
+                "words": seg_words
+            })
 
-    duration = round(info.duration, 3)
-    lang = info.language
-    lang_prob = round(info.language_probability, 3)
+        duration = round(info.duration, 3)
+        lang = info.language
+        lang_prob = round(info.language_probability, 3)
 
-    # 明確釋放 Whisper 模型與顯存
-    del model
-    release_gpu_memory()
-
-    return {
-        "source_file": str(audio_p),
-        "language": lang,
-        "language_probability": lang_prob,
-        "duration": duration,
-        "raw_segments": raw_segments,
-        "all_words": [w.model_dump() for w in all_words]
-    }
+        return {
+            "source_file": str(audio_p),
+            "language": lang,
+            "language_probability": lang_prob,
+            "duration": duration,
+            "raw_segments": raw_segments,
+            "all_words": [w.model_dump() for w in all_words]
+        }
+    finally:
+        unload_whisper_model(model)

@@ -4,6 +4,8 @@ import gc
 import ctypes
 import logging
 
+import torch
+
 logger = logging.getLogger(__name__)
 
 _cuda_preloaded = False
@@ -43,5 +45,9 @@ def preload_cuda_libs() -> None:
 
 
 def release_gpu_memory() -> None:
-    """主動觸發 Python 垃圾回收以釋放 CTranslate2 / llama.cpp 佔用的顯存 (VRAM)"""
+    """回收不再使用的物件與 PyTorch CUDA 快取，不初始化新的 CUDA context。"""
     gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except RuntimeError as error:
+        logger.warning(f"CUDA 快取回收失敗，請重啟工作台: {error}")

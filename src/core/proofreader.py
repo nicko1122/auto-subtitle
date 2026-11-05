@@ -359,6 +359,8 @@ class SubtitleProofreader:
 
     def close(self) -> None:
         if self.llm is not None:
-            self.llm.close()
-            self.llm = None
-            release_gpu_memory()
+            try:
+                self.llm.close()
+            finally:
+                self.llm = None
+                release_gpu_memory()

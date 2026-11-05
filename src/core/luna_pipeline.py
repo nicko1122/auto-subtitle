@@ -7,15 +7,16 @@ import re
 import csv
 import subprocess
 import uuid
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from pypinyin import lazy_pinyin
 
-from .env_utils import preload_cuda_libs, release_gpu_memory
+from .env_utils import preload_cuda_libs
 preload_cuda_libs()
 
 import stable_whisper
-from .transcriber import transcribe_audio, load_whisper_model
+from .transcriber import transcribe_audio, load_whisper_model, unload_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
 from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, WordItem
@@ -280,150 +281,144 @@ class LunaPipeline:
         lyrics_text = "\n".join(self.org_lines)
 
         st_model = load_whisper_model("large-v3-turbo", loader=stable_whisper.load_faster_whisper)
-        align_res = st_model.align(
-            self.audio_path,
-            lyrics_text,
-            language="zh",
-            original_split=True,
-            token_step=160,
-            regroup=False
-        )
+        try:
+            with tempfile.TemporaryDirectory(dir=self.output_dir, prefix="temp_slices_") as slice_directory:
+                align_res = st_model.align(
+                    self.audio_path,
+                    lyrics_text,
+                    language="zh",
+                    original_split=True,
+                    token_step=160,
+                    regroup=False
+                )
 
-        align_segs = []
-        for idx, s in enumerate(align_res.segments, 1):
-            w_list = []
-            for w in getattr(s, "words", []):
-                w_list.append({
-                    "word": w.word,
-                    "start": round(w.start, 3),
-                    "end": round(w.end, 3),
-                    "prob": round(getattr(w, "probability", 1.0), 3)
-                })
-            align_segs.append({
-                "id": idx,
-                "start": round(s.start, 3),
-                "end": round(s.end, 3),
-                "text": s.text.strip(),
-                "words": w_list
-            })
+                align_segs = []
+                for idx, s in enumerate(align_res.segments, 1):
+                    w_list = []
+                    for w in getattr(s, "words", []):
+                        w_list.append({
+                            "word": w.word,
+                            "start": round(w.start, 3),
+                            "end": round(w.end, 3),
+                            "prob": round(getattr(w, "probability", 1.0), 3)
+                        })
+                    align_segs.append({
+                        "id": idx,
+                        "start": round(s.start, 3),
+                        "end": round(s.end, 3),
+                        "text": s.text.strip(),
+                        "words": w_list
+                    })
 
-        self.stable_ts_segments = align_segs
+                self.stable_ts_segments = align_segs
 
-        # 雙軌比對與異常標記
-        evidence_list = []
-        temp_dir = self.output_dir / "temp_slices"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+                # 雙軌比對與異常標記
+                evidence_list = []
+                temp_dir = Path(slice_directory)
 
-        for line_idx, org_line in enumerate(self.org_lines, 1):
-            st_seg = self.stable_ts_segments[line_idx - 1] if line_idx <= len(self.stable_ts_segments) else None
-            t_align_start = st_seg["start"] if st_seg else 0.0
-            t_align_end = st_seg["end"] if st_seg else 0.0
+                for line_idx, org_line in enumerate(self.org_lines, 1):
+                    st_seg = self.stable_ts_segments[line_idx - 1] if line_idx <= len(self.stable_ts_segments) else None
+                    t_align_start = st_seg["start"] if st_seg else 0.0
+                    t_align_end = st_seg["end"] if st_seg else 0.0
 
-            # 尋找重疊度最高或最接近的 Whisper ASR segment
-            matched_asr = None
-            best_overlap = -1.0
-            for s in self.asr_clean_segments:
-                overlap = max(0.0, min(s["end"], t_align_end) - max(s["start"], t_align_start))
-                if overlap > best_overlap:
-                    best_overlap = overlap
-                    matched_asr = s
+                    # 尋找重疊度最高或最接近的 Whisper ASR segment
+                    matched_asr = None
+                    best_overlap = -1.0
+                    for s in self.asr_clean_segments:
+                        overlap = max(0.0, min(s["end"], t_align_end) - max(s["start"], t_align_start))
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            matched_asr = s
 
-            if not matched_asr or best_overlap == 0.0:
-                closest_dist = float("inf")
-                for s in self.asr_clean_segments:
-                    dist = abs(s["start"] - t_align_start)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        matched_asr = s
+                    if not matched_asr or best_overlap == 0.0:
+                        closest_dist = float("inf")
+                        for s in self.asr_clean_segments:
+                            dist = abs(s["start"] - t_align_start)
+                            if dist < closest_dist:
+                                closest_dist = dist
+                                matched_asr = s
 
-            t_asr_start = matched_asr["start"] if matched_asr else t_align_start
-            t_asr_end = matched_asr["end"] if matched_asr else t_align_end
-            asr_text = matched_asr["text"] if matched_asr else ""
+                    t_asr_start = matched_asr["start"] if matched_asr else t_align_start
+                    t_asr_end = matched_asr["end"] if matched_asr else t_align_end
+                    asr_text = matched_asr["text"] if matched_asr else ""
 
-            # 檢測異常指標
-            diff_start = abs(t_asr_start - t_align_start)
-            diff_end = abs(t_asr_end - t_align_end)
-            dur = t_align_end - t_align_start
-            anomalies = []
-            if diff_start > 0.3:
-                anomalies.append(f"start_diff_gt_0.3s({diff_start:.2f}s)")
-            if diff_end > 0.3:
-                anomalies.append(f"end_diff_gt_0.3s({diff_end:.2f}s)")
-            if dur < 0.35:
-                anomalies.append("duration_too_short")
-            elif dur > 6.5:
-                anomalies.append("duration_too_long")
+                    # 檢測異常指標
+                    diff_start = abs(t_asr_start - t_align_start)
+                    diff_end = abs(t_asr_end - t_align_end)
+                    dur = t_align_end - t_align_start
+                    anomalies = []
+                    if diff_start > 0.3:
+                        anomalies.append(f"start_diff_gt_0.3s({diff_start:.2f}s)")
+                    if diff_end > 0.3:
+                        anomalies.append(f"end_diff_gt_0.3s({diff_end:.2f}s)")
+                    if dur < 0.35:
+                        anomalies.append("duration_too_short")
+                    elif dur > 6.5:
+                        anomalies.append("duration_too_long")
 
-            candidates = {
-                "cand_stable_ts": {
-                    "candidate_id": "cand_stable_ts",
-                    "source": "stable-ts full alignment",
-                    "start": round(t_align_start, 3),
-                    "end": round(t_align_end, 3)
-                },
-                "cand_asr": {
-                    "candidate_id": "cand_asr",
-                    "source": "whisper large-v3-turbo",
-                    "start": round(t_asr_start, 3),
-                    "end": round(t_asr_end, 3),
-                    "text": asr_text
-                }
-            }
+                    candidates = {
+                        "cand_stable_ts": {
+                            "candidate_id": "cand_stable_ts",
+                            "source": "stable-ts full alignment",
+                            "start": round(t_align_start, 3),
+                            "end": round(t_align_end, 3)
+                        },
+                        "cand_asr": {
+                            "candidate_id": "cand_asr",
+                            "source": "whisper large-v3-turbo",
+                            "start": round(t_asr_start, 3),
+                            "end": round(t_asr_end, 3),
+                            "text": asr_text
+                        }
+                    }
 
-            # 【第 8 節】若有異常，執行局部切音重新對齊
-            if anomalies:
-                slice_st = max(0.0, min(t_align_start, t_asr_start) - 1.2)
-                slice_et = min(self.audio_duration, max(t_align_end, t_asr_end) + 1.2)
-                slice_wav = str(temp_dir / f"slice_line_{line_idx:02d}.wav")
+                    # 【第 8 節】若有異常，執行局部切音重新對齊
+                    if anomalies:
+                        slice_st = max(0.0, min(t_align_start, t_asr_start) - 1.2)
+                        slice_et = min(self.audio_duration, max(t_align_end, t_asr_end) + 1.2)
+                        slice_wav = str(temp_dir / f"slice_line_{line_idx:02d}.wav")
 
-                if cut_audio_segment(self.audio_path, slice_st, slice_et, slice_wav):
-                    try:
-                        slice_res = st_model.align(
-                            slice_wav,
-                            org_line,
-                            language="zh",
-                            original_split=True,
-                            token_step=220,
-                            regroup=False
-                        )
-                        if slice_res.segments:
-                            loc_seg = slice_res.segments[0]
-                            abs_loc_st = round(loc_seg.start + slice_st, 3)
-                            abs_loc_et = round(loc_seg.end + slice_st, 3)
-                            candidates["cand_local_retry"] = {
-                                "candidate_id": "cand_local_retry",
-                                "source": "stable-ts local slice retry",
-                                "start": abs_loc_st,
-                                "end": abs_loc_et
-                            }
-                    except Exception:
-                        pass
-                    finally:
-                        if os.path.exists(slice_wav):
-                            os.remove(slice_wav)
+                        if cut_audio_segment(self.audio_path, slice_st, slice_et, slice_wav):
+                            try:
+                                slice_res = st_model.align(
+                                    slice_wav,
+                                    org_line,
+                                    language="zh",
+                                    original_split=True,
+                                    token_step=220,
+                                    regroup=False
+                                )
+                                if slice_res.segments:
+                                    loc_seg = slice_res.segments[0]
+                                    abs_loc_st = round(loc_seg.start + slice_st, 3)
+                                    abs_loc_et = round(loc_seg.end + slice_st, 3)
+                                    candidates["cand_local_retry"] = {
+                                        "candidate_id": "cand_local_retry",
+                                        "source": "stable-ts local slice retry",
+                                        "start": abs_loc_st,
+                                        "end": abs_loc_et
+                                    }
+                            except Exception:
+                                pass
+                            finally:
+                                if os.path.exists(slice_wav):
+                                    os.remove(slice_wav)
 
-            evidence_item = {
-                "line_id": line_idx,
-                "org_line": org_line,
-                "candidates": candidates,
-                "diff_start": round(diff_start, 3),
-                "diff_end": round(diff_end, 3),
-                "anomalies": anomalies,
-                "needs_review": bool(anomalies)
-            }
-            evidence_list.append(evidence_item)
+                    evidence_item = {
+                        "line_id": line_idx,
+                        "org_line": org_line,
+                        "candidates": candidates,
+                        "diff_start": round(diff_start, 3),
+                        "diff_end": round(diff_end, 3),
+                        "anomalies": anomalies,
+                        "needs_review": bool(anomalies)
+                    }
+                    evidence_list.append(evidence_item)
 
-        del st_model
-        release_gpu_memory()
-
-        if temp_dir.exists():
-            try:
-                temp_dir.rmdir()
-            except OSError:
-                pass
-
-        self.cue_evidence = evidence_list
-        return self.cue_evidence
+                self.cue_evidence = evidence_list
+                return self.cue_evidence
+        finally:
+            unload_whisper_model(st_model)
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""
@@ -432,35 +427,24 @@ class LunaPipeline:
 
         decisions_map: Dict[int, Dict[str, Any]] = {}
         if anomaly_lines:
-            try:
-                reasoner = (
-                    LocalQwenReasoner(self.local_model_name)
-                    if self.llm_provider == "local"
-                    else CloudLunaReasoner()
-                )
-            except Exception as e:
-                print(f"  ⚠️ 本地模型載入失敗，降級為安全採納模式: {e}")
-                reasoner = None
+            audit_payload = []
+            for ev in anomaly_lines:
+                idx = ev["line_id"] - 1
+                prev_line = self.cue_evidence[idx - 1] if idx > 0 else None
+                next_line = self.cue_evidence[idx + 1] if idx + 1 < len(self.cue_evidence) else None
 
-            if reasoner:
-                audit_payload = []
-                for ev in anomaly_lines:
-                    idx = ev["line_id"] - 1
-                    prev_line = self.cue_evidence[idx - 1] if idx > 0 else None
-                    next_line = self.cue_evidence[idx + 1] if idx + 1 < len(self.cue_evidence) else None
-                    
-                    prev_bound = f"上一句結束: {prev_line['candidates']['cand_stable_ts']['end']:.2f}s" if prev_line else "開頭"
-                    next_bound = f"下一句開始: {next_line['candidates']['cand_stable_ts']['start']:.2f}s" if next_line else "曲尾"
+                prev_bound = f"上一句結束: {prev_line['candidates']['cand_stable_ts']['end']:.2f}s" if prev_line else "開頭"
+                next_bound = f"下一句開始: {next_line['candidates']['cand_stable_ts']['start']:.2f}s" if next_line else "曲尾"
 
-                    audit_payload.append({
-                        "line_id": ev["line_id"],
-                        "text": ev["org_line"],
-                        "context": f"{prev_bound} | {next_bound}",
-                        "candidates": ev["candidates"],
-                        "anomalies": ev["anomalies"]
-                    })
+                audit_payload.append({
+                    "line_id": ev["line_id"],
+                    "text": ev["org_line"],
+                    "context": f"{prev_bound} | {next_bound}",
+                    "candidates": ev["candidates"],
+                    "anomalies": ev["anomalies"]
+                })
 
-                sys_prompt = """你是一位專業的繁體中文音樂與影視字幕對齊專家。
+            sys_prompt = """你是一位專業的繁體中文音樂與影視字幕對齊專家。
 任務：針對被標記有時間軸異常的歌詞句子，根據候選時間戳與前後句時間邊界，為每個異常句子選擇最合適的開始 (start) 與結束 (end) 候選識別碼，並說明簡短理由。
 
 規則：
@@ -480,19 +464,22 @@ class LunaPipeline:
     }
   ]
 }"""
-                user_input = json.dumps(audit_payload, ensure_ascii=False, separators=(",", ":"))
+            user_input = json.dumps(audit_payload, ensure_ascii=False, separators=(",", ":"))
 
-                try:
-                    raw_res = reasoner.decide(sys_prompt, user_input)
-                    data = _extract_json_payload(raw_res)
-                    items = data if isinstance(data, list) else data.get("decisions", [])
-                    for it in items:
-                        lid = it.get("line_id")
-                        if lid:
-                            decisions_map[int(lid)] = it
-                except Exception as e:
-                    print(f"  ⚠️ LLM 推理或 JSON 解析警告: {e}")
-                finally:
+            reasoner = None
+            try:
+                reasoner = LocalQwenReasoner(self.local_model_name) if self.llm_provider == "local" else CloudLunaReasoner()
+                raw_res = reasoner.decide(sys_prompt, user_input)
+                data = _extract_json_payload(raw_res)
+                items = data if isinstance(data, list) else data.get("decisions", [])
+                for it in items:
+                    lid = it.get("line_id")
+                    if lid:
+                        decisions_map[int(lid)] = it
+            except Exception as e:
+                print(f"  ⚠️ LLM 推理或 JSON 解析警告: {e}")
+            finally:
+                if reasoner is not None:
                     reasoner.close()
 
         # 彙整最終時間軸與記錄 corrections
