@@ -12,6 +12,24 @@ from faster_whisper import WhisperModel
 from ..schemas.subtitle import WordItem
 
 
+def load_whisper_model(model_size, device="auto", compute_type="default", loader=WhisperModel):
+    configs = []
+    if device in ("cuda", "auto"):
+        types = ("float16", "int8_float16", "float32", "int8_float32") if compute_type == "default" else (compute_type,)
+        configs.extend(("cuda", dtype) for dtype in types)
+    configs.append(("cpu", "int8" if compute_type == "default" or device != "cpu" else compute_type))
+    last_error = None
+    for target, dtype in configs:
+        try:
+            model = loader(model_size, device=target, compute_type=dtype)
+            logger.info(f"Whisper: device={target}, compute_type={dtype}")
+            return model
+        except (RuntimeError, ValueError) as error:
+            last_error = error
+            logger.warning(f"Whisper {target}/{dtype} 載入失敗: {error}")
+    raise RuntimeError("無法載入 Whisper 模型") from last_error
+
+
 def transcribe_audio(
     audio_path: str,
     model_size: str = "large-v3-turbo",
@@ -37,31 +55,7 @@ def transcribe_audio(
 
     logger.info(f"正在載入 Whisper 模型 [{model_size}], 裝置: {device}, 精度: {compute_type}...")
     
-    # 智慧嘗試策略: 先嘗試指定的 device/compute_type，若失敗依序降級嘗試 float32、CPU int8
-    model = None
-    try_configs = []
-    
-    if device in ("cuda", "auto"):
-        # Pascal GPU (GTX 1070 等) 通常不支援原生高效 fp16，float32 更穩定
-        if compute_type == "default":
-            try_configs.append({"device": "cuda", "compute_type": "float32"})
-            try_configs.append({"device": "cuda", "compute_type": "int8_float32"})
-        else:
-            try_configs.append({"device": "cuda", "compute_type": compute_type})
-    
-    # 最後備援方案: CPU int8
-    try_configs.append({"device": "cpu", "compute_type": "int8"})
-
-    for cfg in try_configs:
-        try:
-            model = WhisperModel(model_size, device=cfg["device"], compute_type=cfg["compute_type"])
-            logger.info(f"成功以 device={cfg['device']}, compute_type={cfg['compute_type']} 載入模型")
-            break
-        except Exception as e:
-            logger.warning(f"以 {cfg} 載入失敗 ({e})，嘗試下一個備援配置...")
-
-    if model is None:
-        raise RuntimeError("無法以任何配置載入 Whisper 模型！")
+    model = load_whisper_model(model_size, device, compute_type)
 
     logger.info(f"開始辨識音訊: {audio_p.name} (vad_filter={vad_filter}, condition_on_prev={condition_on_previous_text})...")
     segments_iter, info = model.transcribe(

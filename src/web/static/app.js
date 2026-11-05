@@ -1006,7 +1006,7 @@ function renderFilteredAssetLibrary() {
         <span class="text-base shrink-0">${icon}</span>
         <div class="truncate">
           <div class="font-medium text-zinc-200 truncate flex items-center gap-1.5">
-            <span class="truncate">${asset.name}</span>
+            <span class="truncate asset-name"></span>
             <span class="text-[9px] px-1.5 py-0.2 rounded border shrink-0 ${badgeColor}">${sourceTag}</span>
             ${isActive ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold shrink-0">● 使用中</span>` : ''}
           </div>
@@ -1043,6 +1043,7 @@ function renderFilteredAssetLibrary() {
         ` : ''}
       </div>
     `;
+    card.querySelector(".asset-name").textContent = asset.name;
 
     // 載入影片
     const btnVideo = card.querySelector(".btn-load-this-video");
@@ -1430,15 +1431,15 @@ function initAiButtons() {
       }
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
       if (scriptText) {
-        addLog(`【雲端 LLM API 校對】正在參照上方原稿歌詞進行精準錯字校正...`);
+        addLog(`【字幕校對】正在參照上方原稿歌詞進行精準錯字校正...`);
       } else {
-        addLog(`【雲端 LLM API 校對】啟動雲端 LLM (.env) 進行上下文盲校...`);
+        addLog(`【字幕校對】使用所選 LLM 進行上下文盲校...`);
       }
       el.btnAiProofread.disabled = true;
       el.btnAiProofread.textContent = "⏳ 校對中...";
 
       try {
-        const payload = { track: state.track, batch_size: 25 };
+        const payload = { track: state.track, batch_size: 25, llm_provider: el.selectLlmEngine ? el.selectLlmEngine.value : "local" };
         if (scriptText) {
           payload.script_text = scriptText;
         }
@@ -2043,7 +2044,8 @@ async function runLockedTimelineTranscribe() {
         device: "cuda",
         prompt: "繁體中文",
         only_empty: onlyEmpty,
-        auto_proofread: autoProofread
+        auto_proofread: autoProofread,
+        llm_provider: el.selectLlmEngine ? el.selectLlmEngine.value : "local"
       })
     });
     const data = await res.json();
@@ -2713,14 +2715,14 @@ function injectDynamicFontFaces(installedFonts) {
     if (f.url && f.family) {
       rules.push(`
 @font-face {
-  font-family: '${f.family.replace(/'/g, "\\'")}';
-  src: url('${f.url}');
+  font-family: ${JSON.stringify(f.family)};
+  src: url(${JSON.stringify(f.url)});
   font-display: swap;
 }`);
       // 嘗試透過 FontFace API 立即預載入至瀏覽器畫面
       if (window.FontFace) {
         try {
-          const ff = new FontFace(f.family, `url("${f.url}")`);
+          const ff = new FontFace(f.family, `url(${JSON.stringify(f.url)})`);
           ff.load().then(loaded => {
             document.fonts.add(loaded);
             applySubtitleStyleToOverlay();
@@ -2827,10 +2829,10 @@ function renderFontManagerCatalog(catalog) {
     row.innerHTML = `
       <div class="overflow-hidden pr-2 flex-1">
         <div class="font-medium text-zinc-200 flex items-center gap-1.5 truncate">
-          <span class="truncate" style="${item.installed ? `font-family: '${item.family}', sans-serif;` : ''}">${item.display_name}</span>
+          <span class="truncate font-label"></span>
           ${tagHtml}
         </div>
-        <div class="text-[10px] text-zinc-500 truncate">${item.description || item.family}</div>
+        <div class="text-[10px] text-zinc-500 truncate font-description"></div>
       </div>
       <div class="flex items-center gap-1 shrink-0">
         ${item.installed ? `
@@ -2845,6 +2847,11 @@ function renderFontManagerCatalog(catalog) {
         `}
       </div>
     `;
+
+    const label = row.querySelector(".font-label");
+    label.textContent = item.display_name;
+    if (item.installed) label.style.fontFamily = JSON.stringify(item.family) + ", sans-serif";
+    row.querySelector(".font-description").textContent = item.description || item.family;
 
     const btnInstall = row.querySelector(".btn-install-preset-font");
     if (btnInstall) {

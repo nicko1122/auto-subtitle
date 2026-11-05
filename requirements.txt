@@ -1,7 +1,7 @@
 faster-whisper>=1.0.0
 av<14
 pydantic>=2.0.0
-typer[all]>=0.9.0
+typer>=0.9.0
 rich
 pypinyin>=0.50.0
 fastapi>=0.110.0
@@ -10,3 +10,10 @@ python-multipart>=0.0.9
 llama-cpp-python>=0.2.80
 huggingface-hub>=0.20.0
 pytest>=8.0.0
+stable-ts==2.19.1
+torch
+torchaudio
+httpx
+nvidia-cublas-cu12; platform_system == "Linux" and platform_machine == "x86_64"
+nvidia-cudnn-cu12; platform_system == "Linux" and platform_machine == "x86_64"
+nvidia-cuda-runtime-cu12; platform_system == "Linux" and platform_machine == "x86_64"

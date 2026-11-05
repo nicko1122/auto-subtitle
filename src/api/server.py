@@ -2,13 +2,14 @@ import os
 import json
 import logging
 import shutil
+import uuid
+import ipaddress
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
@@ -53,17 +54,18 @@ for d in (UPLOADS_DIR, OUTPUT_DIR, TEMP_DIR, STATIC_DIR, TEMPLATES_DIR, PRESETS_
 
 app = FastAPI(title="Auto Subtitle Web Studio", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.middleware("http")
 async def disable_static_html_cache(request, call_next):
+    host = request.url.hostname
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        allowed_hosts = os.environ.get("AUTOSUBTITLE_ALLOWED_HOSTS", "localhost").split(",")
+        if host not in [h.strip() for h in allowed_hosts]:
+            return JSONResponse(status_code=403, content={"detail": "請使用 localhost、伺服器 IP 或設定 AUTOSUBTITLE_ALLOWED_HOSTS"})
+    origin = request.headers.get("origin")
+    if (origin and origin.rstrip("/") != f"{request.url.scheme}://{request.url.netloc}") or request.headers.get("sec-fetch-site") == "cross-site":
+        return JSONResponse(status_code=403, content={"detail": "不允許跨來源存取"})
     response = await call_next(request)
     path = request.url.path
     if path == "/" or path.startswith("/static/"):
@@ -98,13 +100,14 @@ class AlignRequest(BaseModel):
     media_path: str
     script_text: Optional[str] = None
     script_path: Optional[str] = None
-    llm_provider: Optional[str] = "local"
+    llm_provider: Literal["local", "api"] = "local"
 
 
 class ProofreadRequest(BaseModel):
     track: SubtitleTrack
     batch_size: int = 8
     script_text: Optional[str] = None
+    llm_provider: Literal["local", "api"] = "local"
 
 
 class InstallFontRequest(BaseModel):
@@ -131,6 +134,7 @@ class TranscribeLockedRequest(BaseModel):
     prompt: str = "繁體中文"
     only_empty: bool = False
     auto_proofread: bool = False
+    llm_provider: Literal["local", "api"] = "local"
 
 
 # ---------------- API Endpoints ----------------
@@ -287,6 +291,8 @@ async def upload_asset(files: List[UploadFile] = File(...)):
             })
             continue
 
+        if detect_file_type(Path(safe_name)) == "other":
+            raise HTTPException(status_code=400, detail="不支援的上傳格式")
         dest = UPLOADS_DIR / safe_name
         with dest.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -383,6 +389,8 @@ def install_font_endpoint(req: InstallFontRequest):
         return {"status": "success", "font": info, "catalog": get_font_catalog()}
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"安裝字型失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -420,16 +428,12 @@ async def parse_css_endpoint(req: ParseCssRequest):
 def _resolve_media_path(media_path: str) -> Path:
     """安全解析使用者傳入的媒體或原稿路徑"""
     p = Path(media_path)
-    if p.exists() and p.is_file():
-        return p
-    rel = BASE_DIR / media_path.lstrip("/")
-    if rel.exists() and rel.is_file():
-        return rel
-    if (UPLOADS_DIR / p.name).exists():
-        return UPLOADS_DIR / p.name
-    if (INPUTCLIP_DIR / p.name).exists():
-        return INPUTCLIP_DIR / p.name
-    raise HTTPException(status_code=404, detail=f"找不到檔案: {media_path}")
+    roots = [d.resolve() for d in (UPLOADS_DIR, INPUTCLIP_DIR, OUTPUT_DIR, TEMP_DIR)]
+    for candidate in (p, BASE_DIR / media_path.lstrip("/"), UPLOADS_DIR / p.name, INPUTCLIP_DIR / p.name):
+        resolved = candidate.resolve()
+        if any(resolved.is_relative_to(d) for d in roots) and resolved.is_file():
+            return resolved
+    raise HTTPException(status_code=404, detail="找不到媒體或原稿檔案")
 
 
 @app.post("/api/audio/breakpoints")
@@ -474,7 +478,8 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
             device=req.device,
             prompt=req.prompt,
             only_empty=req.only_empty,
-            auto_proofread=req.auto_proofread
+            auto_proofread=req.auto_proofread,
+            llm_provider=req.llm_provider
         )
         return {"status": "success", "track": updated_track.model_dump()}
     except Exception as e:
@@ -490,7 +495,7 @@ def transcribe_endpoint(
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),
     script_text: Optional[str] = Form(None),
-    llm_provider: str = Form("local")
+    llm_provider: Literal["local", "api"] = Form("local")
 ):
     """【單一入口 AI 產生字幕】
     支援智慧雙分流：
@@ -500,11 +505,12 @@ def transcribe_endpoint(
     2. 若未提供 script_text：以 Whisper 提取時間軸，並由 Qwen2.5 / 雲端 LLM 進行上下文盲校。
     """
     p = _resolve_media_path(media_path)
+    job_id = uuid.uuid4().hex
 
     # 若為影片，提取 16kHz WAV 至 TEMP_DIR (避免污染 uploads 資產庫)
     is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
     if is_video:
-        wav_path = TEMP_DIR / f"{p.stem}_extracted.wav"
+        wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
         extract_res = extract_audio(str(p), str(wav_path))
         audio_file = extract_res["audio_path"]
     else:
@@ -516,10 +522,14 @@ def transcribe_endpoint(
         if clean_script:
             # 【有稿模式：呼叫完整 Luna 強制對齊管線】
             logger.info(f"啟動完整 Luna 歌詞字幕對齊管線 (LLM Provider: {llm_provider})...")
+            job_dir = OUTPUT_DIR / job_id
+            job_dir.mkdir()
+            script_file = job_dir / "script.txt"
+            script_file.write_text(clean_script, encoding="utf-8")
             track = run_luna_pipeline(
                 audio_path=audio_file,
-                lyrics_source=clean_script,
-                output_dir=str(OUTPUT_DIR),
+                lyrics_source=str(script_file),
+                output_dir=str(job_dir),
                 llm_provider=llm_provider
             )
             return {
@@ -544,7 +554,7 @@ def transcribe_endpoint(
             proofread_warning = None
             if auto_proofread and track.segments:
                 try:
-                    proofreader = SubtitleProofreader(n_gpu_layers=-1)
+                    proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=llm_provider)
                     try:
                         track = proofreader.proofread_track(
                             track,
@@ -566,22 +576,32 @@ def transcribe_endpoint(
     except Exception as e:
         logger.error(f"產生字幕失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if is_video:
+            wav_path.unlink(missing_ok=True)
 
 
 @app.post("/api/ai/align")
 def align_endpoint(req: AlignRequest):
     """【有稿模式】利用完整 Luna Pipeline 進行原稿強制對齊與時間軸審核"""
     p = _resolve_media_path(req.media_path)
+    job_id = uuid.uuid4().hex
 
     is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
     if is_video:
-        wav_path = TEMP_DIR / f"{p.stem}_extracted.wav"
+        wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
         extract_res = extract_audio(str(p), str(wav_path))
         audio_file = extract_res["audio_path"]
     else:
         audio_file = str(p)
 
-    script_source = req.script_text
+    job_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir()
+    script_source = None
+    if req.script_text:
+        script_file = job_dir / "script.txt"
+        script_file.write_text(req.script_text, encoding="utf-8")
+        script_source = str(script_file)
     if not script_source and req.script_path:
         sp = _resolve_media_path(req.script_path)
         script_source = str(sp)
@@ -593,13 +613,16 @@ def align_endpoint(req: AlignRequest):
         track = run_luna_pipeline(
             audio_path=audio_file,
             lyrics_source=script_source,
-            output_dir=str(OUTPUT_DIR),
+            output_dir=str(job_dir),
             llm_provider=req.llm_provider or "local"
         )
         return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
     except Exception as e:
         logger.error(f"對齊失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if is_video:
+            wav_path.unlink(missing_ok=True)
 
 
 @app.post("/api/ai/proofread")
@@ -608,7 +631,7 @@ def proofread_endpoint(req: ProofreadRequest):
     proofreader = None
     clean_script = (req.script_text or "").strip()
     try:
-        proofreader = SubtitleProofreader(n_gpu_layers=-1)
+        proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=req.llm_provider)
         corrected_track = proofreader.proofread_track(
             req.track,
             batch_size=req.batch_size,
@@ -642,7 +665,7 @@ def burn_endpoint(req: BurnVideoRequest):
     else:
         raise HTTPException(status_code=400, detail="請提供字幕軌道 (track) 或字幕檔案路徑 (subtitle_path)")
 
-    out_name = f"{v_path.stem}_burned_{os.getpid()}.mp4"
+    out_name = f"{v_path.stem}_burned_{uuid.uuid4().hex}.mp4"
     out_file = OUTPUT_DIR / out_name
 
     try:

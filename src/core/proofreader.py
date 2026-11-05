@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment
+from .env_utils import preload_cuda_libs, release_gpu_memory
 
 logger = logging.getLogger(__name__)
 
@@ -91,17 +92,29 @@ def _extract_json_payload(raw_text: str) -> Any:
 
 
 class SubtitleProofreader:
-    """基於雲端 LLM API (.env 設定：Gemini / OpenAI / Anthropic) 的字幕智慧校對器"""
+    """本地 Qwen 或雲端 LLM API 字幕校對器"""
 
     def __init__(
         self,
         model_path: Optional[str] = None,
         n_gpu_layers: int = -1,
-        n_ctx: int = 4096
+        n_ctx: int = 8192,
+        provider: Optional[str] = None
     ):
-        self.cfg = load_env_config()
-        self.provider, self.model_name = self._resolve_provider()
-        logger.info(f"已啟用雲端 LLM API 校對引擎: provider={self.provider}, model={self.model_name}")
+        self.cfg = {} if provider == "local" else load_env_config()
+        self.llm = None
+        if provider == "local":
+            preload_cuda_libs()
+            from llama_cpp import Llama
+            model_path = model_path or str(BASE_DIR / "models" / "qwen2.5-3b-instruct-q4_k_m.gguf")
+            self.provider = "local"
+            self.model_name = Path(model_path).name
+            self.llm = Llama(model_path=model_path, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers, n_threads=8, verbose=False)
+        else:
+            if provider not in (None, "api"):
+                raise ValueError(f"不支援的校對模式: {provider}")
+            self.provider, self.model_name = self._resolve_provider()
+        logger.info(f"已啟用 LLM 校對引擎: provider={self.provider}, model={self.model_name}")
 
     def _resolve_provider(self) -> tuple[str, str]:
         provider = (self.cfg.get("LLM_PROVIDER") or "auto").lower().strip()
@@ -129,7 +142,16 @@ class SubtitleProofreader:
         )
 
     def _call_llm_api(self, sys_prompt: str, user_input: str) -> str:
-        """根據目前設定的供應商呼叫對應雲端 REST API"""
+        """呼叫明確選定的本地或雲端 LLM"""
+        if self.provider == "local":
+            response = self.llm.create_chat_completion(
+                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_input}],
+                temperature=0.1,
+                max_tokens=1024,
+                response_format={"type": "json_object"},
+            )
+            return response["choices"][0]["message"]["content"]
+
         if self.provider == "gemini":
             api_key = self.cfg["GEMINI_API_KEY"].strip()
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={api_key}"
@@ -303,10 +325,10 @@ class SubtitleProofreader:
         all_segments = track.segments
         new_segments: List[SubtitleSegment] = []
 
-        effective_batch_size = max(batch_size, 25)
+        effective_batch_size = max(1, min(batch_size, 8) if self.provider == "local" else batch_size)
         total_batches = (len(all_segments) + effective_batch_size - 1) // effective_batch_size
         logger.info(
-            f"開始以雲端 LLM ({self.provider}/{self.model_name}) 校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理 (附帶原詞: {bool(effective_script)})..."
+            f"開始以 LLM ({self.provider}/{self.model_name}) 校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理 (附帶原詞: {bool(effective_script)})..."
         )
 
         for i in range(0, len(all_segments), effective_batch_size):
@@ -336,5 +358,7 @@ class SubtitleProofreader:
         )
 
     def close(self) -> None:
-        """雲端 API 無需釋放本地 VRAM，保留介面相容性"""
-        pass
+        if self.llm is not None:
+            self.llm.close()
+            self.llm = None
+            release_gpu_memory()

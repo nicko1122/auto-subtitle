@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import uuid
 from pathlib import Path
 from typing import Optional
 import typer
@@ -238,7 +239,7 @@ def align_cmd(
     media_path: str = typer.Argument(..., help="來源影音或音訊檔案路徑 (MP4, WAV 等)"),
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
     llm_provider: str = typer.Option("local", "--llm", help="決策審核大腦 (local 或 api)"),
-    output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設為影音同目錄)"),
+    output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設在影音同目錄建立獨立資料夾)"),
 ):
     """【有稿模式】利用完整 Luna Pipeline 進行原歌詞強制對齊、雙軌審核與時間軸修正"""
     input_p = Path(media_path).resolve()
@@ -251,7 +252,7 @@ def align_cmd(
         console.print(f"[bold red]找不到原稿檔案: {script_path}[/bold red]")
         raise typer.Exit(code=1)
 
-    target_dir = Path(output_dir).resolve() if output_dir else input_p.parent
+    target_dir = Path(output_dir).resolve() if output_dir else input_p.parent / f"{input_p.stem}_subtitles_{uuid.uuid4().hex}"
     target_dir.mkdir(parents=True, exist_ok=True)
     stem = input_p.stem
 
@@ -322,7 +323,7 @@ def proofread_cmd(
         track = build_subtitle_track(trans_res)
 
     console.print(f"[2/3] 載入本地 Qwen2.5-3B-Instruct 模型 (GPU 全速加速)...")
-    proofreader = SubtitleProofreader(n_gpu_layers=gpu_layers)
+    proofreader = SubtitleProofreader(n_gpu_layers=gpu_layers, provider="local")
 
     console.print(f"[3/3] 正在逐批校對字幕 (共 {len(track.segments)} 句)...")
     try:

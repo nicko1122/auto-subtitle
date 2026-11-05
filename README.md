@@ -67,7 +67,7 @@
 ## 🛠️ 環境需求
 
 - **作業系統**：Linux / Ubuntu / WSL2 (Windows Subsystem for Linux)
-- **Python**：3.10+
+- **Python**：3.10–3.12（目前 `av<14` 的相容範圍）
 - **系統相依**：`ffmpeg`, `ffprobe`, `fontconfig`
 - **GPU (可選但推薦)**：支援 CUDA 之 NVIDIA 顯卡（如 GTX 1070 Ti、RTX 3060 或更高等級）
 
@@ -87,6 +87,12 @@ chmod +x install.sh
 ./install.sh
 ```
 
+可用 `PYTHON=/path/to/python3.12 ./install.sh` 指定直譯器。安裝失敗會停止，不會顯示完成。
+
+Web 校對依「本地 / 雲端」選單執行；本地模式不讀取雲端金鑰。API 拒絕跨來源瀏覽器請求，檔案路徑限於 `uploads/`、`inputclip/`、`output/`、`temp/`。自訂服務網域需以 `AUTOSUBTITLE_ALLOWED_HOSTS=your.domain,localhost` 指定。
+
+每次 Web 任務使用獨立輸出目錄／檔名；CLI `luna` 預設建立獨立資料夾，明確指定 `-o` 時沿用該目錄。除七項標準交付檔，另保留 `corrections.json` 與 `validation.json` 診斷檔。
+
 ### ⚙️ 設定檔 (.env，可選)
 若欲啟用雲端 LLM API（如 OpenAI / GPT-4o / GPT-6 Luna）：
 ```bash
@@ -94,7 +100,7 @@ cp .env.example .env
 ```
 在 `.env` 中設定：
 ```env
-LLM_PROVIDER=api
+LLM_PROVIDER=openai
 OPENAI_API_KEY=your_api_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o
@@ -129,7 +135,7 @@ python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 | `media_path` | (必填) | - | 來源影音檔案路徑 (MP4, MKV, WAV 等) |
 | `script_path` | (必填) | - | 原歌詞或字幕文字檔案路徑 (.txt) |
 | `--llm` | - | `local` | 決策大腦模式：`local` (地端 Qwen GGUF) 或 `api` (雲端 OpenAI 相容) |
-| `-o`, `--output-dir` | `-o` | 來源檔同目錄 | 輸出交付產物之目錄 |
+| `-o`, `--output-dir` | `-o` | 來源檔同目錄中的獨立資料夾 | 輸出交付產物之目錄 |
 
 #### 🔹 (2) `pipeline`：無稿全自動上字幕流水線
 針對演講、訪談或 Podcast，一鍵完成抽音、Whisper 辨識、智慧斷句並匯出字幕：

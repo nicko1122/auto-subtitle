@@ -1,29 +1,45 @@
-from src.core.proofreader import SubtitleProofreader
+import json
+from unittest.mock import Mock
+
+import pytest
+
+from src.core import proofreader
 from src.schemas.subtitle import SubtitleTrack, SubtitleSegment
 
-proofreader = SubtitleProofreader()
-print(f"Testing mode 1: Pure LLM homophone correction (no lyrics provided)...")
-track1 = SubtitleTrack(
-    source_file="test1.mp3",
-    segments=[
-        SubtitleSegment(id=1, start=1.0, end=3.5, text="像是隔著開平洋"),
-    ]
-)
-res1 = proofreader.proofread_track(track1)
-for s in res1.segments:
-    print(f"-> id={s.id}: {s.text}")
 
-print(f"\nTesting mode 2: Lyrics-assisted proofreading (with reference script)...")
-track2 = SubtitleTrack(
-    source_file="test2.mp3",
-    segments=[
-        SubtitleSegment(id=1, start=0.0, end=2.5, text="客廳座個老頭"),
-        SubtitleSegment(id=2, start=2.5, end=5.0, text="別想叫我活成你那樣"),
-    ]
-)
-script2 = "客廳坐個老頭，眼神像把鏽蝕的刀。\n別想叫我活成你那樣！"
-res2 = proofreader.proofread_track(track2, reference_script=script2)
-for s in res2.segments:
-    print(f"-> id={s.id}: {s.text}")
+def test_cloud_proofreading_preserves_timeline(monkeypatch):
+    monkeypatch.setattr(proofreader, 'load_env_config', lambda: {
+        'LLM_PROVIDER': 'openai', 'OPENAI_API_KEY': 'test-key', 'OPENAI_MODEL': 'test-model',
+    })
+    engine = proofreader.SubtitleProofreader(provider='api')
+    call = Mock(return_value=json.dumps({'results': [{'id': 7, 'text': '像是隔著太平洋'}]}))
+    monkeypatch.setattr(engine, '_call_llm_api', call)
+    track = SubtitleTrack(source_file='test', segments=[SubtitleSegment(id=7, start=1, end=3, text='像是隔著開平洋')])
+    corrected = engine.proofread_track(track, reference_script='像是隔著太平洋')
+    assert corrected.segments[0].text == '像是隔著太平洋'
+    assert (corrected.segments[0].id, corrected.segments[0].start, corrected.segments[0].end) == (7, 1, 3)
+    assert '像是隔著太平洋' in call.call_args.args[1]
 
-print("\nAll tests passed successfully!")
+
+def test_local_does_not_read_cloud_configuration(monkeypatch):
+    import llama_cpp
+    cloud_config = Mock(side_effect=AssertionError('local mode must not read keys'))
+    monkeypatch.setattr(proofreader, 'load_env_config', cloud_config)
+    llm = Mock()
+    llm.create_chat_completion.return_value = {'choices': [{'message': {'content': '{"results":[{"id":1,"text":"本地校對"}]}'}}]}
+    monkeypatch.setattr(llama_cpp, 'Llama', Mock(return_value=llm))
+    engine = proofreader.SubtitleProofreader(provider='local')
+    track = SubtitleTrack(source_file='test', segments=[SubtitleSegment(id=1, start=0, end=1, text='原稿')])
+    try:
+        assert engine.proofread_track(track).segments[0].text == '本地校對'
+        cloud_config.assert_not_called()
+        llm.create_chat_completion.assert_called_once()
+    finally:
+        engine.close()
+    llm.close.assert_called_once()
+
+
+def test_missing_cloud_key_fails_only_when_cloud_is_selected(monkeypatch):
+    monkeypatch.setattr(proofreader, 'load_env_config', lambda: {})
+    with pytest.raises(RuntimeError, match='API Key'):
+        proofreader.SubtitleProofreader(provider='api')

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from src.api.server import app
 
 def test_api():
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     
     # 1. Health check
     res = client.get("/api/health")

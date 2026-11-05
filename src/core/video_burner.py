@@ -2,6 +2,7 @@ import os
 import subprocess
 import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Tuple, Optional, Union
 
@@ -101,7 +102,8 @@ def burn_subtitles_to_video(
 
     # 3. 產生與影片解析度精確對應的 ASS 字幕檔
     ass_content = to_ass(track, style=style, res_x=width, res_y=height)
-    temp_ass_path = input_v.parent / f"{input_v.stem}.temp_burn.ass"
+    with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as temp_ass:
+        temp_ass_path = Path(temp_ass.name)
     save_file(ass_content, str(temp_ass_path))
 
     # 4. 決定輸出路徑

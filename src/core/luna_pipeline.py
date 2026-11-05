@@ -6,6 +6,7 @@ import hashlib
 import re
 import csv
 import subprocess
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from pypinyin import lazy_pinyin
@@ -14,9 +15,9 @@ from .env_utils import preload_cuda_libs, release_gpu_memory
 preload_cuda_libs()
 
 import stable_whisper
-from .transcriber import transcribe_audio
+from .transcriber import transcribe_audio, load_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
-from .exporter import to_srt, save_file, parse_srt_content
+from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, WordItem
 
 HALLUCINATION_PATTERNS = [
@@ -85,40 +86,23 @@ class LocalQwenReasoner:
     自動檢測並優先使用 models/ 內的 Qwen2.5 GGUF 模型
     """
     def __init__(self, model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf"):
-        from llama_cpp import Llama
         models_dir = Path(__file__).resolve().parent.parent.parent / "models"
         model_path = models_dir / model_name
         if not model_path.exists():
             model_path = models_dir / "qwen2.5-3b-instruct-q4_k_m.gguf"
         if not model_path.exists():
-            # 嘗試 7B 模型
             model_path = models_dir / "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-        
-        self.model_path = str(model_path)
-        self.model_name = model_path.name
-        self.llm = Llama(
-            model_path=self.model_path,
-            n_ctx=8192,
-            n_threads=8,
-            verbose=False
+        self.proofreader = SubtitleProofreader(
+            model_path=str(model_path),
+            provider="local", n_ctx=8192,
         )
+        self.model_name = self.proofreader.model_name
 
     def decide(self, sys_prompt: str, user_prompt: str) -> str:
-        resp = self.llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.1,
-            max_tokens=1024,
-            response_format={"type": "json_object"}
-        )
-        return resp["choices"][0]["message"]["content"]
+        return self.proofreader._call_llm_api(sys_prompt, user_prompt)
 
     def close(self):
-        if hasattr(self, "llm"):
-            del self.llm
-        release_gpu_memory()
+        self.proofreader.close()
 
 
 class CloudLunaReasoner:
@@ -126,7 +110,7 @@ class CloudLunaReasoner:
     雲端 GPT-6 Luna / LLM API 決策引擎 (依據 .env 金鑰)
     """
     def __init__(self):
-        self.proofreader = SubtitleProofreader()
+        self.proofreader = SubtitleProofreader(provider="api")
         self.model_name = self.proofreader.model_name
 
     def decide(self, sys_prompt: str, user_prompt: str) -> str:
@@ -153,7 +137,7 @@ class LunaPipeline:
         self.audio_path = str(Path(audio_path).resolve())
         self.lyrics_source = lyrics_source
         base_dir = Path(__file__).resolve().parent.parent.parent
-        self.output_dir = Path(output_dir).resolve() if output_dir else base_dir / "output_luna_pipeline"
+        self.output_dir = Path(output_dir).resolve() if output_dir else base_dir / "output_luna_pipeline" / uuid.uuid4().hex
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.llm_provider = llm_provider
         self.local_model_name = local_model_name
@@ -295,7 +279,7 @@ class LunaPipeline:
         self._notify(3, 5, f"使用 stable-ts 對 {len(self.org_lines)} 句原歌詞強制對齊與雙軌比對...")
         lyrics_text = "\n".join(self.org_lines)
 
-        st_model = stable_whisper.load_faster_whisper("large-v3-turbo", device="cuda", compute_type="float32")
+        st_model = load_whisper_model("large-v3-turbo", loader=stable_whisper.load_faster_whisper)
         align_res = st_model.align(
             self.audio_path,
             lyrics_text,
@@ -501,7 +485,7 @@ class LunaPipeline:
                 try:
                     raw_res = reasoner.decide(sys_prompt, user_input)
                     data = _extract_json_payload(raw_res)
-                    items = data.get("decisions") or (data if isinstance(data, list) else [])
+                    items = data if isinstance(data, list) else data.get("decisions", [])
                     for it in items:
                         lid = it.get("line_id")
                         if lid:
@@ -517,7 +501,7 @@ class LunaPipeline:
         reviews: List[Dict[str, Any]] = []
 
         last_end = 0.0
-        for ev in self.cue_evidence:
+        for index, ev in enumerate(self.cue_evidence):
             lid = ev["line_id"]
             org_line = ev["org_line"]
             cands = ev["candidates"]
@@ -546,12 +530,11 @@ class LunaPipeline:
                         chosen_et = cands[e_id]["end"]
                         et_source = e_id
 
-            if chosen_st < last_end:
-                chosen_st = last_end
-            if chosen_et <= chosen_st:
-                chosen_et = min(self.audio_duration, chosen_st + max(1.2, def_et - def_st))
-            if chosen_et > self.audio_duration:
-                chosen_et = self.audio_duration
+            remaining = len(self.cue_evidence) - index
+            min_duration = min(0.001, self.audio_duration / len(self.cue_evidence))
+            latest_end = self.audio_duration - (remaining - 1) * min_duration
+            chosen_st = min(max(last_end, chosen_st), latest_end - min_duration)
+            chosen_et = min(max(chosen_et, chosen_st + min_duration), latest_end)
 
             is_modified = (abs(chosen_st - def_st) > 0.05 or abs(chosen_et - def_et) > 0.05)
             if is_modified or decision_action == "choose_candidate":
@@ -568,6 +551,9 @@ class LunaPipeline:
                 })
 
             status = "needs_review" if (ev["anomalies"] and not is_modified and decision_action == "keep") else "passed"
+            if def_et <= def_st or def_st >= self.audio_duration:
+                status = "needs_review"
+                decision_reason = "原始對齊缺少有效時間，已保留最短時間區間，請手動校對"
             reviews.append({
                 "line_id": lid,
                 "text": org_line,
@@ -599,8 +585,8 @@ class LunaPipeline:
         return final_segments
 
     def step_7_display_rules_and_export(self, segments: List[SubtitleSegment]) -> SubtitleTrack:
-        """【第 10 & 11 節】套用 +0.16s 閱讀延長規則，排版並輸出 7 項標準交付檔案"""
-        self._notify(5, 5, "套用 +0.16s 閱讀延長規則與排版，輸出 7 項標準交付檔案...")
+        """【第 10 & 11 節】套用 +0.16s 閱讀延長規則，排版並輸出標準字幕與診斷檔案"""
+        self._notify(5, 5, "套用 +0.16s 閱讀延長規則與排版，輸出標準字幕與診斷檔案...")
         processed_segments: List[SubtitleSegment] = []
 
         for i, seg in enumerate(segments):
@@ -639,7 +625,10 @@ class LunaPipeline:
             segments=processed_segments
         )
 
-        # 輸出 7 項交付成果
+        # 標準字幕與診斷檔案
+        save_file(to_vtt(self.final_track), str(self.output_dir / "lyrics.vtt"))
+        save_file(to_ass(self.final_track), str(self.output_dir / "lyrics.ass"))
+
         # 1. lyrics.srt
         srt_content = to_srt(self.final_track)
         save_file(srt_content, str(self.output_dir / "lyrics.srt"))
@@ -672,15 +661,21 @@ class LunaPipeline:
             if idx_k > 0 and s.start < processed_segments[idx_k - 1].end:
                 overlaps += 1
 
+        negative = sum(1 for s in processed_segments if s.start < 0)
+        inverted = sum(1 for s in processed_segments if s.start >= s.end)
+        text_match = len(self.org_lines) == len(processed_segments) and all(
+            re.sub(r"\s+", "", text) == re.sub(r"\s+", "", segment.text)
+            for text, segment in zip(self.org_lines, processed_segments)
+        )
         val_report = {
             "total_lyric_lines": len(self.org_lines),
             "output_subtitle_count": len(processed_segments),
-            "lyrics_text_100_percent_match": (len(self.org_lines) == len(processed_segments)),
-            "negative_timestamps": sum(1 for s in processed_segments if s.start < 0),
-            "inverted_timestamps": sum(1 for s in processed_segments if s.start >= s.end),
+            "lyrics_text_100_percent_match": text_match,
+            "negative_timestamps": negative,
+            "inverted_timestamps": inverted,
             "overlaps": overlaps,
             "exceeds_audio_duration": exceeds,
-            "validation_passed": (overlaps == 0 and exceeds == 0 and len(self.org_lines) == len(processed_segments))
+            "validation_passed": (overlaps == 0 and exceeds == 0 and negative == 0 and inverted == 0 and text_match)
         }
         with open(self.output_dir / "validation.json", "w", encoding="utf-8") as f:
             json.dump(val_report, f, ensure_ascii=False, indent=2)

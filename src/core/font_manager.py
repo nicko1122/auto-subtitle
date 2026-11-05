@@ -2,7 +2,12 @@ import os
 import shutil
 import struct
 import subprocess
-import urllib.request
+import http.client
+import ipaddress
+import socket
+import ssl
+import tempfile
+import urllib.parse
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -352,6 +357,49 @@ def install_font_from_file(source_path: str, custom_filename: Optional[str] = No
     }
 
 
+def _download_font(url: str, destination: Path) -> None:
+    for _ in range(6):
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("字型下載僅接受公開 HTTP/HTTPS URL")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+        if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+            raise ValueError("字型下載不允許本機或私人網路位址")
+
+        connection = http.client.HTTPConnection(parsed.hostname, port, timeout=60)
+        try:
+            # Connect to the checked IP; resolving the hostname again would allow DNS rebinding.
+            connection.sock = socket.create_connection((addresses[0][4][0], port), timeout=60)
+            if parsed.scheme == "https":
+                connection.sock = ssl.create_default_context().wrap_socket(connection.sock, server_hostname=parsed.hostname)
+            target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+            connection.request("GET", target, headers={"User-Agent": "AutoSubtitle-FontInstaller/1.0"})
+            response = connection.getresponse()
+            if response.status in (301, 302, 303, 307, 308):
+                location = response.getheader("Location")
+                if not location:
+                    raise ValueError("字型下載重新導向缺少 Location")
+                url = urllib.parse.urljoin(url, location)
+                continue
+            if response.status != 200:
+                raise ValueError(f"字型下載失敗: HTTP {response.status}")
+            size = 0
+            with destination.open("wb") as output:
+                while chunk := response.read(65536):
+                    size += len(chunk)
+                    if size > 128 * 1024 * 1024:
+                        raise ValueError("字型檔案超過 128 MB")
+                    output.write(chunk)
+            with destination.open("rb") as font:
+                if font.read(4) not in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOFF", b"wOF2"):
+                    raise ValueError("下載內容不是支援的字型檔案")
+            return
+        finally:
+            connection.close()
+    raise ValueError("字型下載重新導向次數過多")
+
+
 def install_font_from_url(url: str, filename: Optional[str] = None) -> Dict[str, Any]:
     """從遠端 URL 下載並安裝字型至專案 fonts/ 目錄"""
     if not filename:
@@ -364,21 +412,13 @@ def install_font_from_url(url: str, filename: Optional[str] = None) -> Dict[str,
         raise ValueError(f"URL 檔案副檔名 '{ext}' 非有效字型格式 ({', '.join(sorted(ALLOWED_FONT_EXTS))})")
 
     dest = FONTS_DIR / safe_name
-    temp_dest = FONTS_DIR / f".downloading_{safe_name}"
-
-    logger.info(f"正在從 {url} 下載字型至 {dest}...")
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "AutoSubtitle-FontInstaller/1.0"}
-    )
+    with tempfile.NamedTemporaryFile(dir=FONTS_DIR, prefix=".downloading_", delete=False) as temp:
+        temp_dest = Path(temp.name)
     try:
-        with urllib.request.urlopen(req, timeout=60) as response, temp_dest.open("wb") as out_f:
-            shutil.copyfileobj(response, out_f)
+        _download_font(url, temp_dest)
         temp_dest.replace(dest)
-    except Exception as e:
-        if temp_dest.exists():
-            temp_dest.unlink()
-        raise RuntimeError(f"下載字型失敗 ({url}): {e}") from e
+    finally:
+        temp_dest.unlink(missing_ok=True)
 
     info = extract_font_family(dest)
     return {

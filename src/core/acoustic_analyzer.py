@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
 from .env_utils import preload_cuda_libs, release_gpu_memory
+from .transcriber import load_whisper_model
 from ..schemas.subtitle import SubtitleSegment, SubtitleTrack
 
 logger = logging.getLogger(__name__)
@@ -322,7 +323,8 @@ def transcribe_on_locked_timeline(
     device: str = "cuda",
     prompt: str = "繁體中文",
     only_empty: bool = False,
-    auto_proofread: bool = False
+    auto_proofread: bool = False,
+    llm_provider: str = "local"
 ) -> SubtitleTrack:
     """
     【階段三：依「已校正鎖定的時間軸」執行受控 Whisper 填字 (Segment-Guided Whisper)】
@@ -344,23 +346,7 @@ def transcribe_on_locked_timeline(
     audio = decode_audio(str(p), sampling_rate=sr)
     total_samples = len(audio)
 
-    # 載入 Whisper 模型 (含 GPU / CPU 降級保護)
-    model = None
-    try_configs = []
-    if device in ("cuda", "auto"):
-        try_configs.append({"device": "cuda", "compute_type": "float32"})
-        try_configs.append({"device": "cuda", "compute_type": "int8_float32"})
-    try_configs.append({"device": "cpu", "compute_type": "int8"})
-
-    for cfg in try_configs:
-        try:
-            model = WhisperModel(model_size, device=cfg["device"], compute_type=cfg["compute_type"])
-            break
-        except Exception as e:
-            logger.warning(f"Whisper 載入配置 {cfg} 失敗: {e}")
-
-    if model is None:
-        raise RuntimeError("無法載入 Whisper 模型")
+    model = load_whisper_model(model_size, device)
 
     updated_segments: List[SubtitleSegment] = []
     prev_text_context = prompt or "繁體中文"
@@ -428,7 +414,7 @@ def transcribe_on_locked_timeline(
     )
 
     if auto_proofread and new_track.segments:
-        proofreader = SubtitleProofreader(n_gpu_layers=-1)
+        proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=llm_provider)
         try:
             new_track = proofreader.proofread_track(new_track, batch_size=8)
         finally:
