@@ -999,122 +999,156 @@ function initAiButtons() {
     });
   }
 
-  // AI 自動辨識 (可選一併執行 Qwen2.5 校對)
-  el.btnAiTranscribe.addEventListener("click", async () => {
-    const media = state.video.path;
-    if (!media) {
-      addLog("請先在上方選擇或上傳影片後再執行辨識", "error");
-      return;
-    }
-
-    const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
-    const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : false;
-
-    addLog(`【AI 辨識】正在以 Whisper (${modelSize}) 辨識 ${state.video.filename}${autoProofread ? ' 並自動校對錯字' : ''}...`);
-    el.btnAiTranscribe.disabled = true;
-    el.btnAiTranscribe.textContent = autoProofread ? "⏳ Whisper 辨識與 Qwen2.5 校對中..." : "⏳ Whisper 語音辨識中...";
-
-    const formData = new FormData();
-    formData.append("media_path", media);
-    formData.append("model", modelSize);
-    formData.append("device", "cuda");
-    formData.append("prompt", "繁體中文");
-    formData.append("auto_proofread", String(autoProofread));
-
-    try {
-      const res = await fetch("/api/ai/transcribe", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.status === "success") {
-        data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
-        setSubtitleTrack(data.track);
-        addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
-      } else {
-        throw new Error(data.detail || "辨識失敗");
+  // AI 自動產生字幕 (單一入口：自動依據是否有填寫原詞智慧雙分流)
+  if (el.btnAiTranscribe) {
+    el.btnAiTranscribe.addEventListener("click", async () => {
+      const media = state.video.path;
+      if (!media) {
+        addLog("請先在上方選擇或上傳影片後再執行產生字幕", "error");
+        return;
       }
-    } catch (err) {
-      addLog(`辨識失敗: ${err.message}`, "error");
-    } finally {
-      el.btnAiTranscribe.disabled = false;
-      el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>開始 AI 語音辨識生成字幕`;
-    }
-  });
 
-  // 有稿強制對齊
-  el.btnAiAlign.addEventListener("click", async () => {
-    const media = state.video.path;
-    if (!media) {
-      addLog("請先載入影片後再執行對齊", "error");
-      return;
-    }
+      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
+      const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
+      const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
 
-    const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
-    const scriptPath = el.selectScriptAsset ? el.selectScriptAsset.value : "";
-
-    if (!scriptText && !scriptPath) {
-      addLog("請先選擇原稿 .txt 檔案或在文字框貼上歌詞/原稿內容", "error");
-      return;
-    }
-
-    addLog(`【有稿對齊】正在將原稿與 ${state.video.filename} 音軌強制對齊...`);
-    el.btnAiAlign.disabled = true;
-    el.btnAiAlign.textContent = "⏳ 音軌特徵提取與動態規劃對齊中...";
-
-    try {
-      const payload = { media_path: media };
-      if (scriptText) payload.script_text = scriptText;
-      if (scriptPath) payload.script_path = scriptPath;
-
-      const res = await fetch("/api/ai/align", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.aligned.srt`;
-        setSubtitleTrack(data.track);
-        addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕！`, "success");
+      if (scriptText) {
+        addLog(`【AI 產生字幕】檢測到參考原詞（${scriptText.split('\n').filter(Boolean).length} 行），以 Whisper (${modelSize}) 擷取字級時間軸，並由 Qwen2.5 比對原詞 100% 精準校對...`);
       } else {
-        throw new Error(data.detail || "對齊失敗");
+        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ' 並由 Qwen2.5 自動盲校錯字' : ''}...`);
       }
-    } catch (err) {
-      addLog(`對齊失敗: ${err.message}`, "error");
-    } finally {
-      el.btnAiAlign.disabled = false;
-      el.btnAiAlign.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>開始原稿與音軌 100% 強制對齊`;
-    }
-  });
 
-  // 無稿 Edge LLM 單獨校對
-  el.btnAiProofread.addEventListener("click", async () => {
-    if (!state.track.segments.length) {
-      addLog("請先載入或生成字幕後再執行校對", "error");
-      return;
-    }
-    addLog(`【Edge LLM 校對】啟動本地 Qwen2.5 進行錯別字校正...`);
-    el.btnAiProofread.disabled = true;
-    el.btnAiProofread.textContent = "⏳ 校對中...";
+      el.btnAiTranscribe.disabled = true;
+      el.btnAiTranscribe.textContent = scriptText 
+        ? "⏳ Whisper 辨識與 Qwen2.5 原詞對照校對中..." 
+        : (autoProofread ? "⏳ Whisper 辨識與 Qwen2.5 校對中..." : "⏳ Whisper 語音辨識中...");
 
-    try {
-      const res = await fetch("/api/ai/proofread", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track: state.track, batch_size: 8 })
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        setSubtitleTrack(data.track);
-        addLog(`【校對完成】字幕已自動修正同音字與標點！`, "success");
+      const formData = new FormData();
+      formData.append("media_path", media);
+      formData.append("model", modelSize);
+      formData.append("device", "cuda");
+      formData.append("prompt", "繁體中文");
+      formData.append("auto_proofread", String(autoProofread));
+      if (scriptText) {
+        formData.append("script_text", scriptText);
+      }
+
+      try {
+        const res = await fetch("/api/ai/transcribe", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.status === "success") {
+          data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
+          setSubtitleTrack(data.track);
+          if (data.has_reference) {
+            addLog(`【AI 產生字幕成功】已生成 ${data.track.segments.length} 句字幕（已成功參照原稿完成 100% 正字校對）！`, "success");
+          } else {
+            addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
+          }
+        } else {
+          throw new Error(data.detail || "辨識失敗");
+        }
+      } catch (err) {
+        addLog(`辨識失敗: ${err.message}`, "error");
+      } finally {
+        el.btnAiTranscribe.disabled = false;
+        el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>🎙️ 開始 AI 產生字幕 (自動判定原詞)`;
+      }
+    });
+  }
+
+  // 有稿強制對齊 (備用相容)
+  if (el.btnAiAlign) {
+    el.btnAiAlign.addEventListener("click", async () => {
+      const media = state.video.path;
+      if (!media) {
+        addLog("請先載入影片後再執行對齊", "error");
+        return;
+      }
+
+      const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
+      const scriptPath = el.selectScriptAsset ? el.selectScriptAsset.value : "";
+
+      if (!scriptText && !scriptPath) {
+        addLog("請先選擇原稿 .txt 檔案或在文字框貼上歌詞/原稿內容", "error");
+        return;
+      }
+
+      addLog(`【有稿對齊】正在將原稿與 ${state.video.filename} 音軌強制對齊...`);
+      el.btnAiAlign.disabled = true;
+      el.btnAiAlign.textContent = "⏳ 音軌特徵提取與動態規劃對齊中...";
+
+      try {
+        const payload = { media_path: media };
+        if (scriptText) payload.script_text = scriptText;
+        if (scriptPath) payload.script_path = scriptPath;
+
+        const res = await fetch("/api/ai/align", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.aligned.srt`;
+          setSubtitleTrack(data.track);
+          addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕！`, "success");
+        } else {
+          throw new Error(data.detail || "對齊失敗");
+        }
+      } catch (err) {
+        addLog(`對齊失敗: ${err.message}`, "error");
+      } finally {
+        el.btnAiAlign.disabled = false;
+        el.btnAiAlign.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>開始原稿與音軌 100% 強制對齊`;
+      }
+    });
+  }
+
+  // Edge LLM 校對 (自動依據是否有填寫原詞決定「有稿精準校對」或「無稿盲校」)
+  if (el.btnAiProofread) {
+    el.btnAiProofread.addEventListener("click", async () => {
+      if (!state.track.segments.length) {
+        addLog("請先載入或生成字幕後再執行校對", "error");
+        return;
+      }
+      const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
+      if (scriptText) {
+        addLog(`【Qwen2.5 校對】正在參照上方原稿歌詞進行精準錯字校正...`);
       } else {
-        throw new Error(data.detail || "校對失敗");
+        addLog(`【Qwen2.5 校對】啟動本地 Qwen2.5 進行上下文盲校...`);
       }
-    } catch (err) {
-      addLog(`校對失敗: ${err.message}`, "error");
-    } finally {
-      el.btnAiProofread.disabled = false;
-      el.btnAiProofread.textContent = "✨ 單獨校對錯字";
-    }
-  });
+      el.btnAiProofread.disabled = true;
+      el.btnAiProofread.textContent = "⏳ 校對中...";
+
+      try {
+        const payload = { track: state.track, batch_size: 8 };
+        if (scriptText) {
+          payload.script_text = scriptText;
+        }
+        const res = await fetch("/api/ai/proofread", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          setSubtitleTrack(data.track);
+          if (data.has_reference) {
+            addLog(`【校對完成】已依據原稿歌詞 100% 還原正確正字！`, "success");
+          } else {
+            addLog(`【校對完成】字幕已自動修正同音字與標點！`, "success");
+          }
+        } else {
+          throw new Error(data.detail || "校對失敗");
+        }
+      } catch (err) {
+        addLog(`校對失敗: ${err.message}`, "error");
+      } finally {
+        el.btnAiProofread.disabled = false;
+        el.btnAiProofread.textContent = "✨ 校對目前字幕";
+      }
+    });
+  }
 }
 
 // 強健 SRT / VTT 解析器 (客戶端)

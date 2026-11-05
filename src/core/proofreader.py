@@ -28,6 +28,22 @@ BATCH_SYSTEM_PROMPT = """你是一位繁體中文影音字幕校對專家。
   ]
 }"""
 
+BATCH_SYSTEM_PROMPT_WITH_SCRIPT = """你是一位繁體中文影音字幕與歌詞校對專家。
+任務：參考使用者提供的【參考原稿/歌詞】，修正由語音辨識（ASR）產生的字幕清單中的錯別字、聽錯詞與同音字。
+
+規則：
+1. 嚴格保持與輸入相同的 id，不要增減或合併 id。
+2. 仔細比對【參考原稿/歌詞】，將聽錯的同音字（如「開平洋」改為「太平洋」、「挨著洞」改為「愛也結冰」）修正為原稿中的正確詞彙。
+3. 若歌曲有反覆唱誦（如副歌重複），請參照原稿中對應的歌詞進行修復。
+4. 若有歌手即興感嘆詞（如「Yeah」、「Woo」）未列在原稿中，請予以保留。
+5. 必須以 JSON 格式回傳，格式範例如下：
+{
+  "results": [
+    {"id": 1, "text": "修正後文字"},
+    {"id": 2, "text": "修正後文字"}
+  ]
+}"""
+
 
 class SubtitleProofreader:
     """基於 Edge 本地端 LLM (Qwen2.5) 的字幕智慧校對器"""
@@ -50,18 +66,27 @@ class SubtitleProofreader:
             verbose=False
         )
 
-    def proofread_segments_batch(self, segments: List[SubtitleSegment]) -> Dict[int, str]:
+    def proofread_segments_batch(
+        self,
+        segments: List[SubtitleSegment],
+        reference_script: Optional[str] = None
+    ) -> Dict[int, str]:
         """批次校對一組字幕片段，回傳 id -> corrected_text 對應表"""
         if not segments:
             return {}
 
         prompt_lines = [f"[{s.id}] {s.text}" for s in segments]
-        user_input = "請校對以下字幕片段：\n" + "\n".join(prompt_lines)
+        if reference_script and reference_script.strip():
+            sys_prompt = BATCH_SYSTEM_PROMPT_WITH_SCRIPT
+            user_input = f"【參考原稿/歌詞】：\n{reference_script.strip()}\n\n【待校對字幕片段】：\n" + "\n".join(prompt_lines)
+        else:
+            sys_prompt = BATCH_SYSTEM_PROMPT
+            user_input = "請校對以下字幕片段：\n" + "\n".join(prompt_lines)
 
         try:
             res = self.llm.create_chat_completion(
                 messages=[
-                    {"role": "system", "content": BATCH_SYSTEM_PROMPT},
+                    {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_input}
                 ],
                 response_format={"type": "json_object"},
@@ -112,20 +137,22 @@ class SubtitleProofreader:
         self,
         track: SubtitleTrack,
         batch_size: int = 10,
+        reference_script: Optional[str] = None,
         progress_callback: Optional[callable] = None
     ) -> SubtitleTrack:
         """
         對完整 SubtitleTrack 進行分批校對，保持原始時間軸起訖點，替換文字內容
+        若提供 reference_script，將以原稿內容作為比對依據，100% 還原原詞正字並自然支援副歌重複
         """
         all_segments = track.segments
         new_segments: List[SubtitleSegment] = []
 
         total_batches = (len(all_segments) + batch_size - 1) // batch_size
-        logger.info(f"開始校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理...")
+        logger.info(f"開始校對字幕軌，共 {len(all_segments)} 句，分 {total_batches} 批處理 (附帶原詞: {bool(reference_script)})...")
 
         for i in range(0, len(all_segments), batch_size):
             batch = all_segments[i:i + batch_size]
-            corrected_map = self.proofread_segments_batch(batch)
+            corrected_map = self.proofread_segments_batch(batch, reference_script=reference_script)
 
             for seg in batch:
                 corr_text = corrected_map.get(seg.id, seg.text)

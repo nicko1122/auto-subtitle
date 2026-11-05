@@ -337,59 +337,54 @@
               </button>
             </div>
 
-            <!-- AI 模式切換小頁籤 -->
-            <div class="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-[11px]">
-              <button id="btn-mode-unscripted" class="flex-1 py-1.5 px-2 rounded bg-purple-600/30 text-purple-300 border border-purple-500/40 font-medium transition">
-                🎙️ 無稿模式 (Whisper 辨識 + 校對)
-              </button>
-              <button id="btn-mode-scripted" class="flex-1 py-1.5 px-2 rounded text-zinc-400 hover:text-zinc-200 transition">
-                🎯 有稿模式 (100% 歌詞/原稿對齊)
-              </button>
-            </div>
-
-            <!-- 模式 A：無稿辨識與校對面板 -->
-            <div id="panel-ai-unscripted" class="space-y-2 pt-1">
-              <div class="flex items-center justify-between text-xs bg-zinc-900/70 px-2.5 py-1.5 rounded border border-zinc-800/80">
+            <!-- 🌟 統一極簡入口：AI 語音辨識與字幕產生 (自動判定有無原詞) -->
+            <div id="panel-ai-unified" class="space-y-2 pt-0.5">
+              
+              <!-- 頂部模型與校對設定列 -->
+              <div class="flex items-center justify-between text-xs bg-zinc-900/80 px-2.5 py-1.5 rounded-lg border border-zinc-800">
                 <label class="flex items-center gap-2 text-zinc-300 cursor-pointer select-none">
                   <input type="checkbox" id="check-auto-proofread" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
-                  <span>辨識後自動以 <strong class="text-purple-300">Qwen2.5</strong> 修正同音錯字</span>
+                  <span>以 <strong class="text-purple-300">Qwen2.5</strong> 自動校對錯字</span>
                 </label>
-                <select id="select-whisper-model" class="bg-zinc-800 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[11px]">
-                  <option value="large-v3-turbo" selected>Large-v3-turbo (最強/推薦)</option>
-                  <option value="small">Small 模型 (輕量平衡)</option>
-                  <option value="base">Base 模型 (超快測試)</option>
-                </select>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[10px] text-zinc-400">Whisper:</span>
+                  <select id="select-whisper-model" class="bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-1.5 py-0.5 text-[11px]">
+                    <option value="large-v3-turbo" selected>Large-v3-turbo (最強/推薦)</option>
+                    <option value="small">Small 模型 (輕量平衡)</option>
+                    <option value="base">Base 模型 (超快測試)</option>
+                  </select>
+                </div>
               </div>
 
+              <!-- 參考原詞/歌詞輸入區 (選填，自動判定) -->
+              <div class="p-2 bg-zinc-900/90 rounded-lg border border-zinc-800 space-y-1.5">
+                <div class="flex items-center justify-between text-[11px]">
+                  <span class="text-zinc-300 font-medium flex items-center gap-1">
+                    <span>📜 參考原稿 / 歌詞</span>
+                    <span class="text-[10px] text-emerald-400/90 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/50">選填・自動對照校對</span>
+                  </span>
+                  <select id="select-script-asset" class="bg-zinc-950 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] max-w-[170px] truncate">
+                    <option value="">從資產庫載入 .txt 檔</option>
+                  </select>
+                </div>
+                <textarea
+                  id="align-script-textarea"
+                  rows="3"
+                  class="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-purple-500 placeholder:text-zinc-600 transition"
+                  placeholder="在此貼上原稿或歌詞（選填，若留空則為全自動無稿辨識；若有貼詞，AI 將自動對照正字，並完美支援副歌重複與即興虛字）..."
+                ></textarea>
+              </div>
+
+              <!-- 操作按鈕列 -->
               <div class="flex gap-2">
-                <button id="btn-ai-transcribe" class="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 shadow shadow-blue-500/20 transition">
+                <button id="btn-ai-transcribe" class="flex-1 py-2 px-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-purple-900/30 transition">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
-                  開始 AI 語音辨識生成字幕
+                  <span id="btn-ai-transcribe-label">🎙️ 開始 AI 產生字幕 (自動判定原詞)</span>
                 </button>
-                <button id="btn-ai-proofread" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition" title="僅對目前時間軸上的字幕執行 Qwen2.5 錯字校正">
-                  ✨ 單獨校對錯字
+                <button id="btn-ai-proofread" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-purple-300 border border-purple-500/40 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition" title="依上方原詞或一般語境，對目前軌道上的字幕重新執行 Qwen2.5 錯字校正">
+                  ✨ 校對目前字幕
                 </button>
               </div>
-            </div>
-
-            <!-- 模式 B：有稿強制對齊面板 -->
-            <div id="panel-ai-scripted" class="space-y-2 pt-1 hidden">
-              <div class="flex items-center gap-2 text-xs">
-                <span class="text-zinc-400 shrink-0">選擇原稿檔:</span>
-                <select id="select-script-asset" class="flex-1 bg-zinc-900 text-zinc-200 border border-zinc-700 rounded px-2 py-1 text-xs">
-                  <option value="">-- 直接在下方貼上歌詞/原稿文字 --</option>
-                </select>
-              </div>
-              <textarea
-                id="align-script-textarea"
-                rows="4"
-                class="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500"
-                placeholder="在此貼上原稿或歌詞（每行代表一句字幕），或從上方選擇已上傳的 .txt 原稿檔..."
-              ></textarea>
-              <button id="btn-ai-align" class="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 shadow shadow-emerald-500/20 transition">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                開始原稿與音軌 100% 強制對齊
-              </button>
             </div>
           </div>
 

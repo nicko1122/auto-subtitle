@@ -91,6 +91,7 @@ class AlignRequest(BaseModel):
 class ProofreadRequest(BaseModel):
     track: SubtitleTrack
     batch_size: int = 8
+    script_text: Optional[str] = None
 
 
 class InstallFontRequest(BaseModel):
@@ -474,9 +475,14 @@ def transcribe_endpoint(
     model: str = Form("large-v3-turbo"),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
-    auto_proofread: bool = Form(False)
+    auto_proofread: bool = Form(True),
+    script_text: Optional[str] = Form(None)
 ):
-    """【無稿模式】AI 語音辨識與自動斷句生成 SubtitleTrack（可選一併執行 Qwen2.5 錯字校對）"""
+    """【單一入口 AI 產生字幕】
+    支援智慧雙分流：
+    1. 若提供 script_text (原稿/歌詞)：以 Whisper-large-v3-turbo 提取時間軸，並由 Qwen2.5 對照原詞執行 100% 精準校對（支援副歌反覆與即興虛字）
+    2. 若未提供 script_text：以 Whisper 提取時間軸，並由 Qwen2.5 進行上下文盲校
+    """
     p = _resolve_media_path(media_path)
 
     # 若為影片，提取 16kHz WAV 至 TEMP_DIR (避免污染 uploads 資產庫)
@@ -488,24 +494,34 @@ def transcribe_endpoint(
     else:
         audio_file = str(p)
 
+    clean_script = (script_text or "").strip()
+    whisper_prompt = prompt or "繁體中文"
+    if clean_script:
+        snippet = re.sub(r'\s+', ' ', clean_script[:120])
+        whisper_prompt = f"以下是繁體中文影音內容，詞彙參考：{snippet}"
+
     try:
         raw_res = transcribe_audio(
             audio_path=audio_file,
             model_size=model,
             device=device,
             vad_filter=True,
-            initial_prompt=prompt
+            initial_prompt=whisper_prompt
         )
         track = build_subtitle_track(raw_res)
 
-        if auto_proofread and track.segments:
+        if (auto_proofread or clean_script) and track.segments:
             proofreader = SubtitleProofreader(n_gpu_layers=-1)
             try:
-                track = proofreader.proofread_track(track, batch_size=8)
+                track = proofreader.proofread_track(
+                    track,
+                    batch_size=8,
+                    reference_script=clean_script if clean_script else None
+                )
             finally:
                 proofreader.close()
 
-        return {"status": "success", "track": track.model_dump()}
+        return {"status": "success", "track": track.model_dump(), "has_reference": bool(clean_script)}
     except Exception as e:
         logger.error(f"辨識失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -550,12 +566,17 @@ def align_endpoint(req: AlignRequest):
 
 @app.post("/api/ai/proofread")
 def proofread_endpoint(req: ProofreadRequest):
-    """【無稿模式】使用本地 Qwen2.5 進行錯別字校對"""
+    """【無稿/有稿模式】使用本地 Qwen2.5 進行錯別字校對"""
     proofreader = None
+    clean_script = (req.script_text or "").strip()
     try:
         proofreader = SubtitleProofreader(n_gpu_layers=-1)
-        corrected_track = proofreader.proofread_track(req.track, batch_size=req.batch_size)
-        return {"status": "success", "track": corrected_track.model_dump()}
+        corrected_track = proofreader.proofread_track(
+            req.track,
+            batch_size=req.batch_size,
+            reference_script=clean_script if clean_script else None
+        )
+        return {"status": "success", "track": corrected_track.model_dump(), "has_reference": bool(clean_script)}
     except Exception as e:
         logger.error(f"校對失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
