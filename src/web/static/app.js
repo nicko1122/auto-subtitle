@@ -1223,14 +1223,14 @@ function initAiButtons() {
         return;
       }
 
-      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
+      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3";
       const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
       const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
 
       if (scriptText) {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
-        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動 Whisper＋Luna 歌詞字幕管線 (強制對齊＋雙軌審核，決策大腦: ${brainName})...`);
+        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (決策大腦: ${brainName})...`);
       } else {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
         addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
@@ -1891,7 +1891,7 @@ async function runLockedTimelineTranscribe() {
 
   const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
   const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
-  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
+  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3";
 
   addLog(`【階段 3：鎖定時間軸填字】正在嚴格依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (絕不改動起訖時間)...`);
   if (el.btnTranscribeLocked) {

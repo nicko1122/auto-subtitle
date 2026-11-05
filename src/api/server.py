@@ -117,6 +117,9 @@ class AlignRequest(BaseModel):
     script_text: Optional[str] = None
     script_path: Optional[str] = None
     llm_provider: Literal["local", "api"] = "local"
+    model: str = "large-v3"
+    device: str = "cuda"
+    prompt: Optional[str] = "繁體中文"
 
 
 class ProofreadRequest(BaseModel):
@@ -528,7 +531,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 @app.post("/api/ai/transcribe")
 def transcribe_endpoint(
     media_path: str = Form(...),
-    model: str = Form("large-v3-turbo"),
+    model: str = Form("large-v3"),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),
@@ -539,7 +542,7 @@ def transcribe_endpoint(
     支援智慧雙分流：
     1. 若提供 script_text (原稿/歌詞)：啟動《Whisper＋Luna 歌詞字幕 Pipeline》，
        利用 stable-ts 強制對齊、雙軌時間比對、局部切音重跑與本地 Qwen2.5 / 雲端 Luna 決策審核，
-       輸出 100% 準確且含 +0.16s 閱讀延長之標準字幕與 7 項成果檔案！
+       依選定模型執行原生 Whisper，輸出字幕及診斷檔案。
     2. 若未提供 script_text：以 Whisper 提取時間軸，並由 Qwen2.5 / 雲端 LLM 進行上下文盲校。
     """
     p = _resolve_media_path(media_path)
@@ -568,7 +571,10 @@ def transcribe_endpoint(
                 audio_path=audio_file,
                 lyrics_source=str(script_file),
                 output_dir=str(job_dir),
-                llm_provider=llm_provider
+                llm_provider=llm_provider,
+                whisper_model=model,
+                device=device,
+                prompt=prompt,
             )
             return {
                 "status": "success",
@@ -652,7 +658,10 @@ def align_endpoint(req: AlignRequest):
             audio_path=audio_file,
             lyrics_source=script_source,
             output_dir=str(job_dir),
-            llm_provider=req.llm_provider or "local"
+            llm_provider=req.llm_provider or "local",
+            whisper_model=req.model,
+            device=req.device,
+            prompt=req.prompt,
         )
         return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
     except Exception as e:

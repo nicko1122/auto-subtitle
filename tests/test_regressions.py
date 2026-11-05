@@ -175,11 +175,11 @@ def test_whisper_retries_cpu_when_cuda_is_unavailable():
 def test_luna_uses_the_same_cpu_fallback(tmp_path, monkeypatch):
     model = Mock()
     model.align.return_value = SimpleNamespace(segments=[SimpleNamespace(start=0, end=1, words=[], text='歌詞')])
-    def load(name, device, compute_type):
+    def load(name, device):
         if device == 'cuda':
             raise RuntimeError('out of memory')
         return model
-    monkeypatch.setattr(luna_pipeline.stable_whisper, 'load_faster_whisper', load)
+    monkeypatch.setattr(transcriber.stable_whisper, 'load_model', load)
     pipeline = luna_pipeline.LunaPipeline('unused', '歌詞', output_dir=str(tmp_path))
     pipeline.org_lines = ['歌詞']
     pipeline.audio_duration = 1

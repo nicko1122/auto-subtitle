@@ -101,13 +101,12 @@ def test_locked_timeline_unloads_after_failure(tmp_path, monkeypatch, failure):
 
 @pytest.mark.parametrize('failure', ['alignment', 'slice', 'partial_slice'])
 def test_luna_unloads_model_and_removes_owned_slices(tmp_path, monkeypatch, failure):
-    native = Mock()
     error = OSError('alignment or slice failed')
     segment = SimpleNamespace(start=0, end=8, text='歌詞', words=[])
-    model = SimpleNamespace(model=native, align=Mock(return_value=SimpleNamespace(segments=[segment])))
+    model = SimpleNamespace(cpu=Mock(), align=Mock(return_value=SimpleNamespace(segments=[segment])))
     if failure == 'alignment':
         model.align.side_effect = error
-    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', lambda *a, **kw: model)
+    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', lambda *a, **kw: model)
     slices = []
     def cut(source, start, end, output):
         path = Path(output)
@@ -126,7 +125,7 @@ def test_luna_unloads_model_and_removes_owned_slices(tmp_path, monkeypatch, fail
         with pytest.raises(OSError) as caught:
             pipeline.step_3_and_4_alignment_and_evidence()
         assert caught.value is error
-    native.unload_model.assert_called_once()
+    model.cpu.assert_called_once_with()
     assert all(not path.exists() for path in slices)
     assert list(tmp_path.iterdir()) == []
 

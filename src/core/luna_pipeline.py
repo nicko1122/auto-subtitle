@@ -16,7 +16,7 @@ from .env_utils import preload_cuda_libs
 preload_cuda_libs()
 
 import stable_whisper
-from .transcriber import transcribe_audio, load_whisper_model, unload_whisper_model
+from .transcriber import transcribe_native_audio, load_native_whisper_model, unload_native_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
 from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, WordItem
@@ -133,7 +133,10 @@ class LunaPipeline:
         output_dir: Optional[str] = None,
         llm_provider: str = "local",  # "local" | "api"
         local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        whisper_model: str = "large-v3",
+        device: str = "auto",
+        prompt: Optional[str] = None,
     ):
         self.audio_path = str(Path(audio_path).resolve())
         self.lyrics_source = lyrics_source
@@ -143,6 +146,9 @@ class LunaPipeline:
         self.llm_provider = llm_provider
         self.local_model_name = local_model_name
         self.progress_callback = progress_callback
+        self.whisper_model = whisper_model
+        self.device = device
+        self.prompt = prompt or "繁體中文"
 
         self.manifest: Dict[str, Any] = {}
         self.raw_asr: Dict[str, Any] = {}
@@ -215,7 +221,8 @@ class LunaPipeline:
             "lyrics_file": lyrics_filename,
             "lyrics_sha256": lyrics_hash,
             "lyrics_lines_count": len(self.org_lines),
-            "whisper_model": "large-v3-turbo",
+            "whisper_model": self.whisper_model,
+            "whisper_backend": "native",
             "alignment_tool": "stable-ts 2.19.1",
             "llm_provider": self.llm_provider,
             "llm_model": self.local_model_name if self.llm_provider == "local" else "gpt-6-luna",
@@ -226,19 +233,15 @@ class LunaPipeline:
 
     def step_2_whisper_full_asr(self) -> List[Dict[str, Any]]:
         """【第 4 節】Whisper 全曲辨識 (初稿分段 + 逐詞時間戳)"""
-        self._notify(2, 5, "Whisper (large-v3-turbo) 全曲聲學辨識與逐詞特徵提取中...")
-        prompt = "繁體中文歌曲。牆上的時鐘，沒有感覺，真的好冷。"
+        self._notify(2, 5, f"原生 Whisper ({self.whisper_model}) 全曲聲學辨識與逐詞特徵提取中...")
         
-        self.raw_asr = transcribe_audio(
+        self.raw_asr = transcribe_native_audio(
             audio_path=self.audio_path,
-            model_size="large-v3-turbo",
-            device="cuda",
-            vad_filter=False,
-            condition_on_previous_text=False,
-            hallucination_silence_threshold=None,
-            word_timestamps=True,
-            initial_prompt=prompt
+            model_size=self.whisper_model,
+            device=self.device,
+            initial_prompt=self.prompt,
         )
+        self.manifest["whisper_device"] = self.raw_asr.get("device", self.device)
 
         raw_segs = self.raw_asr.get("raw_segments", [])
         asr_raw_path = self.output_dir / "asr_raw.json"
@@ -250,14 +253,7 @@ class LunaPipeline:
             txt = s.get("text", "").strip()
             if is_hallucination_text(txt):
                 continue
-            words = s.get("words", [])
-            if words:
-                w0 = dict(words[0])
-                w0_txt = clean_cjk(w0["word"])
-                max_lead = 0.30 * max(1, len(w0_txt))
-                if (w0["end"] - w0["start"]) > max_lead:
-                    w0["start"] = round(w0["end"] - max_lead, 3)
-                words = [w0] + [dict(w) for w in words[1:]]
+            words = [dict(word) for word in s.get("words", [])]
             
             clean_segs.append({
                 "id": s["id"],
@@ -280,7 +276,7 @@ class LunaPipeline:
         self._notify(3, 5, f"使用 stable-ts 對 {len(self.org_lines)} 句原歌詞強制對齊與雙軌比對...")
         lyrics_text = "\n".join(self.org_lines)
 
-        st_model = load_whisper_model("large-v3-turbo", loader=stable_whisper.load_faster_whisper)
+        st_model = load_native_whisper_model(self.whisper_model, self.device)
         try:
             with tempfile.TemporaryDirectory(dir=self.output_dir, prefix="temp_slices_") as slice_directory:
                 align_res = st_model.align(
@@ -365,7 +361,7 @@ class LunaPipeline:
                         },
                         "cand_asr": {
                             "candidate_id": "cand_asr",
-                            "source": "whisper large-v3-turbo",
+                            "source": f"native whisper {self.whisper_model}",
                             "start": round(t_asr_start, 3),
                             "end": round(t_asr_end, 3),
                             "text": asr_text
@@ -418,7 +414,7 @@ class LunaPipeline:
                 self.cue_evidence = evidence_list
                 return self.cue_evidence
         finally:
-            unload_whisper_model(st_model)
+            unload_native_whisper_model(st_model)
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""
@@ -689,7 +685,10 @@ def run_luna_pipeline(
     output_dir: Optional[str] = None,
     llm_provider: str = "local",
     local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
-    progress_callback: Optional[Callable[[int, int, str], None]] = None
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    whisper_model: str = "large-v3",
+    device: str = "auto",
+    prompt: Optional[str] = None,
 ) -> SubtitleTrack:
     """高階調用函式：供 Web API 直接呼叫"""
     pipeline = LunaPipeline(
@@ -698,6 +697,9 @@ def run_luna_pipeline(
         output_dir=output_dir,
         llm_provider=llm_provider,
         local_model_name=local_model_name,
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        whisper_model=whisper_model,
+        device=device,
+        prompt=prompt,
     )
     return pipeline.run()

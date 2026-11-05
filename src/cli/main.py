@@ -240,6 +240,9 @@ def align_cmd(
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
     llm_provider: str = typer.Option("local", "--llm", help="決策審核大腦 (local 或 api)"),
     output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設在影音同目錄建立獨立資料夾)"),
+    model: str = typer.Option("large-v3", "-m", "--model", help="原生 Whisper 模型 (預設完整版 large-v3)"),
+    device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
+    prompt: str = typer.Option("繁體中文", "--prompt", help="辨識引導詞"),
 ):
     """【有稿模式】利用完整 Luna Pipeline 進行原歌詞強制對齊、雙軌審核與時間軸修正"""
     input_p = Path(media_path).resolve()
@@ -274,7 +277,10 @@ def align_cmd(
         audio_path=audio_file,
         lyrics_source=str(script_p),
         output_dir=str(target_dir),
-        llm_provider=llm_provider
+        llm_provider=llm_provider,
+        whisper_model=model,
+        device=device,
+        prompt=prompt,
     )
 
     console.rule("[bold green]有稿對齊完成[/bold green]")

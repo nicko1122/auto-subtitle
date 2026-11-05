@@ -10,7 +10,7 @@
 
 ### 1. 🌙 Whisper ＋ GPT-6 Luna 歌詞字幕對齊管線 (Luna Pipeline)
 - **雙軌驗證架構 (Dual Verification)**：
-  - **軌道 A**：Faster-Whisper (`large-v3-turbo` + CUDA) 全曲逐詞特徵提取與長句粗切。
+  - **軌道 A**：原生 Whisper（預設完整版 `large-v3`）＋ stable-ts 全曲辨識與逐詞時間提取。
   - **軌道 B**：原歌詞多行文字比對與 `stable-ts` 聲學強制對齊。
 - **決策大腦 (Decision Brain)**：
   - 支援 **地端 Edge LLM (`Qwen2.5-3B-Instruct GGUF`)** 或 **雲端 API (OpenAI 相容 / GPT-6 Luna)**。
@@ -138,12 +138,18 @@ CLI 適合批次自動化、伺服器排程與無頭（Headless）作業。輸�
 ```bash
 python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 ```
+
+有詞模式的辨識、全曲及局部強制對齊均使用原生 Whisper，預設 `large-v3`。介面選擇的模型、API 的 `model` 與 CLI 的 `--model` 都會實際套用；`large-v3-turbo` 為另外可選的加速版。執行紀錄會保存模型、後端及辨識裝置。無詞與鎖定時間軸填字仍使用 Faster-Whisper。
+
 | 參數名稱 | 縮寫 | 預設值 | 說明 |
 | :--- | :--- | :--- | :--- |
 | `media_path` | (必填) | - | 來源影音檔案路徑 (MP4, MKV, WAV 等) |
 | `script_path` | (必填) | - | 原歌詞或字幕文字檔案路徑 (.txt) |
 | `--llm` | - | `local` | 決策大腦模式：`local` (地端 Qwen GGUF) 或 `api` (雲端 OpenAI 相容) |
 | `-o`, `--output-dir` | `-o` | 來源檔同目錄中的獨立資料夾 | 輸出交付產物之目錄 |
+| `-m`, `--model` | `-m` | `large-v3` | 原生 Whisper 模型 |
+| `-d`, `--device` | `-d` | `auto` | `auto`、`cuda` 或 `cpu` |
+| `--prompt` | — | `繁體中文` | 辨識引導詞 |
 
 #### 🔹 (2) `pipeline`：無稿全自動上字幕流水線
 針對演講、訪談或 Podcast，一鍵完成抽音、Whisper 辨識、智慧斷句並匯出字幕：
