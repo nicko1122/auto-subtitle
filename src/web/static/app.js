@@ -53,6 +53,8 @@ const el = {
   btnScaleCompact: document.getElementById("btn-scale-compact"),
   btnScaleLarge: document.getElementById("btn-scale-large"),
   placeholder: document.getElementById("video-placeholder"),
+  videoCenterPlayBadge: document.getElementById("video-center-play-badge"),
+  videoBufferingSpinner: document.getElementById("video-buffering-spinner"),
   leftPanel: document.getElementById("left-video-panel"),
   dragDropOverlay: document.getElementById("drag-drop-overlay"),
   overlayContainer: document.getElementById("subtitle-overlay-container"),
@@ -207,21 +209,92 @@ function formatTime(sec) {
 function initPlayer() {
   const v = el.video;
 
-  // 播放 / 暫停按鈕
-  el.btnPlayPause.addEventListener("click", () => {
+  // 核心播放 / 暫停切換器 (具備自動靜音備援與例外保護)
+  function togglePlayPause() {
     state.autoPauseAt = null;
-    if (v.paused) v.play();
-    else v.pause();
+    if (!v.src && state.video.url) {
+      v.src = state.video.url;
+      v.load();
+    }
+    if (v.paused) {
+      const p = v.play();
+      if (p !== undefined) {
+        p.catch(err => {
+          console.warn("Playback error:", err);
+          if (err.name === "NotAllowedError") {
+            addLog("瀏覽器限制有聲自動播放，已先以靜音啟動播放，可隨時調整音量！", "warn");
+            v.muted = true;
+            v.play().catch(e => addLog(`播放失敗: ${e.message}`, "error"));
+          } else {
+            addLog(`播放異常 (${err.name}): ${err.message}`, "error");
+          }
+        });
+      }
+    } else {
+      v.pause();
+    }
+  }
+
+  // 播放 / 暫停按鈕
+  el.btnPlayPause.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePlayPause();
   });
+
+  // 點擊影片舞台直接播放/暫停
+  if (el.videoStage) {
+    el.videoStage.addEventListener("click", (e) => {
+      // 若佔位提示尚未隱藏，不攔截點擊
+      if (el.placeholder && !el.placeholder.classList.contains("hidden")) return;
+      togglePlayPause();
+    });
+
+    // 雙擊畫面切換全螢幕
+    el.videoStage.addEventListener("dblclick", () => {
+      if (!document.fullscreenElement) {
+        el.videoStage.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+  }
 
   v.addEventListener("play", () => {
     el.iconPlay.classList.add("hidden");
     el.iconPause.classList.remove("hidden");
+    if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.add("hidden");
   });
 
   v.addEventListener("pause", () => {
     el.iconPlay.classList.remove("hidden");
     el.iconPause.classList.add("hidden");
+    if (el.videoCenterPlayBadge && (!el.placeholder || el.placeholder.classList.contains("hidden"))) {
+      el.videoCenterPlayBadge.classList.remove("hidden");
+    }
+  });
+
+  v.addEventListener("waiting", () => {
+    if (el.videoBufferingSpinner) el.videoBufferingSpinner.classList.remove("hidden");
+  });
+
+  v.addEventListener("playing", () => {
+    if (el.videoBufferingSpinner) el.videoBufferingSpinner.classList.add("hidden");
+  });
+
+  v.addEventListener("canplay", () => {
+    if (el.videoBufferingSpinner) el.videoBufferingSpinner.classList.add("hidden");
+  });
+
+  v.addEventListener("error", () => {
+    const err = v.error;
+    let msg = "影片解碼或傳輸錯誤";
+    if (err) {
+      if (err.code === 1) msg = "加載中止 (MEDIA_ERR_ABORTED)";
+      else if (err.code === 2) msg = "網路中斷 (MEDIA_ERR_NETWORK)";
+      else if (err.code === 3) msg = "解碼失敗 (MEDIA_ERR_DECODE)";
+      else if (err.code === 4) msg = "格式不支援或無效來源 (MEDIA_ERR_SRC_NOT_SUPPORTED)";
+    }
+    addLog(`【播放器錯誤】${msg} (${v.src})`, "error");
   });
 
   // 時間與進度條更新 (含聽頭/聽尾自動停頓與波形游標重繪)
@@ -814,9 +887,15 @@ function loadVideoAsset(asset) {
   state.video.url = asset.url;
   state.video.path = asset.absolute_path;
   el.video.src = asset.url;
+  try {
+    el.video.load();
+  } catch (e) {
+    console.warn("Video load call error:", e);
+  }
   el.videoFilename.textContent = asset.name;
   el.mediaBadge.textContent = asset.name;
   el.placeholder.classList.add("hidden");
+  if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.remove("hidden");
   updateWorkspaceSlots();
   renderFilteredAssetLibrary();
   addLog(`已載入影片: ${asset.name}`, "success");

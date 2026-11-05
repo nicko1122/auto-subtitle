@@ -99,13 +99,13 @@
       <div class="flex-1 min-h-0 bg-zinc-950 flex items-center justify-center p-3 overflow-hidden relative" id="video-viewport">
         
         <!-- 影片原生比例舞台 (Video Stage)：寬高 100% 貼合影片實體畫布，絕無虛擬黑邊干擾字幕！ -->
-        <div id="video-stage" class="relative inline-flex items-center justify-center max-w-full max-h-full shadow-2xl transition-all">
+        <div id="video-stage" class="relative inline-flex items-center justify-center max-w-full max-h-full shadow-2xl transition-all cursor-pointer group">
           
           <!-- HTML5 Video 元素 (保持原生寬高比，不強迫全幅變形) -->
           <video 
             id="main-video" 
             class="max-w-full max-h-full block rounded bg-black object-contain transition-all"
-            preload="metadata"
+            preload="auto"
             playsinline
           >
             您的瀏覽器不支援 HTML5 影片播放。
@@ -115,6 +115,24 @@
           <div id="subtitle-overlay-container" class="absolute inset-0 flex pointer-events-none overflow-hidden">
             <div id="subtitle-overlay" class="transition-all duration-75 text-center leading-normal">
               <!-- 動態插入字幕文字 -->
+            </div>
+          </div>
+
+          <!-- 畫面中央大播放圖示 (暫停時顯示，點擊播放) -->
+          <div id="video-center-play-badge" class="absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-200">
+            <div class="w-14 h-14 rounded-full bg-black/60 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white shadow-2xl transform transition group-hover:scale-110">
+              <svg class="w-7 h-7 ml-1 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+
+          <!-- 緩衝載入中旋轉圖示 -->
+          <div id="video-buffering-spinner" class="absolute inset-0 flex items-center justify-center pointer-events-none hidden bg-black/40 backdrop-blur-[2px]">
+            <div class="flex flex-col items-center gap-2">
+              <svg class="w-9 h-9 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <span class="text-xs text-blue-200 font-medium">影片串流緩衝中...</span>
             </div>
           </div>
 
