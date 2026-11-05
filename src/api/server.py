@@ -521,18 +521,28 @@ def transcribe_endpoint(
         )
         track = build_subtitle_track(raw_res)
 
+        proofread_warning = None
         if (auto_proofread or clean_script) and track.segments:
-            proofreader = SubtitleProofreader(n_gpu_layers=-1)
             try:
-                track = proofreader.proofread_track(
-                    track,
-                    batch_size=8,
-                    reference_script=clean_script if clean_script else None
-                )
-            finally:
-                proofreader.close()
+                proofreader = SubtitleProofreader(n_gpu_layers=-1)
+                try:
+                    track = proofreader.proofread_track(
+                        track,
+                        batch_size=25,
+                        reference_script=clean_script if clean_script else None
+                    )
+                finally:
+                    proofreader.close()
+            except Exception as pe:
+                logger.warning(f"LLM API 校對跳過: {pe}")
+                proofread_warning = str(pe)
 
-        return {"status": "success", "track": track.model_dump(), "has_reference": bool(clean_script)}
+        return {
+            "status": "success",
+            "track": track.model_dump(),
+            "has_reference": bool(clean_script),
+            "proofread_warning": proofread_warning,
+        }
     except Exception as e:
         logger.error(f"辨識失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))

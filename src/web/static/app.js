@@ -1209,15 +1209,15 @@ function initAiButtons() {
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
 
       if (scriptText) {
-        addLog(`【AI 產生字幕】檢測到參考原詞（${scriptText.split('\n').filter(Boolean).length} 行），以 Whisper (${modelSize}) 擷取字級時間軸，並由 Qwen2.5 比對原詞 100% 精準校對...`);
+        addLog(`【AI 產生字幕】檢測到參考原詞（${scriptText.split('\n').filter(Boolean).length} 行），以 Whisper (${modelSize}) 擷取字級時間軸，並由雲端 LLM API (.env) 比對原詞 100% 精準校對...`);
       } else {
-        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ' 並由 Qwen2.5 自動盲校錯字' : ''}...`);
+        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ' 並由雲端 LLM API (.env) 自動盲校錯字' : ''}...`);
       }
 
       el.btnAiTranscribe.disabled = true;
       el.btnAiTranscribe.textContent = scriptText 
-        ? "⏳ Whisper 辨識與 Qwen2.5 原詞對照校對中..." 
-        : (autoProofread ? "⏳ Whisper 辨識與 Qwen2.5 校對中..." : "⏳ Whisper 語音辨識中...");
+        ? "⏳ Whisper 辨識與 LLM API 原詞對照校對中..." 
+        : (autoProofread ? "⏳ Whisper 辨識與 LLM API 校對中..." : "⏳ Whisper 語音辨識中...");
 
       const formData = new FormData();
       formData.append("media_path", media);
@@ -1235,7 +1235,9 @@ function initAiButtons() {
         if (data.status === "success") {
           data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
           setSubtitleTrack(data.track);
-          if (data.has_reference) {
+          if (data.proofread_warning) {
+            addLog(`⚠️ Whisper 已生成 ${data.track.segments.length} 句字幕，但 LLM 校對尚未執行：${data.proofread_warning}`, "error");
+          } else if (data.has_reference) {
             addLog(`【AI 產生字幕成功】已生成 ${data.track.segments.length} 句字幕（已成功參照原稿完成 100% 正字校對）！`, "success");
           } else {
             addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
@@ -1309,15 +1311,15 @@ function initAiButtons() {
       }
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
       if (scriptText) {
-        addLog(`【Qwen2.5 校對】正在參照上方原稿歌詞進行精準錯字校正...`);
+        addLog(`【雲端 LLM API 校對】正在參照上方原稿歌詞進行精準錯字校正...`);
       } else {
-        addLog(`【Qwen2.5 校對】啟動本地 Qwen2.5 進行上下文盲校...`);
+        addLog(`【雲端 LLM API 校對】啟動雲端 LLM (.env) 進行上下文盲校...`);
       }
       el.btnAiProofread.disabled = true;
       el.btnAiProofread.textContent = "⏳ 校對中...";
 
       try {
-        const payload = { track: state.track, batch_size: 8 };
+        const payload = { track: state.track, batch_size: 25 };
         if (scriptText) {
           payload.script_text = scriptText;
         }
