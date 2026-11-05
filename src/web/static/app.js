@@ -32,11 +32,13 @@ const state = {
     primary_color: "#FFFFFF",
     outline_color: "#000000",
     outline_width: 2.5,
+    outline_enabled: true,
     shadow_color: "#000000",
     shadow_offset: 2.0,
     bold: true,
     italic: false,
     letter_spacing: 1.0,
+    opacity: 1.0,
     orientation: "horizontal", // "horizontal" | "vertical"
     vertical_align: "bottom",   // "top" | "middle" | "bottom"
     horizontal_align: "center", // "left" | "center" | "right"
@@ -103,6 +105,7 @@ const el = {
   panelAiUnscripted: document.getElementById("panel-ai-unscripted"),
   panelAiScripted: document.getElementById("panel-ai-scripted"),
   checkAutoProofread: document.getElementById("check-auto-proofread"),
+  selectLlmEngine: document.getElementById("select-llm-engine"),
   selectWhisperModel: document.getElementById("select-whisper-model"),
   selectScriptAsset: document.getElementById("select-script-asset"),
   alignScriptTextarea: document.getElementById("align-script-textarea"),
@@ -161,6 +164,9 @@ const el = {
   valFontSize: document.getElementById("val-font-size"),
   pickerPrimaryColor: document.getElementById("picker-primary-color"),
   labelPrimaryColor: document.getElementById("label-primary-color"),
+  sliderOpacity: document.getElementById("slider-opacity"),
+  valOpacity: document.getElementById("val-opacity"),
+  checkOutlineEnabled: document.getElementById("check-outline-enabled"),
   pickerOutlineColor: document.getElementById("picker-outline-color"),
   labelOutlineColor: document.getElementById("label-outline-color"),
   sliderOutlineWidth: document.getElementById("slider-outline-width"),
@@ -193,6 +199,34 @@ const el = {
 };
 
 // 輔助日誌輸出
+// ---------------- 長時間處理遮罩 (半透明覆蓋整頁) ----------------
+let _busyTimer = null;
+function showBusyOverlay(text = "處理中...") {
+  const ov = document.getElementById("busy-overlay");
+  if (!ov) return;
+  const txt = document.getElementById("busy-overlay-text");
+  const elapsed = document.getElementById("busy-overlay-elapsed");
+  if (txt) txt.textContent = text;
+  const t0 = Date.now();
+  const tick = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    if (elapsed) elapsed.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  };
+  tick();
+  clearInterval(_busyTimer);
+  _busyTimer = setInterval(tick, 1000);
+  ov.classList.remove("hidden");
+  ov.classList.add("flex");
+}
+function hideBusyOverlay() {
+  const ov = document.getElementById("busy-overlay");
+  clearInterval(_busyTimer);
+  _busyTimer = null;
+  if (!ov) return;
+  ov.classList.add("hidden");
+  ov.classList.remove("flex");
+}
+
 function addLog(msg, type = "info") {
   const time = new Date().toLocaleTimeString();
   const colorClass = type === "error" ? "text-red-400 font-semibold" : (type === "success" ? "text-emerald-400 font-semibold" : "text-zinc-300");
@@ -569,9 +603,21 @@ function applySubtitleStyleToOverlay() {
   overlay.style.fontWeight = s.bold ? "bold" : "normal";
   overlay.style.fontStyle = s.italic ? "italic" : "normal";
   overlay.style.letterSpacing = `${(s.letter_spacing * scale).toFixed(1)}px`;
+  overlay.style.opacity = s.opacity !== undefined ? s.opacity : 1.0;
 
-  // 描邊字
-  overlay.style.webkitTextStroke = Number(outlineWidth) > 0 ? `${outlineWidth}px ${s.outline_color}` : "0px transparent";
+  // 描邊字 (外側向外生長 + 獨立開關)
+  const isOutlineOn = s.outline_enabled !== false && Number(outlineWidth) > 0;
+  if (isOutlineOn) {
+    // 透過 paint-order: stroke fill 確保字形 fill 繪製在 stroke 上方，讓描邊完全只往外側生長，不侵蝕內部字體
+    const strokeDiameter = (Number(outlineWidth) * 2).toFixed(1);
+    overlay.style.webkitTextStroke = `${strokeDiameter}px ${s.outline_color}`;
+    overlay.style.paintOrder = "stroke fill";
+    overlay.style.webkitPaintOrder = "stroke fill";
+  } else {
+    overlay.style.webkitTextStroke = "0px transparent";
+    overlay.style.paintOrder = "normal";
+    overlay.style.webkitPaintOrder = "normal";
+  }
 
   // 陰影字
   overlay.style.textShadow = Number(shadowDist) > 0
@@ -595,14 +641,20 @@ function updateCssCodeBox() {
   if (!el.cssLiveCode) return;
   const s = state.style;
   const writingMode = s.orientation === "vertical" ? "vertical-rl" : "horizontal-tb";
+  const isOutlineOn = s.outline_enabled !== false && s.outline_width > 0;
+  const strokeCss = isOutlineOn
+    ? `-webkit-text-stroke: ${(s.outline_width * 2).toFixed(1)}px ${s.outline_color};\npaint-order: stroke fill;`
+    : `-webkit-text-stroke: 0px transparent;`;
+
   const css = `/* Subtitle Web CSS Preset */
 font-family: '${s.font_name}', sans-serif;
 font-size: ${s.font_size}px;
 color: ${s.primary_color};
 font-weight: ${s.bold ? 'bold' : 'normal'};
 font-style: ${s.italic ? 'italic' : 'normal'};
--webkit-text-stroke: ${s.outline_width}px ${s.outline_color};
+${strokeCss}
 text-shadow: ${s.shadow_offset}px ${s.shadow_offset}px ${(s.shadow_offset*1.5).toFixed(1)}px ${s.shadow_color};
+opacity: ${s.opacity !== undefined ? s.opacity : 1.0};
 writing-mode: ${writingMode};
 text-align: ${s.horizontal_align};
 vertical-align: ${s.vertical_align};
@@ -1206,18 +1258,24 @@ function initAiButtons() {
 
       const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
       const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
+      const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
 
       if (scriptText) {
-        addLog(`【AI 產生字幕】檢測到參考原詞（${scriptText.split('\n').filter(Boolean).length} 行），以 Whisper (${modelSize}) 擷取字級時間軸，並由雲端 LLM API (.env) 比對原詞 100% 精準校對...`);
+        const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
+        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動 Whisper＋Luna 歌詞字幕管線 (強制對齊＋雙軌審核，決策大腦: ${brainName})...`);
       } else {
-        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ' 並由雲端 LLM API (.env) 自動盲校錯字' : ''}...`);
+        const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
+        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
       }
 
       el.btnAiTranscribe.disabled = true;
       el.btnAiTranscribe.textContent = scriptText 
-        ? "⏳ Whisper 辨識與 LLM API 原詞對照校對中..." 
-        : (autoProofread ? "⏳ Whisper 辨識與 LLM API 校對中..." : "⏳ Whisper 語音辨識中...");
+        ? "⏳ 歌詞強制對齊與時間軸審核管線執行中..." 
+        : (autoProofread ? "⏳ Whisper 語音辨識與錯字校對中..." : "⏳ Whisper 語音辨識中...");
+      showBusyOverlay(scriptText
+        ? "歌詞強制對齊與時間軸審核中，請稍候..."
+        : "Whisper 語音辨識中，請稍候...");
 
       const formData = new FormData();
       formData.append("media_path", media);
@@ -1225,6 +1283,7 @@ function initAiButtons() {
       formData.append("device", "cuda");
       formData.append("prompt", "繁體中文");
       formData.append("auto_proofread", String(autoProofread));
+      formData.append("llm_provider", llmProvider);
       if (scriptText) {
         formData.append("script_text", scriptText);
       }
@@ -1238,7 +1297,7 @@ function initAiButtons() {
           if (data.proofread_warning) {
             addLog(`⚠️ Whisper 已生成 ${data.track.segments.length} 句字幕，但 LLM 校對尚未執行：${data.proofread_warning}`, "error");
           } else if (data.has_reference) {
-            addLog(`【AI 產生字幕成功】已生成 ${data.track.segments.length} 句字幕（已成功參照原稿完成 100% 正字校對）！`, "success");
+            addLog(`【管線執行成功】已生成 ${data.track.segments.length} 句字幕（完成 100% 原稿強制對齊、雙軌比對與 +0.16s 閱讀延長，7 項成果報告已儲存於 output/）！`, "success");
           } else {
             addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
           }
@@ -1248,6 +1307,7 @@ function initAiButtons() {
       } catch (err) {
         addLog(`辨識失敗: ${err.message}`, "error");
       } finally {
+        hideBusyOverlay();
         el.btnAiTranscribe.disabled = false;
         el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>🎙️ 開始 AI 產生字幕 (自動判定原詞)`;
       }
@@ -1265,18 +1325,20 @@ function initAiButtons() {
 
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
       const scriptPath = el.selectScriptAsset ? el.selectScriptAsset.value : "";
+      const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
 
       if (!scriptText && !scriptPath) {
         addLog("請先選擇原稿 .txt 檔案或在文字框貼上歌詞/原稿內容", "error");
         return;
       }
 
-      addLog(`【有稿對齊】正在將原稿與 ${state.video.filename} 音軌強制對齊...`);
+      addLog(`【有稿對齊】啟動 Luna 管線將原稿與 ${state.video.filename} 強制對齊...`);
       el.btnAiAlign.disabled = true;
-      el.btnAiAlign.textContent = "⏳ 音軌特徵提取與動態規劃對齊中...";
+      el.btnAiAlign.textContent = "⏳ 強制對齊與時間軸審核中...";
+      showBusyOverlay("歌詞強制對齊與時間軸審核中，請稍候...");
 
       try {
-        const payload = { media_path: media };
+        const payload = { media_path: media, llm_provider: llmProvider };
         if (scriptText) payload.script_text = scriptText;
         if (scriptPath) payload.script_path = scriptPath;
 
@@ -1289,13 +1351,14 @@ function initAiButtons() {
         if (data.status === "success") {
           data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.aligned.srt`;
           setSubtitleTrack(data.track);
-          addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕！`, "success");
+          addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕（已輸出交付檔案）！`, "success");
         } else {
           throw new Error(data.detail || "對齊失敗");
         }
       } catch (err) {
         addLog(`對齊失敗: ${err.message}`, "error");
       } finally {
+        hideBusyOverlay();
         el.btnAiAlign.disabled = false;
         el.btnAiAlign.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>開始原稿與音軌 100% 強制對齊`;
       }
@@ -2483,6 +2546,29 @@ function initStyleEditor() {
     });
   }
 
+  if (el.sliderOpacity) {
+    el.sliderOpacity.addEventListener("input", (e) => {
+      state.styleCustomized = true;
+      state.style.opacity = parseFloat(e.target.value);
+      if (el.valOpacity) el.valOpacity.textContent = `${Math.round(state.style.opacity * 100)}%`;
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+
+  if (el.checkOutlineEnabled) {
+    el.checkOutlineEnabled.addEventListener("change", (e) => {
+      state.styleCustomized = true;
+      state.style.outline_enabled = e.target.checked;
+      const wContainer = document.getElementById("outline-width-container");
+      const cContainer = document.getElementById("outline-color-container");
+      if (wContainer) wContainer.style.opacity = e.target.checked ? "1" : "0.35";
+      if (cContainer) cContainer.style.opacity = e.target.checked ? "1" : "0.35";
+      applySubtitleStyleToOverlay();
+      ensureSubtitlePreviewVisible();
+    });
+  }
+
   if (el.pickerOutlineColor) {
     el.pickerOutlineColor.addEventListener("input", (e) => {
       state.styleCustomized = true;
@@ -2866,6 +2952,16 @@ function syncStateToControls() {
   if (el.valFontSize) el.valFontSize.textContent = `${s.font_size}px`;
   if (el.pickerPrimaryColor) el.pickerPrimaryColor.value = s.primary_color;
   if (el.labelPrimaryColor) el.labelPrimaryColor.textContent = s.primary_color;
+  const curOpacity = s.opacity !== undefined ? s.opacity : 1.0;
+  if (el.sliderOpacity) el.sliderOpacity.value = curOpacity;
+  if (el.valOpacity) el.valOpacity.textContent = `${Math.round(curOpacity * 100)}%`;
+  const isOutlineOn = s.outline_enabled !== false && Number(s.outline_width) > 0;
+  if (el.checkOutlineEnabled) el.checkOutlineEnabled.checked = isOutlineOn;
+  const wContainer = document.getElementById("outline-width-container");
+  const cContainer = document.getElementById("outline-color-container");
+  if (wContainer) wContainer.style.opacity = isOutlineOn ? "1" : "0.35";
+  if (cContainer) cContainer.style.opacity = isOutlineOn ? "1" : "0.35";
+
   if (el.pickerOutlineColor) el.pickerOutlineColor.value = s.outline_color;
   if (el.labelOutlineColor) el.labelOutlineColor.textContent = s.outline_color;
   if (el.sliderOutlineWidth) el.sliderOutlineWidth.value = s.outline_width;
@@ -2952,6 +3048,7 @@ function initPresets() {
         shadow_color: "#000000",
         shadow_offset: Number((2.5 * k).toFixed(1)),
         bold: true,
+        opacity: 1.0,
         orientation: "horizontal",
         vertical_align: "bottom",
         horizontal_align: "center",
@@ -2979,6 +3076,7 @@ function initPresets() {
         shadow_color: "#000000",
         shadow_offset: Number((2.0 * k).toFixed(1)),
         bold: true,
+        opacity: 1.0,
         orientation: "vertical",
         vertical_align: "top",
         horizontal_align: "right",
@@ -3006,6 +3104,7 @@ function initPresets() {
         shadow_color: "#000000",
         shadow_offset: Number((1.5 * k).toFixed(1)),
         bold: true,
+        opacity: 1.0,
         orientation: "horizontal",
         vertical_align: "bottom",
         horizontal_align: "center",
@@ -3033,6 +3132,7 @@ function initPresets() {
         shadow_color: "#000000",
         shadow_offset: Number((1.0 * k).toFixed(1)),
         bold: false,
+        opacity: 1.0,
         orientation: "horizontal",
         vertical_align: "bottom",
         horizontal_align: "center",

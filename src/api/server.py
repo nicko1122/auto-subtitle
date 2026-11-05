@@ -16,6 +16,7 @@ from ..core.audio_extractor import extract_audio
 from ..core.transcriber import transcribe_audio
 from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
+from ..core.luna_pipeline import run_luna_pipeline, LunaPipeline
 from ..core.proofreader import SubtitleProofreader
 from ..core.acoustic_analyzer import (
     analyze_audio_breakpoints,
@@ -97,6 +98,7 @@ class AlignRequest(BaseModel):
     media_path: str
     script_text: Optional[str] = None
     script_path: Optional[str] = None
+    llm_provider: Optional[str] = "local"
 
 
 class ProofreadRequest(BaseModel):
@@ -487,12 +489,15 @@ def transcribe_endpoint(
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),
-    script_text: Optional[str] = Form(None)
+    script_text: Optional[str] = Form(None),
+    llm_provider: str = Form("local")
 ):
     """【單一入口 AI 產生字幕】
     支援智慧雙分流：
-    1. 若提供 script_text (原稿/歌詞)：以 Whisper-large-v3-turbo 提取時間軸，並由 Qwen2.5 對照原詞執行 100% 精準校對（支援副歌反覆與即興虛字）
-    2. 若未提供 script_text：以 Whisper 提取時間軸，並由 Qwen2.5 進行上下文盲校
+    1. 若提供 script_text (原稿/歌詞)：啟動《Whisper＋Luna 歌詞字幕 Pipeline》，
+       利用 stable-ts 強制對齊、雙軌時間比對、局部切音重跑與本地 Qwen2.5 / 雲端 Luna 決策審核，
+       輸出 100% 準確且含 +0.16s 閱讀延長之標準字幕與 7 項成果檔案！
+    2. 若未提供 script_text：以 Whisper 提取時間軸，並由 Qwen2.5 / 雲端 LLM 進行上下文盲校。
     """
     p = _resolve_media_path(media_path)
 
@@ -506,51 +511,66 @@ def transcribe_endpoint(
         audio_file = str(p)
 
     clean_script = (script_text or "").strip()
-    whisper_prompt = prompt or "繁體中文"
-    if clean_script:
-        snippet = re.sub(r'\s+', ' ', clean_script[:120])
-        whisper_prompt = f"以下是繁體中文影音內容，詞彙參考：{snippet}"
 
     try:
-        raw_res = transcribe_audio(
-            audio_path=audio_file,
-            model_size=model,
-            device=device,
-            vad_filter=False,
-            initial_prompt=whisper_prompt
-        )
-        track = build_subtitle_track(raw_res)
+        if clean_script:
+            # 【有稿模式：呼叫完整 Luna 強制對齊管線】
+            logger.info(f"啟動完整 Luna 歌詞字幕對齊管線 (LLM Provider: {llm_provider})...")
+            track = run_luna_pipeline(
+                audio_path=audio_file,
+                lyrics_source=clean_script,
+                output_dir=str(OUTPUT_DIR),
+                llm_provider=llm_provider
+            )
+            return {
+                "status": "success",
+                "track": track.model_dump(),
+                "has_reference": True,
+                "proofread_warning": None,
+                "mode": "luna_pipeline"
+            }
+        else:
+            # 【無稿模式：Whisper 全曲辨識 + 盲校】
+            whisper_prompt = prompt or "繁體中文"
+            raw_res = transcribe_audio(
+                audio_path=audio_file,
+                model_size=model,
+                device=device,
+                vad_filter=False,
+                initial_prompt=whisper_prompt
+            )
+            track = build_subtitle_track(raw_res)
 
-        proofread_warning = None
-        if (auto_proofread or clean_script) and track.segments:
-            try:
-                proofreader = SubtitleProofreader(n_gpu_layers=-1)
+            proofread_warning = None
+            if auto_proofread and track.segments:
                 try:
-                    track = proofreader.proofread_track(
-                        track,
-                        batch_size=25,
-                        reference_script=clean_script if clean_script else None
-                    )
-                finally:
-                    proofreader.close()
-            except Exception as pe:
-                logger.warning(f"LLM API 校對跳過: {pe}")
-                proofread_warning = str(pe)
+                    proofreader = SubtitleProofreader(n_gpu_layers=-1)
+                    try:
+                        track = proofreader.proofread_track(
+                            track,
+                            batch_size=25
+                        )
+                    finally:
+                        proofreader.close()
+                except Exception as pe:
+                    logger.warning(f"LLM API 校對跳過: {pe}")
+                    proofread_warning = str(pe)
 
-        return {
-            "status": "success",
-            "track": track.model_dump(),
-            "has_reference": bool(clean_script),
-            "proofread_warning": proofread_warning,
-        }
+            return {
+                "status": "success",
+                "track": track.model_dump(),
+                "has_reference": False,
+                "proofread_warning": proofread_warning,
+                "mode": "whisper_asr"
+            }
     except Exception as e:
-        logger.error(f"辨識失敗: {e}")
+        logger.error(f"產生字幕失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/ai/align")
 def align_endpoint(req: AlignRequest):
-    """【有稿模式】利用原稿強制動態對齊"""
+    """【有稿模式】利用完整 Luna Pipeline 進行原稿強制對齊與時間軸審核"""
     p = _resolve_media_path(req.media_path)
 
     is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
@@ -570,16 +590,13 @@ def align_endpoint(req: AlignRequest):
         raise HTTPException(status_code=400, detail="請提供原稿文字內容或原稿檔案路徑")
 
     try:
-        trans_res = transcribe_audio(
+        track = run_luna_pipeline(
             audio_path=audio_file,
-            model_size="large-v3-turbo",
-            device="cuda",
-            vad_filter=False,
-            word_timestamps=True,
-            initial_prompt="繁體中文"
+            lyrics_source=script_source,
+            output_dir=str(OUTPUT_DIR),
+            llm_provider=req.llm_provider or "local"
         )
-        track = align_script_to_audio(script_source, trans_res)
-        return {"status": "success", "track": track.model_dump()}
+        return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
     except Exception as e:
         logger.error(f"對齊失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))

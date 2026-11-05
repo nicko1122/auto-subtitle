@@ -161,16 +161,20 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
 
         # 7. 文字描邊 -webkit-text-stroke 或 text-stroke (如: "2.5px #000000")
         elif prop in ("-webkit-text-stroke", "text-stroke"):
-            color_str, rest = extract_color_and_rest(val)
-            if color_str:
-                parsed_c = parse_css_color(color_str)
-                if parsed_c:
-                    style_dict["outline_color"] = parsed_c
+            val_clean = val.lower().strip()
+            if val_clean in ("none", "0", "0px", "transparent"):
+                style_dict["outline_width"] = 0.0
+            else:
+                color_str, rest = extract_color_and_rest(val)
+                if color_str:
+                    parsed_c = parse_css_color(color_str)
+                    if parsed_c:
+                        style_dict["outline_color"] = parsed_c
 
-            nums = re.findall(r'[-+]?\d*\.?\d+', rest)
-            if nums:
-                w = parse_length(nums[0], 2.5)
-                style_dict["outline_width"] = max(0.0, min(15.0, w))
+                nums = re.findall(r'[-+]?\d*\.?\d+', rest)
+                if nums:
+                    w = parse_length(nums[0], 2.5)
+                    style_dict["outline_width"] = max(0.0, min(15.0, w))
 
         elif prop in ("-webkit-text-stroke-width", "text-stroke-width"):
             style_dict["outline_width"] = max(0.0, min(15.0, parse_length(val, 2.5)))
@@ -179,6 +183,12 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
             c = parse_css_color(val)
             if c:
                 style_dict["outline_color"] = c
+
+        # 支援外側描邊語法 paint-order: stroke fill
+        elif prop in ("paint-order", "-webkit-paint-order"):
+            val_lower = val.lower()
+            if "stroke" in val_lower and "fill" in val_lower:
+                style_dict["_paint_order_stroke_fill"] = True
 
         # 8. 文字陰影 text-shadow (如: "2px 2px 4px rgba(0,0,0,0.8)")
         elif prop == "text-shadow":
@@ -195,7 +205,19 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
                 offset = math.hypot(ox, oy)
                 style_dict["shadow_offset"] = round(offset, 1)
 
-        # 9. 直排/橫排 writing-mode
+        # 9. 不透明度 opacity (支援 0.0~1.0 或 0%~100%)
+        elif prop == "opacity":
+            try:
+                v_str = val.strip()
+                if v_str.endswith("%"):
+                    op_val = float(v_str[:-1]) / 100.0
+                else:
+                    op_val = float(v_str)
+                style_dict["opacity"] = max(0.0, min(1.0, round(op_val, 2)))
+            except (ValueError, TypeError):
+                pass
+
+        # 10. 直排/橫排 writing-mode
         elif prop == "writing-mode":
             val_lower = val.lower()
             if "vertical" in val_lower:
@@ -257,5 +279,10 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
             style_dict["pos_x"] = int(round(parse_length(val, 0.0)))
         elif prop == "top":
             style_dict["pos_y"] = int(round(parse_length(val, 0.0)))
+
+    if style_dict.get("_paint_order_stroke_fill") and "outline_width" in style_dict:
+        # Web CSS 外擴描邊利用 paint-order 繪製 2 倍直徑，解析回 ASS 時還原為單側外擴寬度
+        style_dict["outline_width"] = round(style_dict["outline_width"] / 2.0, 2)
+    style_dict.pop("_paint_order_stroke_fill", None)
 
     return style_dict

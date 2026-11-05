@@ -14,6 +14,7 @@ from src.core.audio_extractor import extract_audio, check_ffmpeg
 from src.core.transcriber import transcribe_audio
 from src.core.segmenter import build_subtitle_track
 from src.core.aligner import align_script_to_audio
+from src.core.luna_pipeline import run_luna_pipeline
 from src.core.proofreader import SubtitleProofreader
 from src.core.video_burner import burn_subtitles_to_video
 from src.core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
@@ -235,12 +236,10 @@ def pipeline_cmd(
 def align_cmd(
     media_path: str = typer.Argument(..., help="來源影音或音訊檔案路徑 (MP4, WAV 等)"),
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
-    model: str = typer.Option("large-v3-turbo", "-m", "--model", help="Whisper 模型 (建議 large-v3-turbo 或 small)"),
-    device: str = typer.Option("cuda", "-d", "--device", help="運算裝置 (cuda, cpu, auto)"),
-    no_vad: bool = typer.Option(False, "--no-vad", help="關閉 VAD 語音過濾 (適合背景音樂強烈或有微弱尾聲之歌曲)"),
+    llm_provider: str = typer.Option("local", "--llm", help="決策審核大腦 (local 或 api)"),
     output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設為影音同目錄)"),
 ):
-    """【有稿模式】利用已知原稿/歌詞與音訊進行動態規劃強制對齊 (Forced Alignment)"""
+    """【有稿模式】利用完整 Luna Pipeline 進行原歌詞強制對齊、雙軌審核與時間軸修正"""
     input_p = Path(media_path).resolve()
     script_p = Path(script_path).resolve()
 
@@ -255,47 +254,33 @@ def align_cmd(
     target_dir.mkdir(parents=True, exist_ok=True)
     stem = input_p.stem
 
-    console.rule("[bold cyan]開始執行【有稿模式】強制時間軸對齊[/bold cyan]")
+    console.rule("[bold cyan]開始執行【Luna 歌詞字幕管線】強制對齊與時間軸審核[/bold cyan]")
 
     # 1. 抽取音訊 (若為影片)
     is_video = input_p.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv"]
     if is_video:
-        console.print("[1/3] 抽取並轉換音訊 (16kHz Mono WAV)...")
+        console.print("[1/2] 抽取並轉換音訊 (16kHz Mono WAV)...")
         wav_path = target_dir / f"{stem}.wav"
         extract_res = extract_audio(str(input_p), str(wav_path))
         audio_file = extract_res["audio_path"]
     else:
         audio_file = str(input_p)
 
-    # 2. 取得 Word-level 時間戳記
-    console.print(f"[2/3] 語音特徵抽取與時間戳記辨識 (模型: {model}, 裝置: {device}, VAD: {not no_vad})...")
-    trans_res = transcribe_audio(
+    # 2. 呼叫完整 Luna 管線
+    console.print(f"[2/2] 正在執行強制對齊、雙軌比對、局部切音重跑與決策審核 (LLM: {llm_provider})...")
+    track = run_luna_pipeline(
         audio_path=audio_file,
-        model_size=model,
-        device=device,
-        vad_filter=not no_vad,
-        word_timestamps=True,
-        initial_prompt="繁體中文"
+        lyrics_source=str(script_p),
+        output_dir=str(target_dir),
+        llm_provider=llm_provider
     )
-
-    # 3. 原稿與時間流動態對齊
-    console.print(f"[3/3] 正在將原稿文字與語音時間軸強制對齊...")
-    track = align_script_to_audio(str(script_p), trans_res)
-
-    # 4. 匯出檔案
-    json_path = target_dir / f"{stem}.aligned.json"
-    srt_path = target_dir / f"{stem}.aligned.srt"
-    vtt_path = target_dir / f"{stem}.aligned.vtt"
-
-    save_file(to_json(track), str(json_path))
-    save_file(to_srt(track), str(srt_path))
-    save_file(to_vtt(track), str(vtt_path))
 
     console.rule("[bold green]有稿對齊完成[/bold green]")
     console.print(f"  ✔ 原稿對齊句數: [yellow]{len(track.segments)} 句 (100% 採用原稿文字)[/yellow]")
-    console.print(f"  ✔ SRT 字幕檔:  [green]{srt_path}[/green]")
-    console.print(f"  ✔ VTT 字幕檔:  [green]{vtt_path}[/green]")
-    console.print(f"  ✔ JSON 資料:   [green]{json_path}[/green]")
+    console.print(f"  ✔ 交付成果目錄: [green]{target_dir}[/green]")
+    console.print(f"  ✔ 標準字幕檔:   [green]{target_dir / 'lyrics.srt'}[/green]")
+    console.print(f"  ✔ 動態歌詞檔:   [green]{target_dir / 'lyrics.lrc'}[/green]")
+    console.print(f"  ✔ 審核報告:     [green]{target_dir / 'review.csv'}[/green]")
 
     # 印出前 6 句預覽
     table = Table(title="有稿對齊字幕預覽 (前 6 句)")

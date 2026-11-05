@@ -86,6 +86,7 @@ class SubtitleStyle(BaseModel):
     bold: bool = Field(default=True, description="是否粗體")
     italic: bool = Field(default=False, description="是否斜體")
     letter_spacing: float = Field(default=0.0, description="字元間距 (Spacing)")
+    opacity: float = Field(default=1.0, ge=0.0, le=1.0, description="字幕整體不透明度 (0.0~1.0)")
 
     # 2. Web 盒模型佈局 (Web CSS Box Model)
     orientation: Literal["horizontal", "vertical"] = Field(
@@ -136,14 +137,20 @@ class SubtitleStyle(BaseModel):
     def to_css(self) -> str:
         """將目前 SubtitleStyle 序列化為標準 CSS 樣式字串 (供前端 UI 預覽直接使用)"""
         writing_mode = "vertical-rl" if self.orientation == "vertical" else "horizontal-tb"
+        stroke_str = (
+            f"-webkit-text-stroke: {self.outline_width * 2:.1f}px {self.outline_color};\npaint-order: stroke fill;"
+            if self.outline_width > 0
+            else "-webkit-text-stroke: 0px transparent;"
+        )
         lines = [
             f"font-family: '{self.font_name}', sans-serif;",
             f"font-size: {self.font_size}px;",
             f"color: {self.primary_color};",
             f"font-weight: {'bold' if self.bold else 'normal'};",
             f"font-style: {'italic' if self.italic else 'normal'};",
-            f"-webkit-text-stroke: {self.outline_width}px {self.outline_color};",
+            stroke_str,
             f"text-shadow: {self.shadow_offset}px {self.shadow_offset}px {self.shadow_offset*1.5:.1f}px {self.shadow_color};",
+            f"opacity: {round(self.opacity, 2)};",
             f"writing-mode: {writing_mode};",
             f"text-align: {self.horizontal_align};",
             f"vertical-align: {self.vertical_align};",

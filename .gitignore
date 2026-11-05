@@ -12,6 +12,7 @@ env/
 # Media & Temp files
 uploads/
 output/
+output_luna_pipeline/
 temp/
 *.temp_burn.ass
 *.raw.json
@@ -21,6 +22,8 @@ temp/
 *.mkv
 *.srt
 *.vtt
+*.lrc
+whisper_comparison_result.json
 
 # Models & Fonts cache
 models/

@@ -360,10 +360,19 @@
               
               <!-- 頂部模型與校對設定列 -->
               <div class="flex items-center justify-between text-xs bg-zinc-900/80 px-2.5 py-1.5 rounded-lg border border-zinc-800">
-                <label class="flex items-center gap-2 text-zinc-300 cursor-pointer select-none">
-                  <input type="checkbox" id="check-auto-proofread" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
-                  <span>以 <strong class="text-purple-300">雲端 LLM API (.env)</strong> 自動校對錯字</span>
-                </label>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1.5 text-zinc-300 cursor-pointer select-none">
+                    <input type="checkbox" id="check-auto-proofread" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
+                    <span class="text-[11px]">AI 決策與錯字校對</span>
+                  </label>
+                  <div class="flex items-center gap-1">
+                    <span class="text-[10px] text-zinc-400">大腦:</span>
+                    <select id="select-llm-engine" class="bg-zinc-800 text-purple-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[11px] font-medium" title="選擇審核與校對所使用的 LLM 決策引擎">
+                      <option value="local" selected>本地 Qwen2.5 (離線免費用)</option>
+                      <option value="api">雲端 LLM API (.env)</option>
+                    </select>
+                  </div>
+                </div>
                 <div class="flex items-center gap-1.5">
                   <span class="text-[10px] text-zinc-400">Whisper:</span>
                   <select id="select-whisper-model" class="bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-1.5 py-0.5 text-[11px]">
@@ -398,9 +407,6 @@
                 <button id="btn-ai-transcribe" class="flex-1 py-2 px-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 shadow-lg shadow-purple-900/30 transition">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
                   <span id="btn-ai-transcribe-label">🎙️ 開始 AI 產生字幕 (自動判定原詞)</span>
-                </button>
-                <button id="btn-ai-proofread" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-purple-300 border border-purple-500/40 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition" title="依上方原詞或一般語境，對目前軌道上的字幕重新執行 Qwen2.5 錯字校正">
-                  ✨ 校對目前字幕
                 </button>
               </div>
             </div>
@@ -725,18 +731,28 @@
               </div>
             </div>
 
-            <!-- 描邊字 (-webkit-text-stroke) -->
+            <!-- 不透明度 (Opacity) -->
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-zinc-400 text-[11px] w-14 shrink-0">不透明度:</span>
+              <input type="range" id="slider-opacity" min="0.05" max="1.0" step="0.05" value="1.0" class="flex-1 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+              <span id="val-opacity" class="font-mono text-zinc-300 text-[11px] w-10 text-right shrink-0">100%</span>
+            </div>
+
+            <!-- 描邊字 (-webkit-text-stroke + paint-order 外擴生長) -->
             <div class="p-2.5 bg-zinc-900/60 rounded border border-zinc-800 space-y-2">
               <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-300 font-medium">描邊字 (-webkit-text-stroke)</span>
-                <div class="flex items-center gap-1.5">
+                <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" id="check-outline-enabled" checked class="rounded bg-zinc-800 border-zinc-700 text-blue-500">
+                  <span class="text-zinc-300 font-medium">描邊字 <span class="text-[10px] text-blue-400 font-normal">(外側生長)</span></span>
+                </label>
+                <div class="flex items-center gap-1.5" id="outline-color-container">
                   <input type="color" id="picker-outline-color" value="#000000" class="w-5 h-5 rounded border border-zinc-700 cursor-pointer bg-transparent">
                   <span id="label-outline-color" class="font-mono text-zinc-400 text-[11px]">#000000</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2 text-xs">
-                <span class="text-zinc-500 text-[11px] w-12">粗細:</span>
-                <input type="range" id="slider-outline-width" min="0" max="8" step="0.5" value="2.5" class="flex-1 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
+              <div class="flex items-center gap-2 text-xs" id="outline-width-container">
+                <span class="text-zinc-500 text-[11px] w-12">外擴寬:</span>
+                <input type="range" id="slider-outline-width" min="0.5" max="10" step="0.5" value="2.5" class="flex-1 h-1 bg-zinc-700 rounded appearance-none cursor-pointer accent-blue-500">
                 <span id="val-outline-width" class="font-mono text-zinc-300 text-[11px] w-8">2.5px</span>
               </div>
             </div>
@@ -855,6 +871,15 @@
   </main>
 
   <!-- 引入前端邏輯腳本 -->
-  <script src="/static/app.js?v=20261105_v4"></script>
+  <!-- 長時間處理遮罩：半透明覆蓋整頁 + 旋轉動畫 + 已等待時間 -->
+  <div id="busy-overlay" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/60 backdrop-blur-sm select-none">
+    <div class="flex flex-col items-center gap-4 px-8 py-6 rounded-2xl bg-zinc-900/90 border border-purple-500/30 shadow-2xl shadow-purple-900/40">
+      <div class="w-14 h-14 rounded-full border-4 border-zinc-700 border-t-purple-500 border-r-blue-500 animate-spin"></div>
+      <div id="busy-overlay-text" class="text-sm font-semibold text-zinc-100">處理中...</div>
+      <div class="text-xs text-zinc-400">已等待 <span id="busy-overlay-elapsed" class="font-mono text-purple-300">00:00</span></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20261105_v7"></script>
 </body>
 </html>

@@ -11,7 +11,14 @@ def hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
         r, g, b = c[0:2], c[2:4], c[4:6]
     elif len(c) == 8:
         r, g, b, a = c[0:2], c[2:4], c[4:6], c[6:8]
-        alpha = int(a, 16)
+        if alpha == 0:
+            alpha = int(a, 16)
+        else:
+            orig_a = int(a, 16)
+            op1 = (255 - orig_a) / 255.0
+            op2 = (255 - alpha) / 255.0
+            comb_op = op1 * op2
+            alpha = max(0, min(255, int(round((1.0 - comb_op) * 255))))
     else:
         r, g, b = "FF", "FF", "FF"
     return f"&H{alpha:02X}{b}{g}{r}&"
@@ -96,10 +103,17 @@ def to_ass(
     if style is None:
         style = SubtitleStyle()
 
-    pri_col = hex_to_ass_color(style.primary_color)
-    sec_col = "&H000000FF&"
-    out_col = hex_to_ass_color(style.outline_color)
-    bak_col = hex_to_ass_color(style.shadow_color, alpha=128)
+    # 0. 計算透明度 (ASS alpha: 0x00 為完全不透明, 0xFF 為完全透明)
+    op = getattr(style, "opacity", 1.0)
+    op = max(0.0, min(1.0, float(op)))
+    text_alpha = int(round((1.0 - op) * 255))
+    shadow_alpha = int(round(255 - op * (255 - 128)))
+    shadow_alpha = max(0, min(255, shadow_alpha))
+
+    pri_col = hex_to_ass_color(style.primary_color, alpha=text_alpha)
+    sec_col = f"&H{text_alpha:02X}0000FF&"
+    out_col = hex_to_ass_color(style.outline_color, alpha=text_alpha)
+    bak_col = hex_to_ass_color(style.shadow_color, alpha=shadow_alpha)
 
     bold_val = -1 if style.bold else 0
     italic_val = -1 if style.italic else 0
@@ -238,43 +252,54 @@ def to_json(track: SubtitleTrack, indent: int = 2) -> str:
 def parse_srt_content(content: str, source_file: str = "manual") -> SubtitleTrack:
     """
     強健解析 SRT 字串為 SubtitleTrack 物件
-    自動處理 UTF-8 BOM、CRLF/LF 換行與多行字幕
+    自動處理 UTF-8 BOM、CRLF/LF 換行、缺少空行間隔與多行字幕
     """
-    content = content.lstrip("\ufeff").strip()
-    blocks = re.split(r'\r?\n\s*\r?\n', content)
+    content = content.lstrip("\ufeff").replace("\r\n", "\n").strip()
+    
+    def parse_t(t_str: str) -> float:
+        t_str = t_str.replace(",", ".")
+        parts = t_str.split(":")
+        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+
     segments = []
+    # 支援標準空行間隔與緊密換行格式
+    pattern = re.compile(
+        r'(?:^|\n)(\d+)\s*\n(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)\s*\n(.*?)(?=(?:\n\d+\s*\n\d+:\d+:\d+)|\Z)',
+        re.DOTALL
+    )
+    matches = list(pattern.finditer(content))
 
-    for idx, b in enumerate(blocks, start=1):
-        lines = [l.strip() for l in b.splitlines() if l.strip()]
-        if not lines:
-            continue
-
-        time_line_idx = -1
-        seg_id = idx
-        for i, line in enumerate(lines[:3]):
-            if "-->" in line:
-                time_line_idx = i
-                break
-
-        if time_line_idx == -1:
-            continue
-
-        if time_line_idx > 0 and lines[0].isdigit():
-            seg_id = int(lines[0])
-
-        time_match = re.search(r'(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)', lines[time_line_idx])
-        if not time_match:
-            continue
-
-        def parse_t(t_str: str) -> float:
-            t_str = t_str.replace(",", ".")
-            parts = t_str.split(":")
-            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-
-        start_sec = parse_t(time_match.group(1))
-        end_sec = parse_t(time_match.group(2))
-        text = " ".join(lines[time_line_idx + 1:])
-        segments.append(SubtitleSegment(id=seg_id, start=start_sec, end=end_sec, text=text))
+    if matches:
+        for m in matches:
+            seg_id = int(m.group(1))
+            start_sec = parse_t(m.group(2))
+            end_sec = parse_t(m.group(3))
+            text = m.group(4).strip()
+            segments.append(SubtitleSegment(id=seg_id, start=start_sec, end=end_sec, text=text))
+    else:
+        # Fallback to standard block split
+        blocks = re.split(r'\n\s*\n', content)
+        for idx, b in enumerate(blocks, start=1):
+            lines = [l.strip() for l in b.splitlines() if l.strip()]
+            if not lines:
+                continue
+            time_line_idx = -1
+            seg_id = idx
+            for i, line in enumerate(lines[:3]):
+                if "-->" in line:
+                    time_line_idx = i
+                    break
+            if time_line_idx == -1:
+                continue
+            if time_line_idx > 0 and lines[0].isdigit():
+                seg_id = int(lines[0])
+            time_match = re.search(r'(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)', lines[time_line_idx])
+            if not time_match:
+                continue
+            start_sec = parse_t(time_match.group(1))
+            end_sec = parse_t(time_match.group(2))
+            text = " ".join(lines[time_line_idx + 1:])
+            segments.append(SubtitleSegment(id=seg_id, start=start_sec, end=end_sec, text=text))
 
     duration = segments[-1].end if segments else 0.0
     return SubtitleTrack(source_file=source_file, duration=duration, segments=segments)
