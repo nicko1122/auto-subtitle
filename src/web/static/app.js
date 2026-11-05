@@ -109,6 +109,7 @@ const el = {
   checkAutoProofread: document.getElementById("check-auto-proofread"),
   selectLlmEngine: document.getElementById("select-llm-engine"),
   selectWhisperModel: document.getElementById("select-whisper-model"),
+  selectScriptMode: document.getElementById("select-script-mode"),
   alignScriptTextarea: document.getElementById("align-script-textarea"),
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
   btnAiAlign: document.getElementById("btn-ai-align"),
@@ -1227,11 +1228,13 @@ function initAiButtons() {
       const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
       const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
+      const scriptMode = el.selectScriptMode.value;
 
       if (scriptText) {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
         const auditDescription = autoProofread ? `決策大腦: ${brainName}` : "AI 審核已關閉，保留 Whisper 時間結果";
-        addLog(`【AI 產生字幕】檢測到參考原稿（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (${auditDescription})...`);
+        const modeName = scriptMode === "reference" ? "歌詞參考，可重複引用" : "完整逐句稿，固定順序";
+        addLog(`【AI 產生字幕】${modeName}（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (${auditDescription})...`);
       } else {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
         addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
@@ -1254,6 +1257,7 @@ function initAiButtons() {
       formData.append("llm_provider", llmProvider);
       if (scriptText) {
         formData.append("script_text", scriptText);
+        formData.append("script_mode", scriptMode);
       }
 
       try {

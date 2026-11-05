@@ -279,6 +279,10 @@ done
 ```
 
 ### 2. Python 程式化 SDK 調用
+網頁預設使用「歌詞參考」：依 Whisper 辨識順序反覆引用原詞，副歌不必逐次寫出；未能對上原詞的聲音辨識文字會保留並標記待複核。「完整逐句稿」則依原稿順序，每行輸出一次。
+
+CLI、Python 與 API 為保留既有行為，預設 `script_mode="transcript"`；歌詞參考請指定 `reference`（CLI：`--script-mode reference`）。參考模式的 `lyric_occurrences.json` 記錄每次引用來源及逐詞時間，`validation.json` 檢查辨識內容是否完整覆蓋；這不代表聽寫文字已人工校對。
+
 在自有 Python 程式或自動化工作流中直接調用核心模組：
 
 ```python

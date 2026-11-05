@@ -244,6 +244,7 @@ def align_cmd(
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     prompt: str = typer.Option("繁體中文", "--prompt", help="辨識引導詞"),
     audit: bool = typer.Option(True, "--audit/--no-audit", help="執行 LLM 時間候選審核"),
+    script_mode: str = typer.Option("transcript", "--script-mode", help="reference: 可重複引用歌詞；transcript: 完整逐句稿"),
 ):
     """【有稿模式】利用完整 Luna Pipeline 進行原歌詞強制對齊、雙軌審核與時間軸修正"""
     input_p = Path(media_path).resolve()
@@ -283,10 +284,11 @@ def align_cmd(
         device=device,
         prompt=prompt,
         llm_audit=audit,
+        script_mode=script_mode,
     )
 
     console.rule("[bold green]有稿對齊完成[/bold green]")
-    console.print(f"  ✔ 原稿對齊句數: [yellow]{len(track.segments)} 句 (100% 採用原稿文字)[/yellow]")
+    console.print(f"  ✔ 字幕句數: [yellow]{len(track.segments)} 句 ({script_mode})[/yellow]")
     console.print(f"  ✔ 交付成果目錄: [green]{target_dir}[/green]")
     console.print(f"  ✔ 標準字幕檔:   [green]{target_dir / 'lyrics.srt'}[/green]")
     console.print(f"  ✔ 動態歌詞檔:   [green]{target_dir / 'lyrics.lrc'}[/green]")

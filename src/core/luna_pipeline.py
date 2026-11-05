@@ -20,6 +20,7 @@ preload_cuda_libs()
 import stable_whisper
 from .transcriber import transcribe_native_audio, load_native_whisper_model, unload_native_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
+from .lyric_reference import build_lyric_occurrences
 from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, WordItem
 
@@ -203,7 +204,10 @@ class LunaPipeline:
         device: str = "auto",
         prompt: Optional[str] = None,
         llm_audit: bool = True,
+        script_mode: str = "transcript",
     ):
+        if script_mode not in ("reference", "transcript"):
+            raise ValueError("script_mode 必須為 reference 或 transcript")
         self.audio_path = str(Path(audio_path).resolve())
         self.lyrics_source = lyrics_source
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -216,6 +220,9 @@ class LunaPipeline:
         self.device = device
         self.prompt = prompt or "繁體中文"
         self.llm_audit = llm_audit
+        self.script_mode = script_mode
+        self.reference_lines: List[str] = []
+        self.lyric_occurrences: List[Dict[str, Any]] = []
 
         self.manifest: Dict[str, Any] = {}
         self.raw_asr: Dict[str, Any] = {}
@@ -273,6 +280,7 @@ class LunaPipeline:
             raise ValueError("歌詞原稿內容為空，無法進行對齊")
 
         self.org_lines = cleaned_lines
+        self.reference_lines = cleaned_lines.copy()
         audio_hash = compute_sha256_file(self.audio_path)
 
         cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path]
@@ -288,6 +296,8 @@ class LunaPipeline:
             "lyrics_file": lyrics_filename,
             "lyrics_sha256": lyrics_hash,
             "lyrics_lines_count": len(self.org_lines),
+            "script_mode": self.script_mode,
+            "reference_lines_count": len(self.reference_lines),
             "whisper_model": self.whisper_model,
             "whisper_backend": "native",
             "alignment_tool": "stable-ts 2.19.1",
@@ -332,6 +342,12 @@ class LunaPipeline:
             })
 
         self.asr_clean_segments = clean_segs
+        if self.script_mode == "reference":
+            self.lyric_occurrences = build_lyric_occurrences(self.reference_lines, clean_segs)
+            self.org_lines = [item["text"] for item in self.lyric_occurrences]
+            self.manifest["lyrics_lines_count"] = len(self.org_lines)
+            with (self.output_dir / "lyric_occurrences.json").open("w", encoding="utf-8") as stream:
+                json.dump(self.lyric_occurrences, stream, ensure_ascii=False, indent=2)
         return self.asr_clean_segments
 
     def step_3_and_4_alignment_and_evidence(self) -> List[Dict[str, Any]]:
@@ -342,6 +358,9 @@ class LunaPipeline:
         - 針對異常句子執行局部切音重跑對齊 (Section 8)
         """
         self._notify(3, 5, f"使用 stable-ts 對 {len(self.org_lines)} 句原歌詞強制對齊與雙軌比對...")
+        if not self.org_lines:
+            self.cue_evidence = []
+            return self.cue_evidence
         lyrics_text = "\n".join(self.org_lines)
 
         st_model = load_native_whisper_model(self.whisper_model, self.device)
@@ -375,7 +394,7 @@ class LunaPipeline:
                     })
 
                 self.stable_ts_segments = align_segs
-                mapped_lines = map_lyrics_to_asr_words(self.org_lines, self.asr_clean_segments)
+                mapped_lines = self.lyric_occurrences if self.script_mode == "reference" else map_lyrics_to_asr_words(self.org_lines, self.asr_clean_segments)
 
                 # 雙軌比對與異常標記
                 evidence_list = []
@@ -398,6 +417,11 @@ class LunaPipeline:
                     diff_end = abs(t_asr_end - t_align_end)
                     dur = t_align_end - t_align_start
                     anomalies = []
+                    if self.script_mode == "reference":
+                        if mapping["source_line_id"] is None:
+                            anomalies.append("asr_only_not_in_reference")
+                        if any(word.get("segment_only") for word in anchors):
+                            anomalies.append("asr_segment_timing_only")
                     if default_candidate != "cand_asr":
                         anomalies.append("asr_mapping_missing")
                     elif mapping["matched_characters"] < mapping["original_characters"] * .7:
@@ -471,6 +495,9 @@ class LunaPipeline:
                         "anomalies": anomalies,
                         "needs_review": bool(anomalies)
                     }
+                    if self.script_mode == "reference":
+                        evidence_item["source_line_id"] = mapping["source_line_id"]
+                        evidence_item["occurrence"] = mapping["occurrence"]
                     evidence_list.append(evidence_item)
 
                 self.cue_evidence = evidence_list
@@ -622,7 +649,8 @@ class LunaPipeline:
                     "reason": decision_reason
                 })
 
-            status = "needs_review" if (ev["anomalies"] and decision_action == "keep") or "asr_mapping_missing" in ev["anomalies"] else "passed"
+            unresolved = {"asr_mapping_missing", "asr_only_not_in_reference", "asr_segment_timing_only"}
+            status = "needs_review" if (ev["anomalies"] and decision_action == "keep") or unresolved.intersection(ev["anomalies"]) else "passed"
             if def_et <= def_st or def_st >= self.audio_duration:
                 status = "needs_review"
                 decision_reason = "原始對齊缺少有效時間，已保留最短時間區間，請手動校對"
@@ -742,13 +770,27 @@ class LunaPipeline:
         val_report = {
             "total_lyric_lines": len(self.org_lines),
             "output_subtitle_count": len(processed_segments),
-            "lyrics_text_100_percent_match": text_match,
+            "script_mode": self.script_mode,
+            "lyrics_text_100_percent_match": text_match if self.script_mode == "transcript" else None,
+            "performed_text_match": text_match,
             "negative_timestamps": negative,
             "inverted_timestamps": inverted,
             "overlaps": overlaps,
             "exceeds_audio_duration": exceeds,
             "validation_passed": (overlaps == 0 and exceeds == 0 and negative == 0 and inverted == 0 and text_match)
         }
+        if self.script_mode == "reference":
+            expected_anchors = sum(len(segment.get("words") or ([segment] if segment.get("text", "").strip() else [])) for segment in self.asr_clean_segments)
+            covered = [index for item in self.lyric_occurrences for index in range(item["word_start"], item["word_end"])]
+            coverage_complete = covered == list(range(expected_anchors))
+            val_report.update({
+                "reference_lines_count": len(self.reference_lines),
+                "matched_occurrences": sum(item["source_line_id"] is not None for item in self.lyric_occurrences),
+                "asr_only_occurrences": sum(item["source_line_id"] is None for item in self.lyric_occurrences),
+                "asr_anchor_count": expected_anchors,
+                "asr_coverage_complete": coverage_complete,
+            })
+            val_report["validation_passed"] &= coverage_complete
         with open(self.output_dir / "validation.json", "w", encoding="utf-8") as f:
             json.dump(val_report, f, ensure_ascii=False, indent=2)
 
@@ -782,6 +824,7 @@ def run_luna_pipeline(
     device: str = "auto",
     prompt: Optional[str] = None,
     llm_audit: bool = True,
+    script_mode: str = "transcript",
 ) -> SubtitleTrack:
     """高階調用函式：供 Web API 直接呼叫"""
     pipeline = LunaPipeline(
@@ -795,5 +838,6 @@ def run_luna_pipeline(
         device=device,
         prompt=prompt,
         llm_audit=llm_audit,
+        script_mode=script_mode,
     )
     return pipeline.run()

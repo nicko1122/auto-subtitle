@@ -380,11 +380,15 @@
                   </span>
 
                 </div>
+                <select id="select-script-mode" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-1.5 py-1 text-[11px]">
+                  <option value="reference" selected>歌詞參考（依聲音順序，可重複引用）</option>
+                  <option value="transcript">完整逐句稿（固定順序，每行一次）</option>
+                </select>
                 <textarea
                   id="align-script-textarea"
                   rows="3"
                   class="w-full bg-zinc-950 border border-zinc-800 rounded p-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-purple-500 placeholder:text-zinc-600 transition"
-                  placeholder="在此貼上原稿或歌詞（選填，若留空則為全自動無稿辨識；若有貼詞，AI 將自動對照正字，並完美支援副歌重複與即興虛字）..."
+                  placeholder="貼上原稿或歌詞；留空則自動辨識。歌詞參考模式可省略重複副歌，實際次數由聲音辨識決定。"
                 ></textarea>
               </div>
 

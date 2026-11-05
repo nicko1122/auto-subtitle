@@ -121,6 +121,7 @@ class AlignRequest(BaseModel):
     device: str = "cuda"
     prompt: Optional[str] = "繁體中文"
     auto_proofread: bool = True
+    script_mode: Literal["reference", "transcript"] = "transcript"
 
 
 class ProofreadRequest(BaseModel):
@@ -537,7 +538,8 @@ def transcribe_endpoint(
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),
     script_text: Optional[str] = Form(None),
-    llm_provider: Literal["local", "api"] = Form("local")
+    llm_provider: Literal["local", "api"] = Form("local"),
+    script_mode: Literal["reference", "transcript"] = Form("transcript"),
 ):
     """【單一入口 AI 產生字幕】
     支援智慧雙分流：
@@ -577,6 +579,7 @@ def transcribe_endpoint(
                 device=device,
                 prompt=prompt,
                 llm_audit=auto_proofread,
+                script_mode=script_mode,
             )
             return {
                 "status": "success",
@@ -665,6 +668,7 @@ def align_endpoint(req: AlignRequest):
             device=req.device,
             prompt=req.prompt,
             llm_audit=req.auto_proofread,
+            script_mode=req.script_mode,
         )
         return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
     except Exception as e:

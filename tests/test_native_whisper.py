@@ -14,7 +14,8 @@ from src.schemas.subtitle import SubtitleTrack
 @pytest.mark.parametrize('endpoint', ['/api/ai/transcribe', '/api/ai/align'])
 @pytest.mark.parametrize('model', [None, 'small'])
 @pytest.mark.parametrize('audit', [True, False])
-def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkeypatch, endpoint, model, audit):
+@pytest.mark.parametrize('script_mode', [None, 'reference'])
+def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkeypatch, endpoint, model, audit, script_mode):
     for name in ('UPLOADS_DIR', 'OUTPUT_DIR', 'TEMP_DIR'):
         directory = tmp_path / name
         directory.mkdir()
@@ -26,6 +27,8 @@ def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkey
     payload = {'media_path': str(media), 'script_text': '訪談逐字稿', 'device': 'cpu', 'prompt': '訪談', 'auto_proofread': audit}
     if model is not None:
         payload['model'] = model
+    if script_mode:
+        payload['script_mode'] = script_mode
     options = {'data': payload} if endpoint.endswith('transcribe') else {'json': payload}
     response = TestClient(server.app, base_url='http://localhost').post(endpoint, **options)
     assert response.status_code == 200, response.text
@@ -33,11 +36,13 @@ def test_scripted_api_forwards_selected_model_device_and_prompt(tmp_path, monkey
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
     assert pipeline.call_args.kwargs['llm_audit'] is audit
+    assert pipeline.call_args.kwargs['script_mode'] == (script_mode or 'transcript')
 
 
 @pytest.mark.parametrize('model', [None, 'small'])
 @pytest.mark.parametrize('audit', [True, False])
-def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit):
+@pytest.mark.parametrize('script_mode', [None, 'reference'])
+def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit, script_mode):
     media, script = tmp_path / 'audio.wav', tmp_path / 'lyrics.txt'
     media.touch()
     script.write_text('歌詞')
@@ -46,6 +51,8 @@ def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit)
     arguments = ['luna', str(media), str(script), '-d', 'cpu', '--prompt', '訪談', '-o', str(tmp_path / 'output')]
     if model:
         arguments.extend(['-m', model])
+    if script_mode:
+        arguments.extend(['--script-mode', script_mode])
     arguments.append('--audit' if audit else '--no-audit')
     result = CliRunner().invoke(cli.app, arguments)
     assert result.exit_code == 0, result.output
@@ -53,6 +60,7 @@ def test_cli_align_forwards_model_selection(tmp_path, monkeypatch, model, audit)
     assert pipeline.call_args.kwargs['device'] == 'cpu'
     assert pipeline.call_args.kwargs['prompt'] == '訪談'
     assert pipeline.call_args.kwargs['llm_audit'] is audit
+    assert pipeline.call_args.kwargs['script_mode'] == (script_mode or 'transcript')
 
 
 def test_luna_uses_selected_native_model_for_both_phases(tmp_path, monkeypatch):
