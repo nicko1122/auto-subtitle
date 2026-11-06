@@ -4,6 +4,7 @@ import logging
 import shutil
 import uuid
 import ipaddress
+import tempfile
 from urllib.parse import quote
 
 from . import asset_packages
@@ -365,10 +366,7 @@ def upload_asset(files: List[UploadFile] = File(...), package_path: Optional[str
         installed_fonts = []
         for file in fonts:
             name = Path(file.filename).name
-            dest = FONTS_DIR / name
-            with dest.open("wb") as output:
-                shutil.copyfileobj(file.file, output)
-            installed_fonts.append(install_font_from_file(str(dest), custom_filename=name))
+            installed_fonts.append(_install_uploaded_font(file, name))
         packages = [_describe_package(path) for path in directories]
         uploaded, videos, tracks, scripts = [], [], [], []
         for package in packages:
@@ -412,12 +410,20 @@ async def upload_fonts_endpoint(files: List[UploadFile] = File(...)):
                 status_code=400,
                 detail=f"不支援的字型格式 '{safe_name}'，請上傳 .ttf, .otf, .ttc 或 .woff2 檔案"
             )
-        dest = FONTS_DIR / safe_name
-        with dest.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        info = install_font_from_file(str(dest), custom_filename=safe_name)
+        try:
+            info = _install_uploaded_font(file, safe_name)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error))
         installed.append(info)
     return {"status": "success", "installed": installed, "catalog": get_font_catalog()}
+
+
+def _install_uploaded_font(file: UploadFile, name: str):
+    with tempfile.TemporaryDirectory(dir=TEMP_DIR, prefix="font_upload_") as temporary:
+        source = Path(temporary) / "font"
+        with source.open("wb") as output:
+            shutil.copyfileobj(file.file, output)
+        return install_font_from_file(str(source), custom_filename=name)
 
 
 @app.post("/api/fonts/install")

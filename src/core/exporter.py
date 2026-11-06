@@ -137,7 +137,7 @@ def to_ass(
         f"Style: Default,{style.font_name},{style.font_size},"
         f"{pri_col},{sec_col},{out_col},{bak_col},"
         f"{bold_val},{italic_val},0,0,100,100,{style.letter_spacing},0,1,"
-        f"{style.outline_width},{style.shadow_offset},"
+        f"{style.outline_width if style.outline_enabled else 0},{style.shadow_offset},"
         f"{alignment},{margin_l},{margin_r},{margin_v},1"
     )
 

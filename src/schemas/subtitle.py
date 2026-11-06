@@ -80,6 +80,7 @@ class SubtitleStyle(BaseModel):
     font_size: int = Field(default=32, ge=10, le=160, description="字型大小 (像素)")
     primary_color: str = Field(default="#FFFFFF", description="文字主體顏色 (Hex，如 #FFFFFF, #FFFF00)")
     outline_color: str = Field(default="#000000", description="文字外框描邊顏色 (Hex)")
+    outline_enabled: bool = True
     outline_width: float = Field(default=2.5, ge=0.0, le=15.0, description="描邊寬度 (像素)")
     shadow_offset: float = Field(default=1.2, ge=0.0, le=15.0, description="陰影偏移量 (像素)")
     shadow_color: str = Field(default="#000000", description="陰影顏色 (Hex)")
@@ -139,7 +140,7 @@ class SubtitleStyle(BaseModel):
         writing_mode = "vertical-rl" if self.orientation == "vertical" else "horizontal-tb"
         stroke_str = (
             f"-webkit-text-stroke: {self.outline_width * 2:.1f}px {self.outline_color};\npaint-order: stroke fill;"
-            if self.outline_width > 0
+            if self.outline_enabled and self.outline_width > 0
             else "-webkit-text-stroke: 0px transparent;"
         )
         lines = [

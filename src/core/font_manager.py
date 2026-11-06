@@ -331,6 +331,22 @@ def get_font_catalog() -> Dict[str, Any]:
     }
 
 
+def validate_font_file(path: Path) -> None:
+    with path.open("rb") as stream:
+        if stream.read(4) not in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOFF", b"wOF2"):
+            raise ValueError("內容不是支援的字型檔案")
+    try:
+        result = subprocess.run(["fc-query", "--format=%{family}", str(path)], capture_output=True, text=True, timeout=10)
+    except FileNotFoundError:
+        if _parse_ttf_name_table(path):
+            return
+        raise ValueError("無法驗證字型，請安裝 Fontconfig 後再試")
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("字型驗證逾時") from error
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ValueError("字型內容損壞或無法解析")
+
+
 def install_font_from_file(source_path: str, custom_filename: Optional[str] = None) -> Dict[str, Any]:
     """從本機檔案路徑安裝字型至專案 fonts/ 目錄"""
     src = Path(source_path).resolve()
@@ -343,8 +359,14 @@ def install_font_from_file(source_path: str, custom_filename: Optional[str] = No
         raise ValueError(f"不支援的字型副檔名 '{ext}'，僅支援: {', '.join(sorted(ALLOWED_FONT_EXTS))}")
 
     dest = FONTS_DIR / safe_name
-    if src != dest.resolve():
-        shutil.copy2(src, dest)
+    with tempfile.NamedTemporaryFile(dir=FONTS_DIR, prefix=".installing_", delete=False) as temporary:
+        staged = Path(temporary.name)
+    try:
+        shutil.copyfile(src, staged)
+        validate_font_file(staged)
+        staged.replace(dest)
+    finally:
+        staged.unlink(missing_ok=True)
 
     info = extract_font_family(dest)
     return {
@@ -391,9 +413,7 @@ def _download_font(url: str, destination: Path) -> None:
                     if size > 128 * 1024 * 1024:
                         raise ValueError("字型檔案超過 128 MB")
                     output.write(chunk)
-            with destination.open("rb") as font:
-                if font.read(4) not in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOFF", b"wOF2"):
-                    raise ValueError("下載內容不是支援的字型檔案")
+            validate_font_file(destination)
             return
         finally:
             connection.close()

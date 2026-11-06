@@ -1,5 +1,4 @@
 import re
-import math
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -202,7 +201,7 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
             if len(nums) >= 2:
                 ox = parse_length(nums[0], 1.2)
                 oy = parse_length(nums[1], 1.2)
-                offset = math.hypot(ox, oy)
+                offset = max(abs(ox), abs(oy))
                 style_dict["shadow_offset"] = round(offset, 1)
 
         # 9. 不透明度 opacity (支援 0.0~1.0 或 0%~100%)
@@ -284,5 +283,7 @@ def parse_css_to_style_dict(css_text_or_path: str) -> Dict[str, Any]:
         # Web CSS 外擴描邊利用 paint-order 繪製 2 倍直徑，解析回 ASS 時還原為單側外擴寬度
         style_dict["outline_width"] = round(style_dict["outline_width"] / 2.0, 2)
     style_dict.pop("_paint_order_stroke_fill", None)
+    if "outline_width" in style_dict:
+        style_dict["outline_enabled"] = style_dict["outline_width"] > 0
 
     return style_dict
