@@ -103,6 +103,8 @@ class SubtitleProofreader:
     ):
         self.cfg = {} if provider == "local" else load_env_config()
         self.llm = None
+        self.last_report = {"batches": [], "complete": True}
+        self.last_batch_report = {}
         if provider == "local":
             preload_cuda_libs()
             from llama_cpp import Llama
@@ -250,6 +252,9 @@ class SubtitleProofreader:
         reference_script: Optional[str] = None
     ) -> Dict[int, str]:
         """批次校對一組字幕片段，回傳 id -> corrected_text 對應表"""
+        expected = {s.id for s in segments}
+        report = {"input_ids": sorted(expected), "accepted_ids": [], "missing_ids": sorted(expected), "errors": []}
+        self.last_batch_report = report
         if not segments:
             return {}
 
@@ -277,25 +282,33 @@ class SubtitleProofreader:
                 else:
                     for k, v in data.items():
                         if str(k).isdigit() and isinstance(v, str):
-                            result_map[int(k)] = v.strip()
+                            items.append({"id": int(k), "text": v})
                         elif isinstance(v, dict):
                             items.append(v)
 
+            seen = set()
+            originals = {s.id: s.text for s in segments}
             for item in items:
                 if isinstance(item, dict):
                     i_id = item.get("id") if "id" in item else item.get("index")
-                    i_text = (
-                        item.get("text")
-                        or item.get("corrected_text")
-                        or item.get("content")
-                        or item.get("subtitle")
-                    )
-                    if i_id is not None and i_text is not None:
-                        try:
-                            result_map[int(i_id)] = str(i_text).strip()
-                        except (ValueError, TypeError):
-                            pass
+                    i_text = next((item[field] for field in ("text", "corrected_text", "content", "subtitle") if field in item), None)
+                    if type(i_id) is not int or i_id not in expected:
+                        report["errors"].append("回覆包含非整數或非本批次編號")
+                        continue
+                    if i_id in seen:
+                        result_map.pop(i_id, None)
+                        report["errors"].append(f"重複編號 {i_id}")
+                        continue
+                    seen.add(i_id)
+                    if not isinstance(i_text, str) or (not i_text.strip() and originals[i_id].strip()):
+                        report["errors"].append(f"第 {i_id} 段文字無效")
+                        continue
+                    result_map[i_id] = i_text.strip()
+                else:
+                    report["errors"].append("回覆項目格式無效")
 
+            report["accepted_ids"] = sorted(result_map)
+            report["missing_ids"] = sorted(expected - result_map.keys())
             return result_map
         except urllib.error.HTTPError as e:
             err_body = ""
@@ -304,10 +317,22 @@ class SubtitleProofreader:
             except Exception:
                 pass
             logger.error(f"雲端 LLM API HTTP 錯誤 ({e.code}): {err_body}")
-            raise RuntimeError(f"LLM API 呼叫失敗 (HTTP {e.code}): {err_body or e.reason}")
+            report["errors"].append(f"LLM API 呼叫失敗 (HTTP {e.code}): {err_body or e.reason}")
+            return {}
         except Exception as e:
             logger.warning(f"批次校對處理異常: {e}，保留原始字幕文字")
-            return {s.id: s.text for s in segments}
+            report["errors"].append(str(e))
+            return {}
+
+    @property
+    def warning(self) -> Optional[str]:
+        batches = self.last_report["batches"]
+        missing = sum(len(batch["missing_ids"]) for batch in batches)
+        errors = list(dict.fromkeys(error for batch in batches for error in batch["errors"]))
+        if missing or errors:
+            detail = "; ".join(errors)[:200] or "模型漏答"
+            return f"校對回覆有異常，{missing} 段保留原文：{detail}"
+        return None
 
     def proofread_track(
         self,
@@ -324,6 +349,7 @@ class SubtitleProofreader:
         effective_script = reference_script or script_text
         all_segments = track.segments
         new_segments: List[SubtitleSegment] = []
+        self.last_report = {"batches": [], "complete": True}
 
         effective_batch_size = max(1, min(batch_size, 8) if self.provider == "local" else batch_size)
         total_batches = (len(all_segments) + effective_batch_size - 1) // effective_batch_size
@@ -334,6 +360,9 @@ class SubtitleProofreader:
         for i in range(0, len(all_segments), effective_batch_size):
             batch = all_segments[i:i + effective_batch_size]
             corrected_map = self.proofread_segments_batch(batch, reference_script=effective_script)
+            self.last_report["batches"].append(self.last_batch_report)
+            if self.last_batch_report["missing_ids"] or self.last_batch_report["errors"]:
+                self.last_report["complete"] = False
 
             for seg in batch:
                 corr_text = corrected_map.get(seg.id, seg.text)
@@ -342,6 +371,7 @@ class SubtitleProofreader:
                     start=seg.start,
                     end=seg.end,
                     text=corr_text,
+                    expected_chars=seg.expected_chars,
                     words=seg.words
                 )
                 new_segments.append(new_seg)

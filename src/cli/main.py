@@ -339,6 +339,8 @@ def proofread_cmd(
     try:
         with console.status("[bold green]Edge LLM 思考校對中...") as status:
             proofread_track = proofreader.proofread_track(track, batch_size=batch_size)
+            if proofreader.warning:
+                console.print(f"[yellow]{proofreader.warning}[/yellow]")
     finally:
         proofreader.close()
 

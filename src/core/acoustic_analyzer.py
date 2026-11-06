@@ -324,7 +324,8 @@ def transcribe_on_locked_timeline(
     prompt: str = "繁體中文",
     only_empty: bool = False,
     auto_proofread: bool = False,
-    llm_provider: str = "local"
+    llm_provider: str = "local",
+    proofread_report: Optional[Dict[str, Any]] = None,
 ) -> SubtitleTrack:
     """
     【階段三：依「已校正鎖定的時間軸」執行受控 Whisper 填字 (Segment-Guided Whisper)】
@@ -414,6 +415,8 @@ def transcribe_on_locked_timeline(
         proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=llm_provider)
         try:
             new_track = proofreader.proofread_track(new_track, batch_size=8)
+            if proofread_report is not None:
+                proofread_report.update(proofreader.last_report, warning=proofreader.warning)
         finally:
             proofreader.close()
 

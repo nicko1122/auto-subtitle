@@ -519,6 +519,7 @@ class LunaPipeline:
         self._notify(4, 5, message)
 
         decisions_map: Dict[int, Dict[str, Any]] = {}
+        self.manifest["audit_warning"] = None
         if anomaly_lines and self.llm_audit:
             audit_payload = []
             for ev in anomaly_lines:
@@ -588,6 +589,10 @@ class LunaPipeline:
                     reasoner.close()
                 with decision_path.open("w", encoding="utf-8") as stream:
                     json.dump({"system": sys_prompt, "batches": batches}, stream, ensure_ascii=False, indent=2)
+
+            missing = len(anomaly_lines) - len(decisions_map)
+            if missing:
+                self.manifest["audit_warning"] = f"時間審核有 {missing} 段未完成，已保留預設時間並標記待複核。"
 
         # 彙整最終時間軸與記錄 corrections
         final_segments: List[SubtitleSegment] = []

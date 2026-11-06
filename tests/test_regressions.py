@@ -115,6 +115,8 @@ def test_api_local_selection_is_forwarded(client, monkeypatch, track):
     media.touch()
     monkeypatch.setattr(server, 'transcribe_audio', lambda *a, **kw: {'source_file': str(media), 'duration': 1, 'raw_segments': [track.segments[0].model_dump()]})
     factory = Mock()
+    factory.return_value.warning = None
+    factory.return_value.last_report = {"batches": [], "complete": True}
     factory.return_value.proofread_track.return_value = track
     monkeypatch.setattr(server, 'SubtitleProofreader', factory)
     response = client.post('/api/ai/transcribe', data={'media_path': str(media), 'llm_provider': 'local'})

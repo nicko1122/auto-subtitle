@@ -1288,9 +1288,9 @@ function initAiButtons() {
           data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
           setSubtitleTrack(data.track);
           if (data.proofread_warning) {
-            addLog(`⚠️ Whisper 已生成 ${data.track.segments.length} 句字幕，但 LLM 校對尚未執行：${data.proofread_warning}`, "error");
+            addLog(`字幕已保留，LLM 審核尚未全部完成：${data.proofread_warning}`, "error");
           } else if (data.has_reference) {
-            addLog(`【管線執行成功】已生成 ${data.track.segments.length} 句字幕（完成 100% 原稿強制對齊、雙軌比對與 +0.16s 閱讀延長，7 項成果報告已儲存於 output/）！`, "success");
+            addLog(`已生成 ${data.track.segments.length} 句字幕，診斷報告已儲存於 output/，請確認待複核項目。`, "success");
           } else {
             addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
           }
@@ -1389,8 +1389,10 @@ function initAiButtons() {
         if (data.status === "success") {
           if (!canApplySubtitleResult(request)) return;
           setSubtitleTrack(data.track);
-          if (data.has_reference) {
-            addLog(`【校對完成】已依據原稿歌詞 100% 還原正確正字！`, "success");
+          if (data.proofread_warning) {
+            addLog(data.proofread_warning, "error");
+          } else if (data.has_reference) {
+            addLog("已完成參考原詞校對，請確認結果。", "success");
           } else {
             addLog(`【校對完成】字幕已自動修正同音字與標點！`, "success");
           }
@@ -1975,7 +1977,7 @@ async function runLockedTimelineTranscribe() {
     if (data.status === "success") {
       if (!canApplySubtitleResult(request)) return;
       setSubtitleTrack(data.track);
-      addLog(`🎉 已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入！時間軸起訖點 100% 保持不變！`, "success");
+      addLog(data.proofread_warning || `已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入。`, data.proofread_warning ? "error" : "success");
     } else {
       throw new Error(data.detail || "填字失敗");
     }

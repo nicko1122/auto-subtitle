@@ -514,6 +514,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
     """【階段三：依鎖定時間軸填字】嚴格依照使用者已確認的每個 #index [start, end] 執行受控 Whisper 填字"""
     p = _resolve_media_path(req.media_path)
     try:
+        report = {}
         updated_track = transcribe_on_locked_timeline(
             media_path=str(p),
             track=req.track,
@@ -522,9 +523,10 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
             prompt=req.prompt,
             only_empty=req.only_empty,
             auto_proofread=req.auto_proofread,
-            llm_provider=req.llm_provider
+            llm_provider=req.llm_provider,
+            proofread_report=report,
         )
-        return {"status": "success", "track": updated_track.model_dump()}
+        return {"status": "success", "track": updated_track.model_dump(), "proofread_warning": report.get("warning"), "proofread_report": report or None}
     except Exception as e:
         logger.error(f"依鎖定時間軸辨識失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -581,11 +583,13 @@ def transcribe_endpoint(
                 llm_audit=auto_proofread,
                 script_mode=script_mode,
             )
+            manifest_path = job_dir / "run_manifest.json"
+            audit_warning = json.loads(manifest_path.read_text(encoding="utf-8")).get("audit_warning") if manifest_path.exists() else None
             return {
                 "status": "success",
                 "track": track.model_dump(),
                 "has_reference": True,
-                "proofread_warning": None,
+                "proofread_warning": audit_warning,
                 "mode": "luna_pipeline"
             }
         else:
@@ -601,6 +605,7 @@ def transcribe_endpoint(
             track = build_subtitle_track(raw_res)
 
             proofread_warning = None
+            proofread_report = None
             if auto_proofread and track.segments:
                 try:
                     proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=llm_provider)
@@ -609,6 +614,8 @@ def transcribe_endpoint(
                             track,
                             batch_size=25
                         )
+                        proofread_warning = proofreader.warning
+                        proofread_report = proofreader.last_report
                     finally:
                         proofreader.close()
                 except Exception as pe:
@@ -620,6 +627,7 @@ def transcribe_endpoint(
                 "track": track.model_dump(),
                 "has_reference": False,
                 "proofread_warning": proofread_warning,
+                "proofread_report": proofread_report,
                 "mode": "whisper_asr"
             }
     except Exception as e:
@@ -670,7 +678,9 @@ def align_endpoint(req: AlignRequest):
             llm_audit=req.auto_proofread,
             script_mode=req.script_mode,
         )
-        return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline"}
+        manifest_path = job_dir / "run_manifest.json"
+        warning = json.loads(manifest_path.read_text(encoding="utf-8")).get("audit_warning") if manifest_path.exists() else None
+        return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline", "proofread_warning": warning}
     except Exception as e:
         logger.error(f"對齊失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -691,7 +701,7 @@ def proofread_endpoint(req: ProofreadRequest):
             batch_size=req.batch_size,
             reference_script=clean_script if clean_script else None
         )
-        return {"status": "success", "track": corrected_track.model_dump(), "has_reference": bool(clean_script)}
+        return {"status": "success", "track": corrected_track.model_dump(), "has_reference": bool(clean_script), "proofread_warning": proofreader.warning, "proofread_report": proofreader.last_report}
     except Exception as e:
         logger.error(f"校對失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
