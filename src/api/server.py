@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
 from ..core.audio_extractor import extract_audio
-from ..core.transcriber import DEFAULT_WHISPER_MODEL, transcribe_audio
+from ..core.transcriber import WHISPER_MODEL, transcribe_audio
 from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
 from ..core.luna_pipeline import run_luna_pipeline, LunaPipeline
@@ -119,7 +119,6 @@ class AlignRequest(BaseModel):
     script_text: Optional[str] = None
     script_path: Optional[str] = None
     llm_provider: Literal["local", "api"] = "local"
-    model: str = DEFAULT_WHISPER_MODEL
     device: str = "cuda"
     prompt: Optional[str] = "繁體中文"
     auto_proofread: bool = True
@@ -152,7 +151,6 @@ class SnapSplitRequest(BaseModel):
 class TranscribeLockedRequest(BaseModel):
     media_path: str
     track: SubtitleTrack
-    model: str = DEFAULT_WHISPER_MODEL
     device: str = "cuda"
     prompt: str = "繁體中文"
     only_empty: bool = False
@@ -171,7 +169,7 @@ async def serve_index():
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "app": "Auto Subtitle Studio"}
+    return {"status": "ok", "app": "Auto Subtitle Studio", "whisper": {"model": WHISPER_MODEL, "backend": "native"}}
 
 
 def detect_file_type(p: Path) -> str:
@@ -526,7 +524,6 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
         updated_track = transcribe_on_locked_timeline(
             media_path=str(p),
             track=req.track,
-            model_size=req.model,
             device=req.device,
             prompt=req.prompt,
             only_empty=req.only_empty,
@@ -544,7 +541,6 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 @model_task
 def transcribe_endpoint(
     media_path: str = Form(...),
-    model: str = Form(DEFAULT_WHISPER_MODEL),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),
@@ -586,7 +582,6 @@ def transcribe_endpoint(
                 lyrics_source=str(script_file),
                 output_dir=str(job_dir),
                 llm_provider=llm_provider,
-                whisper_model=model,
                 device=device,
                 prompt=prompt,
                 llm_audit=auto_proofread,
@@ -606,9 +601,7 @@ def transcribe_endpoint(
             whisper_prompt = prompt or "繁體中文"
             raw_res = transcribe_audio(
                 audio_path=audio_file,
-                model_size=model,
                 device=device,
-                vad_filter=False,
                 initial_prompt=whisper_prompt
             )
             track = build_subtitle_track(raw_res)
@@ -682,7 +675,6 @@ def align_endpoint(req: AlignRequest):
             lyrics_source=script_source,
             output_dir=str(job_dir),
             llm_provider=req.llm_provider or "local",
-            whisper_model=req.model,
             device=req.device,
             prompt=req.prompt,
             llm_audit=req.auto_proofread,

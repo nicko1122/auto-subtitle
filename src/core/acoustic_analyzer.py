@@ -3,9 +3,10 @@ import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
+from whisper import load_audio
 
 from .env_utils import preload_cuda_libs
-from .transcriber import DEFAULT_WHISPER_MODEL, load_whisper_model, unload_whisper_model
+from .transcriber import load_whisper_model, unload_whisper_model
 from ..schemas.subtitle import SubtitleSegment, SubtitleTrack
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,6 @@ def analyze_audio_breakpoints(
     不需等待漫長的語音辨識，直接利用 Silero VAD + 10ms 人聲能量包絡波谷偵測，
     在 1 秒內產出精準的句子時間軸索引 (#1 ~ #N)、預估每段字數容量與視覺化波形資料。
     """
-    from faster_whisper.audio import decode_audio
     from faster_whisper.vad import get_speech_timestamps, VadOptions
 
     p = Path(media_path).resolve()
@@ -188,7 +188,7 @@ def analyze_audio_breakpoints(
 
     cfg = BREAKPOINT_MODES.get(mode, BREAKPOINT_MODES["balanced"])
     sr = 16000
-    audio = decode_audio(str(p), sampling_rate=sr)
+    audio = load_audio(str(p), sr=sr)
     total_duration = round(len(audio) / float(sr), 3)
 
     raw_rms, smooth_vocal_rms = _compute_vocal_energy_envelope(audio, sr=sr)
@@ -293,14 +293,13 @@ def snap_time_to_valley(
     當使用者在播放游標處點擊「✂️ 切開」時，
     自動在游標前後 ±search_radius_sec 內尋找聲學能量最低谷 (字與字交界處)，讓切點乾淨不吃字。
     """
-    from faster_whisper.audio import decode_audio
 
     p = Path(media_path).resolve()
     if not p.exists():
         return round(time_sec, 2)
 
     sr = 16000
-    audio = decode_audio(str(p), sampling_rate=sr)
+    audio = load_audio(str(p), sr=sr)
     _, smooth_vocal_rms = _compute_vocal_energy_envelope(audio, sr=sr)
 
     center_frame = int(round(time_sec * 100))
@@ -319,7 +318,6 @@ def snap_time_to_valley(
 def transcribe_on_locked_timeline(
     media_path: str,
     track: SubtitleTrack,
-    model_size: str = DEFAULT_WHISPER_MODEL,
     device: str = "cuda",
     prompt: str = "繁體中文",
     only_empty: bool = False,
@@ -331,10 +329,9 @@ def transcribe_on_locked_timeline(
     【階段三：依「已校正鎖定的時間軸」執行受控 Whisper 填字 (Segment-Guided Whisper)】
     核心保證：
     1. 100% 鎖定使用者已經聽音確認過的每個 #index [start, end] 時間區間，絕不改動時間軸！
-    2. 針對每個獨立時間格切片音訊，並根據該格時長/預估字數限制 max_new_tokens，
+    2. 針對每個獨立時間格切片音訊，並根據該格時長/預估字數限制 sample_len，
        徹底杜絕密集歌詞跨句暴衝、不成句或拖長音重複幻覺！
     """
-    from faster_whisper.audio import decode_audio
     from .proofreader import SubtitleProofreader
 
     p = Path(media_path).resolve()
@@ -343,10 +340,10 @@ def transcribe_on_locked_timeline(
 
     preload_cuda_libs()
     sr = 16000
-    audio = decode_audio(str(p), sampling_rate=sr)
+    audio = load_audio(str(p), sr=sr)
     total_samples = len(audio)
 
-    model = load_whisper_model(model_size, device)
+    model = load_whisper_model(device)
 
     try:
         updated_segments: List[SubtitleSegment] = []
@@ -372,17 +369,17 @@ def transcribe_on_locked_timeline(
             if len(audio_slice) < int(0.15 * sr):
                 rec_text = existing_text
             else:
-                segs_iter, _ = model.transcribe(
+                result = model.transcribe(
                     audio_slice,
                     language="zh",
                     initial_prompt=prev_text_context[-40:] if prev_text_context else "繁體中文",
-                    beam_size=5,
-                    vad_filter=False,
+                    word_timestamps=False, regroup=False, suppress_silence=False,
+                    fp16=model.device.type == "cuda", verbose=False,
                     condition_on_previous_text=False,
                     without_timestamps=True,
-                    max_new_tokens=max_tokens,
+                    sample_len=max_tokens,
                 )
-                pieces = [s.text.strip() for s in segs_iter if s.text and s.text.strip()]
+                pieces = [s.text.strip() for s in result.segments if s.text and s.text.strip()]
                 rec_text = " ".join(pieces).strip()
                 # 清理首尾多餘逗號或重複標點
                 rec_text = re.sub(r"^[，、,.\s]+|[，、,\s]+$", "", rec_text)

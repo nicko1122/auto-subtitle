@@ -43,9 +43,9 @@ def test_segment_without_word_timestamps_is_retained_for_review():
 @pytest.mark.parametrize('mode', ['reference', 'transcript'])
 def test_pipeline_expands_reference_before_alignment_and_reports_coverage(tmp_path, monkeypatch, mode):
     asr = {'raw_segments': [segment('別想', 1), segment('別想', 10), segment('另外一句', 20)]}
-    monkeypatch.setattr(luna_pipeline, 'transcribe_native_audio', lambda **kwargs: asr)
+    monkeypatch.setattr(luna_pipeline, 'transcribe_audio', lambda **kwargs: asr)
     model = SimpleNamespace(cpu=Mock(), align=Mock(return_value=SimpleNamespace(segments=[])))
-    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', lambda *args: model)
+    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', lambda *args: model)
     monkeypatch.setattr(luna_pipeline, 'cut_audio_segment', lambda *args: False)
     pipeline = luna_pipeline.LunaPipeline('unused', '別想', output_dir=str(tmp_path), script_mode=mode, llm_audit=False)
     pipeline.org_lines = ['別想']
@@ -73,9 +73,9 @@ def test_pipeline_expands_reference_before_alignment_and_reports_coverage(tmp_pa
 
 
 def test_empty_reference_asr_does_not_allocate_aligner_or_fabricate_cues(tmp_path, monkeypatch):
-    monkeypatch.setattr(luna_pipeline, 'transcribe_native_audio', lambda **kwargs: {'raw_segments': []})
+    monkeypatch.setattr(luna_pipeline, 'transcribe_audio', lambda **kwargs: {'raw_segments': []})
     loader = Mock(side_effect=AssertionError('No aligner needed for empty ASR'))
-    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', loader)
+    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', loader)
     pipeline = luna_pipeline.LunaPipeline('unused', '別想', output_dir=str(tmp_path), script_mode='reference')
     pipeline.reference_lines = ['別想']
     pipeline.audio_duration = 10

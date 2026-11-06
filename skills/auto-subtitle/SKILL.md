@@ -20,7 +20,7 @@ Choose the appropriate command or pipeline based on input assets:
 | Scenario / Goal | Recommended Command | Key Arguments |
 | :--- | :--- | :--- |
 | **Singing / Lyrics Alignment** (Media + `.txt` lyrics) | `python src/cli/main.py luna` (or `align`) | `<media> <lyrics.txt> --llm local/api -o <dir>` |
-| **Speech / Talk / Video to Subtitles** (No script) | `python src/cli/main.py pipeline` | `<media> -m large-v3-turbo -d cuda -o <dir>` |
+| **Speech / Talk / Video to Subtitles** (No script) | `python src/cli/main.py pipeline` | `<media> -d cuda -o <dir>` |
 | **Audio Only Extraction** | `python src/cli/main.py extract` | `<video> -o <audio.wav> --sr 16000` |
 | **Fix Typos / Homophones** (with Edge LLM) | `python src/cli/main.py proofread` | `<subtitles.srt> --gpu-layers -1` |
 | **Burn Subtitles into Video (Hardsub)** | `python src/cli/main.py burn` | `<video> <subtitles.srt> --css "..."` |
@@ -51,7 +51,6 @@ python src/cli/main.py luna inputclip/test_video.mp4 inputclip/audio-org.txt \
 Automatic speech pipeline for talk shows, podcasts, and lectures:
 ```bash
 python src/cli/main.py pipeline inputclip/test_video.mp4 \
-    --model large-v3-turbo \
     --device cuda \
     --prompt "繁體中文" \
     --max-chars 16 \
@@ -134,7 +133,7 @@ for video in "$INPUT_DIR"/*.mp4; do
     sub_file="$OUTPUT_DIR/$stem/lyrics.srt"
   else
     # Unscripted speech pipeline
-    python3 src/cli/main.py pipeline "$video" -m large-v3-turbo -d cuda --output-dir "$OUTPUT_DIR/$stem"
+    python3 src/cli/main.py pipeline "$video" -d cuda --output-dir "$OUTPUT_DIR/$stem"
     sub_file="$OUTPUT_DIR/$stem/$stem.srt"
   fi
   
@@ -184,7 +183,7 @@ print(f"Burned video created: {burned_mp4}")
 
 ### Recipe 3: REST API Integration (FastAPI)
 The server runs on `http://localhost:8000`:
-- **Transcribe / Unscripted**: `POST /api/ai/transcribe` with Form fields `media_path=...`, `model=large-v3-turbo`, `auto_proofread=true`
+- **Transcribe / Unscripted**: `POST /api/ai/transcribe` with Form fields `media_path=...`, `auto_proofread=true`
 - **Align / Luna Pipeline**: `POST /api/ai/align` with JSON `{"media_path": "...", "script_text": "...", "script_mode": "reference", "llm_provider": "local"}`
 - **Parse CSS**: `POST /api/style/parse-css` with JSON `{"css": "font-size: 36px; opacity: 0.8;"}`
 - **Burn Video**: `POST /api/burn` with JSON `{"video_path": "...", "subtitle_path": "...", "css": "..."}`
@@ -209,7 +208,7 @@ When designing subtitle styles with `--css`:
 ## ⚠️ Important Implementation Notes
 
 1. **GPU Acceleration**:
-   - Whisper: Scripted modes use native Whisper; unscripted and locked-timeline modes use Faster-Whisper. All default to `large-v3-turbo`.
+   - Whisper: All scripted, unscripted, and locked-timeline inference uses native Whisper `large-v3-turbo`. The model and backend are fixed; do not pass model or compute-type options.
    - Video Burn: Default `use_gpu=True` attempts FFmpeg `h264_nvenc`. Use CLI `--cpu` for `libx264` when NVENC is unavailable at runtime.
 2. **Lyrics Multi-line Strings vs File Paths**:
    - `run_luna_pipeline` accepts either a file path (`.txt`) or a raw multiline lyrics string; the CLI takes a TXT path. Multi-line strings are parsed directly without file system path checks.

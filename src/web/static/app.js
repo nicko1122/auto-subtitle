@@ -108,7 +108,6 @@ const el = {
   panelAiScripted: document.getElementById("panel-ai-scripted"),
   checkAutoProofread: document.getElementById("check-auto-proofread"),
   selectLlmEngine: document.getElementById("select-llm-engine"),
-  selectWhisperModel: document.getElementById("select-whisper-model"),
   selectScriptMode: document.getElementById("select-script-mode"),
   alignScriptTextarea: document.getElementById("align-script-textarea"),
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
@@ -1244,7 +1243,6 @@ function initAiButtons() {
         return;
       }
 
-      const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
       const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
       const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
       const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
@@ -1254,10 +1252,10 @@ function initAiButtons() {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
         const auditDescription = autoProofread ? `決策大腦: ${brainName}` : "AI 審核已關閉，保留 Whisper 時間結果";
         const modeName = scriptMode === "reference" ? "歌詞參考，可重複引用" : "完整逐句稿，固定順序";
-        addLog(`【AI 產生字幕】${modeName}（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (${modelSize})＋Luna 歌詞字幕管線 (${auditDescription})...`);
+        addLog(`【AI 產生字幕】${modeName}（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (large-v3-turbo，原生)＋Luna 歌詞字幕管線 (${auditDescription})...`);
       } else {
         const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
-        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (${modelSize}) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
+        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (large-v3-turbo，原生) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
       }
 
       el.btnAiTranscribe.disabled = true;
@@ -1270,7 +1268,6 @@ function initAiButtons() {
 
       const formData = new FormData();
       formData.append("media_path", media);
-      formData.append("model", modelSize);
       formData.append("device", "cuda");
       formData.append("prompt", "繁體中文");
       formData.append("auto_proofread", String(autoProofread));
@@ -1950,7 +1947,6 @@ async function runLockedTimelineTranscribe() {
 
   const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
   const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
-  const modelSize = el.selectWhisperModel ? el.selectWhisperModel.value : "large-v3-turbo";
 
   addLog(`【階段 3：鎖定時間軸填字】正在嚴格依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (絕不改動起訖時間)...`);
   if (el.btnTranscribeLocked) {
@@ -1966,7 +1962,6 @@ async function runLockedTimelineTranscribe() {
       body: JSON.stringify({
         media_path: media,
         track: state.track,
-        model: modelSize,
         device: "cuda",
         prompt: "繁體中文",
         only_empty: onlyEmpty,

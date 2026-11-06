@@ -35,7 +35,7 @@ def test_mapping_reports_missing_matches_without_inventing_times(lines, segments
 @pytest.mark.parametrize('has_words', [True, False])
 def test_luna_uses_word_mapping_instead_of_whole_asr_segments(tmp_path, monkeypatch, has_words):
     model = SimpleNamespace(cpu=Mock(), align=Mock(return_value=SimpleNamespace(segments=[SimpleNamespace(start=5, end=6, text='甲', words=[]), SimpleNamespace(start=15, end=16, text='乙', words=[])])))
-    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', lambda *args: model)
+    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', lambda *args: model)
     monkeypatch.setattr(luna_pipeline, 'cut_audio_segment', lambda *args: False)
     reasoner = Mock()
     reasoner.decide.return_value = '{"decisions":[]}'

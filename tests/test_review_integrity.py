@@ -52,7 +52,7 @@ def test_keyword_matches_are_retained_and_reviewed(tmp_path, monkeypatch):
     text = '我想作曲給你聽'
     words = [{'word':c, 'start':i, 'end':i+1} for i,c in enumerate(text)]
     raw = {'raw_segments':[{'id':1,'start':0,'end':len(text),'text':text,'words':words}]}
-    monkeypatch.setattr(luna_pipeline, 'transcribe_native_audio', lambda **kw: raw)
+    monkeypatch.setattr(luna_pipeline, 'transcribe_audio', lambda **kw: raw)
     pipeline = luna_pipeline.LunaPipeline('unused', text, output_dir=str(tmp_path), script_mode='reference', llm_audit=False)
     pipeline.reference_lines = [text]
     pipeline.audio_duration = len(text)
@@ -61,7 +61,7 @@ def test_keyword_matches_are_retained_and_reviewed(tmp_path, monkeypatch):
     assert pipeline.manifest['suspected_hallucinations'][0]['action'] == 'retained_for_review'
     model = Mock()
     model.align.return_value.segments = []
-    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', lambda *args: model)
+    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', lambda *args: model)
     monkeypatch.setattr(luna_pipeline, 'cut_audio_segment', lambda *args: False)
     pipeline.step_3_and_4_alignment_and_evidence()
     pipeline.step_7_display_rules_and_export(pipeline.step_5_and_6_luna_decision())

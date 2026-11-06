@@ -1,7 +1,7 @@
 # AutoSubtitle AI (智慧影音字幕工作台)
 
 <p align="center">
-  <b>結合聲學斷點分析、Faster-Whisper、GPT-6 Luna 雙軌歌詞對齊管線、地端/雲端 LLM 決策大腦、Web CSS 盒模型排版與 NVIDIA NVENC 硬字幕燒錄的一站式字幕系統。</b>
+  <b>結合聲學斷點分析、原生 Whisper large-v3-turbo、GPT-6 Luna 雙軌歌詞對齊管線、地端/雲端 LLM 決策大腦、Web CSS 盒模型排版與 NVIDIA NVENC 硬字幕燒錄的一站式字幕系統。</b>
 </p>
 
 ---
@@ -75,7 +75,7 @@
 
 ## 🚀 快速安裝 (含地端模型一鍵下載)
 
-執行專案內建的一鍵安裝腳本，會自動建立虛擬環境、安裝相依庫，並下載地端 Qwen2.5 GGUF 與 Faster-Whisper 模型：
+執行專案內建的一鍵安裝腳本，會自動建立虛擬環境、安裝相依庫，並下載地端 Qwen2.5 GGUF 與固定的原生 Whisper large-v3-turbo 模型：
 
 ```bash
 # 1. 複製專案
@@ -145,9 +145,9 @@ CLI 適合批次自動化、伺服器排程與無頭（Headless）作業。輸�
 python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 ```
 
-有詞模式的辨識、全曲及局部強制對齊均使用原生 Whisper，預設 `large-v3-turbo`。介面選擇的模型、API 的 `model` 與 CLI 的 `--model` 都會實際套用；完整版 `large-v3` 可另外選取。執行紀錄會保存模型、後端及辨識裝置。無詞與鎖定時間軸填字仍使用 Faster-Whisper。
+所有辨識與對齊入口固定使用**原生 Whisper `large-v3-turbo`**：有詞、無詞、鎖定時間軸填字、CLI 與 API 均採同一載入器。介面不提供模型選單，CLI 不再接受 `--model`／`-m`／`--compute-type`，API 不再提供 `model` 欄位。CUDA 無法使用時只切換到 CPU，模型與後端維持相同。健康檢查與辨識紀錄會回報固定模型及後端。
 
-CLI、API 與核心模型預設值統一由 `DEFAULT_WHISPER_MODEL` 定義為 `large-v3-turbo`；安裝腳本預載兩種後端的對應模型。舊 `scripts/pipeline_luna.py` 現在轉呼叫正式 `luna` CLI，需提供影音與 TXT 路徑；重複實驗流程 `scripts/test_pipeline_inputclip.py` 已移除。關鍵字命中的疑似幻覺會保留並標記待複核。
+固定模型由 `WHISPER_MODEL` 定義；安裝腳本只預載這個原生模型。Faster-Whisper 套件只用於 Silero VAD 聲學斷點分析，不再執行語音辨識。舊 `scripts/pipeline_luna.py` 現在轉呼叫正式 `luna` CLI，需提供影音與 TXT 路徑；重複實驗流程 `scripts/test_pipeline_inputclip.py` 已移除。關鍵字命中的疑似幻覺會保留並標記待複核。
 
 中文原詞先經繁簡正規化與整串拼音比對，映射回 Whisper 逐詞時間；詞內字元共用完整詞時間窗。映射有效時作為主時間，缺少有效映射才保留強制對齊候選並標記待確認。LLM 每批審核最多 4 句，`decision_batches.json` 保存證據、回覆及漏答編號；未提供的句號或候選不會套用。原稿文字與 0.16 秒閱讀延長規則保留。
 
@@ -159,7 +159,6 @@ CLI、API 與核心模型預設值統一由 `DEFAULT_WHISPER_MODEL` 定義為 `l
 | `script_path` | (必填) | - | 原歌詞或字幕文字檔案路徑 (.txt) |
 | `--llm` | - | `local` | 決策大腦模式：`local` (地端 Qwen GGUF) 或 `api` (雲端 OpenAI 相容) |
 | `-o`, `--output-dir` | `-o` | 來源檔同目錄中的獨立資料夾 | 輸出交付產物之目錄 |
-| `-m`, `--model` | `-m` | `large-v3-turbo` | 原生 Whisper 模型 |
 | `-d`, `--device` | `-d` | `auto` | `auto`、`cuda` 或 `cpu` |
 | `--prompt` | — | `繁體中文` | 辨識引導詞 |
 | `--audit` / `--no-audit` | — | `--audit` | 是否執行 LLM 時間候選審核 |
@@ -172,7 +171,6 @@ python3 src/cli/main.py pipeline <媒體檔案> [OPTIONS]
 | 參數名稱 | 縮寫 | 預設值 | 說明 |
 | :--- | :--- | :--- | :--- |
 | `media_path` | (必填) | - | 來源影音檔案路徑 |
-| `-m`, `--model` | `-m` | `large-v3-turbo` | Faster-Whisper 模型大小 (`tiny`, `base`, `small`, `medium`, `large-v3-turbo`) |
 | `-d`, `--device` | `-d` | `auto` | 運算裝置 (`auto`, `cuda`, `cpu`) |
 | `-l`, `--lang` | `-l` | 自動辨識 | 指定語言代碼 (如 `zh`, `en`, `ja`) |
 | `--prompt` | - | `繁體中文` | 引導詞 (預設引導模型產出正體中文) |
@@ -236,7 +234,7 @@ python3 src/cli/main.py fonts remove jf-openhuninn-2.0.ttf
 
 #### 🔹 (6) 其它單元模組工具
 - **抽音**：`python3 src/cli/main.py extract <影片> -o <音訊.wav> --sr 16000`
-- **獨立辨識**：`python3 src/cli/main.py transcribe <音訊.wav> -m large-v3-turbo -d cuda`
+- **獨立辨識**：`python3 src/cli/main.py transcribe <音訊.wav> -d cuda`
 - **獨立斷句**：`python3 src/cli/main.py segment <raw.json> -c 16 -p 0.45`
 - **格式轉換**：`python3 src/cli/main.py export <track.json> -f srt -o <out.srt>`
 
@@ -271,7 +269,7 @@ for video in "$INPUT_DIR"/*.mp4; do
     sub_file="$OUTPUT_DIR/$stem/lyrics.srt"
   else
     # 無稿口播影片：走全自動辨識 + 智慧斷句流水線
-    python3 src/cli/main.py pipeline "$video" -m large-v3-turbo -d cuda -o "$OUTPUT_DIR/$stem"
+    python3 src/cli/main.py pipeline "$video" -d cuda -o "$OUTPUT_DIR/$stem"
     # 地端 LLM 同音錯字校對
     python3 src/cli/main.py proofread "$OUTPUT_DIR/$stem/$stem.srt" -o "$OUTPUT_DIR/$stem/$stem.proofread.srt"
     sub_file="$OUTPUT_DIR/$stem/$stem.proofread.srt"
@@ -370,7 +368,7 @@ auto-subtitle/
 │   │   ├── font_manager.py       # 字型安裝與管理中心
 │   │   ├── luna_pipeline.py      # Whisper ＋ GPT-6 Luna 雙軌驗證管線核心
 │   │   ├── proofreader.py        # llama-cpp-python Qwen2.5 與雲端 API 校對引擎
-│   │   ├── transcriber.py        # Faster-Whisper 語音辨識
+│   │   ├── transcriber.py        # 固定原生 Whisper large-v3-turbo 語音辨識
 │   │   └── video_burner.py       # NVENC / libx264 影音壓制燒錄
 │   ├── schemas/         # Pydantic 資料模型 (SubtitleTrack, SubtitleStyle 等)
 │   └── web/             # 前端工作台 (Tailwind CSS, Vanilla JS, HTML 模板)

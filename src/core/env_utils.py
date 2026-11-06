@@ -26,7 +26,7 @@ def preload_cuda_libs() -> None:
         if os.path.isdir(nvidia_dir):
             for sub in sorted(os.listdir(nvidia_dir)):
                 if sub == "cu13" or sub.startswith("cu13"):
-                    continue  # CTranslate2 / faster-whisper specifically links against CUDA 12
+                    continue  # 專案只預載 CUDA 12 共用函式庫
                 lib_dir = os.path.join(nvidia_dir, sub, "lib")
                 if os.path.isdir(lib_dir):
                     curr_ld = os.environ.get("LD_LIBRARY_PATH", "")

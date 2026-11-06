@@ -164,14 +164,17 @@ def test_luna_jobs_isolate_outputs_and_treat_script_text_literally(client, monke
     assert (directories[0] / 'lyrics.srt').read_text() == '1'
 
 
-def test_whisper_retries_cpu_when_cuda_is_unavailable():
+def test_whisper_retries_cpu_when_cuda_is_unavailable(monkeypatch):
     cpu_model = object()
-    def load(name, device, compute_type):
+    calls = []
+    def load(name, device):
+        calls.append((name,device))
         if device == 'cuda':
             raise RuntimeError('CUDA unavailable')
-        assert compute_type == 'int8'
         return cpu_model
-    assert transcriber.load_whisper_model('base', loader=load) is cpu_model
+    monkeypatch.setattr(transcriber.stable_whisper,'load_model',load)
+    assert transcriber.load_whisper_model() is cpu_model
+    assert calls == [(transcriber.WHISPER_MODEL,'cuda'),(transcriber.WHISPER_MODEL,'cpu')]
 
 
 def test_luna_uses_the_same_cpu_fallback(tmp_path, monkeypatch):

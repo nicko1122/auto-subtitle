@@ -6,43 +6,36 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from faster_whisper import audio
 
 from src.api import server
 from src.core import acoustic_analyzer, env_utils, luna_pipeline, proofreader, transcriber
 from src.schemas.subtitle import SubtitleTrack, SubtitleSegment
 
 
-@pytest.mark.parametrize('failure', ['call', 'iteration', 'conversion', None])
+@pytest.mark.parametrize('failure', ['call', 'serialization', 'conversion', None])
 def test_whisper_unloads_on_success_or_failure(tmp_path, monkeypatch, failure):
     audio = tmp_path / 'audio.wav'
     audio.touch()
     error = RuntimeError('inference failed')
-    native = Mock()
-    segment = SimpleNamespace(id=1, start=0, end=1, text='hello', words=[])
-    info = SimpleNamespace(duration=1, language='en', language_probability=1)
-    if failure == 'conversion':
-        segment.words = [SimpleNamespace(word='hello', start=0, end=1, probability=2)]
-
-    def segments():
-        yield segment
-        if failure == 'iteration':
-            raise error
-
-    model = SimpleNamespace(model=native, transcribe=Mock(return_value=(segments(), info)))
+    result = Mock(language='zh')
+    word = {'word':'hello','start':0,'end':1,'probability':2 if failure == 'conversion' else .9}
+    result.to_dict.return_value = {'segments':[{'start':0,'end':1,'text':'hello','words':[word]}]}
+    if failure == 'serialization':
+        result.to_dict.side_effect = error
+    model = SimpleNamespace(cpu=Mock(), device=SimpleNamespace(type='cpu'), transcribe=Mock(return_value=result))
     if failure == 'call':
         model.transcribe.side_effect = error
     monkeypatch.setattr(transcriber, 'load_whisper_model', lambda *a, **kw: model)
+    monkeypatch.setattr(transcriber, 'get_media_duration', lambda *a: 1)
     if failure:
         with pytest.raises((RuntimeError, ValueError)) as caught:
             transcriber.transcribe_audio(str(audio))
         if failure != 'conversion':
             assert caught.value is error
-        # The exception is still alive here; unloading must not depend on its traceback being freed.
         assert caught.value.__traceback__ is not None
     else:
         assert transcriber.transcribe_audio(str(audio))['raw_segments'][0]['text'] == 'hello'
-    native.unload_model.assert_called_once_with()
+    model.cpu.assert_called_once_with()
 
 
 def test_cleanup_errors_do_not_replace_the_inference_error(tmp_path, monkeypatch):
@@ -50,22 +43,22 @@ def test_cleanup_errors_do_not_replace_the_inference_error(tmp_path, monkeypatch
     audio.touch()
     error = RuntimeError('original inference failure')
     native = Mock()
-    native.unload_model.side_effect = RuntimeError('backend unload failed')
-    model = SimpleNamespace(model=native, transcribe=Mock(side_effect=error))
+    native.cpu.side_effect = RuntimeError('backend unload failed')
+    model = SimpleNamespace(cpu=native.cpu, device=SimpleNamespace(type='cuda'), transcribe=Mock(side_effect=error))
     monkeypatch.setattr(transcriber, 'load_whisper_model', lambda *a, **kw: model)
     monkeypatch.setattr(env_utils.torch.cuda, 'empty_cache', Mock(side_effect=RuntimeError('CUDA cache failed')))
     with pytest.raises(RuntimeError) as caught:
         transcriber.transcribe_audio(str(audio))
     assert caught.value is error
-    native.unload_model.assert_called_once()
+    native.cpu.assert_called_once()
 
 
-def test_failed_loader_does_not_keep_its_model_alive_during_retry():
+def test_failed_loader_does_not_keep_its_model_alive_during_retry(monkeypatch):
     references = []
     class Resource:
         pass
 
-    def loader(name, device, compute_type):
+    def loader(name, device):
         if references:
             assert references[0]() is None, 'failed loader traceback retained the previous model'
             return 'loaded'
@@ -74,7 +67,8 @@ def test_failed_loader_does_not_keep_its_model_alive_during_retry():
         references.append(weakref.ref(resource))
         raise RuntimeError('CUDA allocation failed')
 
-    assert transcriber.load_whisper_model('base', loader=loader) == 'loaded'
+    monkeypatch.setattr(transcriber.stable_whisper, 'load_model', loader)
+    assert transcriber.load_whisper_model() == 'loaded'
     assert references[0]() is None
 
 
@@ -82,13 +76,13 @@ def test_failed_loader_does_not_keep_its_model_alive_during_retry():
 def test_locked_timeline_unloads_after_failure(tmp_path, monkeypatch, failure):
     path = tmp_path / 'audio.wav'
     path.touch()
-    monkeypatch.setattr(audio, 'decode_audio', lambda *a, **kw: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(acoustic_analyzer, 'load_audio', lambda *a, **kw: np.zeros(16000, dtype=np.float32))
     native = Mock()
     error = RuntimeError('locked inference failed')
     def segments():
         raise error
         yield
-    model = SimpleNamespace(model=native, transcribe=Mock(return_value=(segments(), None)))
+    model = SimpleNamespace(cpu=native.cpu, device=SimpleNamespace(type='cuda'), transcribe=Mock(return_value=SimpleNamespace(segments=segments())))
     if failure == 'call':
         model.transcribe.side_effect = error
     monkeypatch.setattr(acoustic_analyzer, 'load_whisper_model', lambda *a, **kw: model)
@@ -96,7 +90,7 @@ def test_locked_timeline_unloads_after_failure(tmp_path, monkeypatch, failure):
     with pytest.raises(RuntimeError) as caught:
         acoustic_analyzer.transcribe_on_locked_timeline(str(path), track)
     assert caught.value is error
-    native.unload_model.assert_called_once()
+    native.cpu.assert_called_once()
 
 
 @pytest.mark.parametrize('failure', ['alignment', 'slice', 'partial_slice'])
@@ -106,7 +100,7 @@ def test_luna_unloads_model_and_removes_owned_slices(tmp_path, monkeypatch, fail
     model = SimpleNamespace(cpu=Mock(), align=Mock(return_value=SimpleNamespace(segments=[segment])))
     if failure == 'alignment':
         model.align.side_effect = error
-    monkeypatch.setattr(luna_pipeline, 'load_native_whisper_model', lambda *a, **kw: model)
+    monkeypatch.setattr(luna_pipeline, 'load_whisper_model', lambda *a, **kw: model)
     slices = []
     def cut(source, start, end, output):
         path = Path(output)

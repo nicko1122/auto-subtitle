@@ -18,7 +18,7 @@ from .env_utils import preload_cuda_libs, release_gpu_memory
 preload_cuda_libs()
 
 import stable_whisper
-from .transcriber import DEFAULT_WHISPER_MODEL, transcribe_native_audio, load_native_whisper_model, unload_native_whisper_model
+from .transcriber import WHISPER_MODEL, transcribe_audio, load_whisper_model, unload_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
 from .lyric_reference import build_lyric_occurrences
 from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
@@ -200,7 +200,6 @@ class LunaPipeline:
         llm_provider: str = "local",  # "local" | "api"
         local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        whisper_model: str = DEFAULT_WHISPER_MODEL,
         device: str = "auto",
         prompt: Optional[str] = None,
         llm_audit: bool = True,
@@ -218,7 +217,6 @@ class LunaPipeline:
         self.llm_provider = llm_provider
         self.local_model_name = local_model_name
         self.progress_callback = progress_callback
-        self.whisper_model = whisper_model
         self.device = device
         self.prompt = prompt or "繁體中文"
         self.llm_audit = llm_audit
@@ -300,7 +298,7 @@ class LunaPipeline:
             "lyrics_lines_count": len(self.org_lines),
             "script_mode": self.script_mode,
             "reference_lines_count": len(self.reference_lines),
-            "whisper_model": self.whisper_model,
+            "whisper_model": WHISPER_MODEL,
             "whisper_backend": "native",
             "alignment_tool": "stable-ts 2.19.1",
             "llm_provider": self.llm_provider,
@@ -313,11 +311,10 @@ class LunaPipeline:
 
     def step_2_whisper_full_asr(self) -> List[Dict[str, Any]]:
         """【第 4 節】Whisper 全曲辨識 (初稿分段 + 逐詞時間戳)"""
-        self._notify(2, 5, f"原生 Whisper ({self.whisper_model}) 全曲聲學辨識與逐詞特徵提取中...")
+        self._notify(2, 5, f"原生 Whisper ({WHISPER_MODEL}) 全曲聲學辨識與逐詞特徵提取中...")
         
-        self.raw_asr = transcribe_native_audio(
+        self.raw_asr = transcribe_audio(
             audio_path=self.audio_path,
-            model_size=self.whisper_model,
             device=self.device,
             initial_prompt=self.prompt,
         )
@@ -368,7 +365,7 @@ class LunaPipeline:
             return self.cue_evidence
         lyrics_text = "\n".join(self.org_lines)
 
-        st_model = load_native_whisper_model(self.whisper_model, self.device)
+        st_model = load_whisper_model(self.device)
         try:
             with tempfile.TemporaryDirectory(dir=self.output_dir, prefix="temp_slices_") as slice_directory:
                 align_res = st_model.align(
@@ -453,7 +450,7 @@ class LunaPipeline:
                     if default_candidate == "cand_asr":
                         candidates["cand_asr"] = {
                             "candidate_id": "cand_asr",
-                            "source": f"native whisper {self.whisper_model}",
+                            "source": f"native whisper {WHISPER_MODEL}",
                             "start": round(t_asr_start, 3),
                             "end": round(t_asr_end, 3),
                             "text": asr_text,
@@ -510,7 +507,7 @@ class LunaPipeline:
                 self.cue_evidence = evidence_list
                 return self.cue_evidence
         finally:
-            unload_native_whisper_model(st_model)
+            unload_whisper_model(st_model)
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""
@@ -832,7 +829,6 @@ def run_luna_pipeline(
     llm_provider: str = "local",
     local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    whisper_model: str = DEFAULT_WHISPER_MODEL,
     device: str = "auto",
     prompt: Optional[str] = None,
     llm_audit: bool = True,
@@ -846,7 +842,6 @@ def run_luna_pipeline(
         llm_provider=llm_provider,
         local_model_name=local_model_name,
         progress_callback=progress_callback,
-        whisper_model=whisper_model,
         device=device,
         prompt=prompt,
         llm_audit=llm_audit,
