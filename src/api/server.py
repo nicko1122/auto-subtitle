@@ -7,6 +7,7 @@ import ipaddress
 from urllib.parse import quote
 
 from . import asset_packages
+from .model_tasks import model_task
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 
@@ -510,6 +511,7 @@ def snap_split_endpoint(req: SnapSplitRequest):
 
 
 @app.post("/api/ai/transcribe-segments")
+@model_task
 def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
     """【階段三：依鎖定時間軸填字】嚴格依照使用者已確認的每個 #index [start, end] 執行受控 Whisper 填字"""
     p = _resolve_media_path(req.media_path)
@@ -533,6 +535,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 
 
 @app.post("/api/ai/transcribe")
+@model_task
 def transcribe_endpoint(
     media_path: str = Form(...),
     model: str = Form("large-v3-turbo"),
@@ -639,6 +642,7 @@ def transcribe_endpoint(
 
 
 @app.post("/api/ai/align")
+@model_task
 def align_endpoint(req: AlignRequest):
     """【有稿模式】利用完整 Luna Pipeline 進行原稿強制對齊與時間軸審核"""
     p = _resolve_media_path(req.media_path)
@@ -690,6 +694,7 @@ def align_endpoint(req: AlignRequest):
 
 
 @app.post("/api/ai/proofread")
+@model_task
 def proofread_endpoint(req: ProofreadRequest):
     """【無稿/有稿模式】使用本地 Qwen2.5 進行錯別字校對"""
     proofreader = None
@@ -711,6 +716,7 @@ def proofread_endpoint(req: ProofreadRequest):
 
 
 @app.post("/api/burn")
+@model_task
 def burn_endpoint(req: BurnVideoRequest):
     """【Hardcopy 壓制】將字幕硬燒錄進影片中"""
     v_path = _resolve_media_path(req.video_path)
