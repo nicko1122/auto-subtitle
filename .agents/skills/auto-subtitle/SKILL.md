@@ -25,6 +25,7 @@ Choose the appropriate command or pipeline based on input assets:
 | **Fix Typos / Homophones** (with Edge LLM) | `python src/cli/main.py proofread` | `<subtitles.srt> --gpu-layers -1` |
 | **Burn Subtitles into Video (Hardsub)** | `python src/cli/main.py burn` | `<video> <subtitles.srt> --css "..."` |
 | **Manage Fonts** (Install open-source / Win fonts) | `python src/cli/main.py fonts` | `list`, `install <id/path/url>`, `remove <filename>` |
+| **AI Video Upscaling (Super-Resolution)** | `python src/cli/main.py upscale` | `<video> --scale 2 --model realesr-animevideov3` |
 | **Launch Web Studio** | `python src/cli/main.py serve` | `--host 0.0.0.0 --port 8000` |
 
 ---
@@ -105,6 +106,16 @@ python src/cli/main.py fonts install openhuninn
 # Install from URL or local file:
 python src/cli/main.py fonts install https://example.com/font.ttf
 python src/cli/main.py fonts install /path/to/custom_font.otf
+```
+
+### 6. AI Video Upscaling (`upscale`)
+Uses Real-ESRGAN Compact lightweight video model (`realesr-animevideov3`) to upscale 2x or 4x:
+```bash
+# Upscale 2x with default Compact model
+python src/cli/main.py upscale inputclip/test_video.mp4 --scale 2
+
+# Upscale 4x with anime model
+python src/cli/main.py upscale anime.mp4 --scale 4 --model realesrgan-x4plus-anime
 ```
 
 ---

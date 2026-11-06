@@ -263,7 +263,12 @@
               <div id="slot-card-video" class="p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 flex flex-col justify-between gap-1.5 transition">
                 <div class="flex items-center justify-between text-[11px]">
                   <span class="text-zinc-400 font-medium flex items-center gap-1">🎬 影片來源</span>
-                  <span id="slot-video-status" class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]">未載入</span>
+                  <div class="flex items-center gap-1">
+                    <button id="btn-upscale-active-video" class="hidden px-1.5 py-0.5 rounded bg-violet-950/60 text-violet-300 border border-violet-500/40 hover:bg-violet-900/60 text-[10px] font-medium transition flex items-center gap-0.5" title="使用 AI 超解析度模型放大此影片">
+                      <span>✨ AI 放大</span>
+                    </button>
+                    <span id="slot-video-status" class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]">未載入</span>
+                  </div>
                 </div>
                 <div id="slot-video-name" class="text-xs font-semibold text-zinc-300 truncate">請從下方選擇或拖入影片</div>
                 <div id="slot-video-meta" class="text-[10px] text-zinc-500 font-mono">支援 MP4 / MOV / WebM</div>
@@ -430,15 +435,19 @@
               <div class="p-2 bg-zinc-900/90 rounded-lg border border-zinc-800 space-y-1.5">
                 <div class="flex items-center justify-between text-[10px] text-zinc-300">
                   <span class="font-semibold text-purple-300 text-[11px]">步驟 3：鎖定時間軸填字</span>
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-1.5">
                     <label class="flex items-center gap-1 cursor-pointer select-none" title="勾選後，您已經手動打好字的段落不會被覆蓋">
                       <input type="checkbox" id="check-locked-only-empty" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
-                      <span>僅填空白段</span>
+                      <span>僅填空白</span>
                     </label>
-                    <label class="flex items-center gap-1 cursor-pointer select-none" title="辨識後自動執行雲端 LLM API (.env) 錯別字校正">
-                      <input type="checkbox" id="check-locked-proofread" class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
-                      <span>LLM API校對</span>
+                    <label class="flex items-center gap-1 cursor-pointer select-none" title="填字後自動執行 AI 錯別字校正 (與第 1 頁設定即時同步)">
+                      <input type="checkbox" id="check-locked-proofread" checked class="rounded bg-zinc-800 border-zinc-700 text-purple-500">
+                      <span>AI 校對</span>
                     </label>
+                    <select id="select-locked-llm-engine" class="bg-zinc-950 text-purple-300 border border-zinc-700 rounded px-1 py-0.5 text-[10px]" title="校對使用的 AI 模型引擎 (與第 1 頁即時連動)">
+                      <option value="local">本地 Qwen2.5</option>
+                      <option value="api">雲端 LLM API</option>
+                    </select>
                   </div>
                 </div>
                 <button id="btn-transcribe-locked" class="w-full py-1.5 px-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold flex items-center justify-center gap-1 shadow shadow-purple-500/20 transition" title="嚴格按照下方已校對的每個 #Index 起訖時間與預估字數執行 Whisper 填空，絕不改動時間軸！">
@@ -855,16 +864,121 @@
 
   </main>
 
-  <!-- 引入前端邏輯腳本 -->
-  <!-- 長時間處理遮罩：半透明覆蓋整頁 + 旋轉動畫 + 已等待時間 -->
-  <div id="busy-overlay" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/60 backdrop-blur-sm select-none">
-    <div class="flex flex-col items-center gap-4 px-8 py-6 rounded-2xl bg-zinc-900/90 border border-purple-500/30 shadow-2xl shadow-purple-900/40">
-      <div class="w-14 h-14 rounded-full border-4 border-zinc-700 border-t-purple-500 border-r-blue-500 animate-spin"></div>
-      <div id="busy-overlay-text" class="text-sm font-semibold text-zinc-100">處理中...</div>
-      <div class="text-xs text-zinc-400">已等待 <span id="busy-overlay-elapsed" class="font-mono text-purple-300">00:00</span></div>
+  <!-- ✨ AI 畫質超解析放大 Modal -->
+  <div id="modal-upscale" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm select-none p-4">
+    <div class="w-full max-w-md bg-zinc-900 border border-violet-500/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <div class="px-5 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-violet-500 animate-pulse"></span>
+          <h3 class="text-sm font-semibold text-zinc-100">✨ AI 視訊超解析放大 (Super-Resolution)</h3>
+        </div>
+        <button id="btn-close-upscale-modal" class="text-zinc-500 hover:text-zinc-300 text-lg leading-none">&times;</button>
+      </div>
+
+      <div class="p-5 space-y-4 text-xs">
+        <!-- 來源資訊 -->
+        <div class="p-3 bg-zinc-950/80 rounded-xl border border-zinc-800/80 space-y-1.5">
+          <div class="text-[11px] text-zinc-400 font-medium">欲放大的資產：</div>
+          <div id="upscale-target-name" class="font-semibold text-zinc-200 text-sm truncate">尚未選擇</div>
+          <div id="upscale-target-meta" class="text-[11px] text-zinc-500 font-mono">準備就緒</div>
+        </div>
+
+        <!-- 放大倍率 -->
+        <div class="space-y-1.5">
+          <label class="font-medium text-zinc-300">選擇放大倍率：</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-2 p-2.5 rounded-lg border border-violet-500/50 bg-violet-950/20 cursor-pointer">
+              <input type="radio" name="upscale-scale" value="2" checked class="text-violet-600 focus:ring-0">
+              <div>
+                <div class="font-semibold text-zinc-200">2x 放大 (推薦)</div>
+                <div class="text-[10px] text-zinc-400">720p ➔ 1440p / 1080p ➔ 4K</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 p-2.5 rounded-lg border border-zinc-800 bg-zinc-950/40 cursor-pointer">
+              <input type="radio" name="upscale-scale" value="4" class="text-violet-600 focus:ring-0">
+              <div>
+                <div class="font-semibold text-zinc-200">4x 極限放大</div>
+                <div class="text-[10px] text-zinc-400">超高清晰度，耗時較長</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- AI 模型選擇 -->
+        <div class="space-y-1.5">
+          <label class="font-medium text-zinc-300">超解析度神經網路模型：</label>
+          <select id="select-upscale-model" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-zinc-200 focus:outline-none focus:border-violet-500 text-xs">
+            <option value="realesr-animevideov3" selected>realesr-animevideov3 (Compact 輕量視訊模型 · 推薦)</option>
+            <option value="realesrgan-x4plus-anime">realesrgan-x4plus-anime (動漫特化高畫質)</option>
+            <option value="realesrgan-x4plus">realesrgan-x4plus (通用寫實細節重構)</option>
+          </select>
+          <p class="text-[10px] text-zinc-500">Compact 輕量模型速度最快且顯存佔用低，在字幕短影音與二次元線條有絕佳保真度。</p>
+        </div>
+
+        <!-- 影格耗時試算與紅字預警 -->
+        <div id="upscale-estimate-box" class="p-3 bg-zinc-950/80 rounded-xl border border-zinc-800/80 space-y-2">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-zinc-400">視訊規格與總影格：</span>
+            <span id="upscale-frames-info" class="font-mono text-zinc-300">分析中...</span>
+          </div>
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-zinc-400">預估耗時 (單卡實測基準)：</span>
+            <span id="upscale-time-est" class="font-semibold text-emerald-400 font-mono">試算中...</span>
+          </div>
+          <!-- ⚠️ 紅字預警提示 (依模型與總耗時自動切換顯示) -->
+          <div id="upscale-warning-box" class="hidden p-2.5 bg-red-950/70 border border-red-500/70 text-red-200 rounded-lg text-[11px] leading-relaxed flex items-start gap-2 shadow-inner">
+            <span class="text-base leading-none">⚠️</span>
+            <div id="upscale-warning-text" class="flex-1"></div>
+          </div>
+        </div>
+
+        <!-- 衍生資產包提示 -->
+        <div class="p-2.5 bg-blue-950/30 border border-blue-800/40 rounded-lg text-[11px] text-blue-300 leading-relaxed">
+          💡 <strong>無痛繼承：</strong> 放大完成後將自動建立衍生高畫質資產包（如 <code id="upscale-preview-pkg-name">原名_2x</code>），並<strong>自動繼承複製現有的 SRT 字幕與原詞</strong>，時間軸完全通用！
+        </div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-zinc-800 bg-zinc-950/60 flex justify-end gap-2.5">
+        <button id="btn-cancel-upscale" class="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition">取消</button>
+        <button id="btn-confirm-upscale" class="px-4 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-lg shadow-violet-600/30 transition flex items-center gap-1.5">
+          <span>✨ 開始 AI 放大</span>
+        </button>
+      </div>
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261105_v8"></script>
+  <!-- 引入前端邏輯腳本 -->
+  <!-- 長時間處理遮罩：半透明覆蓋整頁 + 旋轉動畫 + 即時進度條 + 已等待時間/預估剩餘 + 中途停止按鈕 -->
+  <div id="busy-overlay" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/75 backdrop-blur-sm select-none p-4">
+    <div class="flex flex-col items-center gap-4 px-8 py-6 rounded-2xl bg-zinc-900 border border-purple-500/30 shadow-2xl shadow-purple-900/40 w-full max-w-sm text-center">
+      <div class="w-12 h-12 rounded-full border-4 border-zinc-700 border-t-purple-500 border-r-blue-500 animate-spin"></div>
+      <div id="busy-overlay-text" class="text-sm font-semibold text-zinc-100">處理中...</div>
+
+      <!-- 即時任務進度條與影格計數 (非同步放大任務顯示) -->
+      <div id="busy-overlay-progress-container" class="w-full hidden space-y-1.5">
+        <div class="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden border border-zinc-700/50">
+          <div id="busy-overlay-progress-bar" class="bg-gradient-to-r from-violet-500 via-indigo-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-[11px] text-zinc-400 font-mono px-0.5">
+          <span id="busy-overlay-frame-count">0 / 0 幀</span>
+          <span id="busy-overlay-percent">0%</span>
+        </div>
+      </div>
+
+      <div class="text-xs text-zinc-400">
+        已等待 <span id="busy-overlay-elapsed" class="font-mono text-purple-300">00:00</span>
+        <span id="busy-overlay-eta-wrapper" class="hidden"> · 剩餘約 <span id="busy-overlay-eta" class="font-mono text-emerald-400">--</span></span>
+      </div>
+
+      <div id="busy-overlay-detail" class="text-[11px] text-zinc-400 max-w-xs truncate hidden"></div>
+
+      <!-- ⏹️ 中途停止任務按鈕 -->
+      <button id="btn-cancel-busy-task" class="hidden mt-1 px-4 py-1.5 bg-red-600/90 hover:bg-red-600 active:bg-red-700 text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-lg shadow-red-950/50 cursor-pointer">
+        <span>⏹️ 中途停止任務</span>
+      </button>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20261106_v1"></script>
 </body>
 </html>

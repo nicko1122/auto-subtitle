@@ -11,7 +11,7 @@ class Element {
   appendChild(node) { this.children.push(node); }
   addEventListener() {}
   querySelector(selector) {
-    if (!['.package-name', '.package-files', '.package-open', '.package-rename', '.package-move', '.package-delete', '.font-label', '.font-description'].includes(selector)) return null;
+    if (!['.package-name', '.package-files', '.package-open', '.package-rename', '.package-move', '.package-delete', '.package-upscale', '.font-label', '.font-description'].includes(selector)) return null;
     if (!this.nodes.has(selector)) this.nodes.set(selector, new Element());
     return this.nodes.get(selector);
   }

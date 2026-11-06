@@ -5,12 +5,13 @@ import shutil
 import uuid
 import ipaddress
 import tempfile
+import threading
 from urllib.parse import quote
 
 from . import asset_packages
-from .model_tasks import model_task
+from .model_tasks import model_task, model_task_lock
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Tuple
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -29,7 +30,16 @@ from ..core.acoustic_analyzer import (
     snap_time_to_valley,
     transcribe_on_locked_timeline
 )
-from ..core.video_burner import burn_subtitles_to_video, get_video_info
+from ..core.video_burner import burn_subtitles_to_video, get_video_info, check_nvenc_support
+from ..core.video_upscaler import (
+    upscale_video,
+    find_upscaler_binary,
+    get_video_stream_info,
+    estimate_upscale_time,
+    clean_stale_upscale_temp_dirs,
+    upscale_manager,
+    UpscaleTask
+)
 from ..core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
 from ..core.css_parser import parse_css_to_style_dict
 from ..core.font_manager import (
@@ -56,6 +66,11 @@ TEMPLATES_DIR = BASE_DIR / "src" / "web" / "templates"
 
 for d in (UPLOADS_DIR, OUTPUT_DIR, TEMP_DIR, STATIC_DIR, TEMPLATES_DIR, PRESETS_DIR, FONTS_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+try:
+    clean_stale_upscale_temp_dirs()
+except Exception:
+    pass
 
 app = FastAPI(title="Auto Subtitle Web Studio", version="1.0.0")
 
@@ -112,6 +127,13 @@ class BurnVideoRequest(BaseModel):
     subtitle_path: Optional[str] = None
     style: Optional[SubtitleStyle] = None
     css: Optional[str] = None
+
+
+class UpscaleVideoRequest(BaseModel):
+    package_path: Optional[str] = None
+    media_path: Optional[str] = None
+    scale: int = 2
+    model_name: str = "realesr-animevideov3"
 
 
 class AlignRequest(BaseModel):
@@ -753,3 +775,266 @@ def burn_endpoint(req: BurnVideoRequest):
     except Exception as e:
         logger.error(f"壓制失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/upscale/status")
+def upscale_status_endpoint():
+    """查詢 AI 超解析放大工具狀態與支援模型"""
+    binary = find_upscaler_binary()
+    nvenc = check_nvenc_support()
+    return {
+        "available": binary is not None,
+        "binary_name": binary.name if binary else None,
+        "nvenc_accelerated": nvenc,
+        "default_model": "realesr-animevideov3",
+        "models": [
+            {"id": "realesr-animevideov3", "name": "realesr-animevideov3 (Compact 輕量視訊模型 · 推薦)", "description": "速度極快、顯存負擔輕，適合短影音、動漫、字卡與一般生活影片"},
+            {"id": "realesrgan-x4plus-anime", "name": "realesrgan-x4plus-anime (動漫特化高畫質)", "description": "二次元線條特化，針對線條有更強的清晰度修復"},
+            {"id": "realesrgan-x4plus", "name": "realesrgan-x4plus (通用寫實細節)", "description": "真實世界高解析度重構，計算量較大"}
+        ],
+        "scales": [2, 4]
+    }
+
+
+def _resolve_upscale_target(req: UpscaleVideoRequest) -> Tuple[Path, Optional[Path], Optional[Path], Optional[Path]]:
+    target_media: Optional[Path] = None
+    source_srt: Optional[Path] = None
+    source_script: Optional[Path] = None
+    source_pkg_dir: Optional[Path] = None
+
+    if req.package_path:
+        try:
+            with asset_packages.mutation_lock:
+                source_pkg_dir = asset_packages.resolve_package(UPLOADS_DIR, req.package_path)
+                target_media, source_srt, source_script = asset_packages.package_files(source_pkg_dir)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    elif req.media_path:
+        target_media = _resolve_media_path(req.media_path)
+        for srt_ext in (".srt", ".vtt"):
+            cand = target_media.with_suffix(srt_ext)
+            if cand.exists():
+                source_srt = cand
+                break
+        for txt_ext in (".txt", ".lrc"):
+            cand = target_media.with_suffix(txt_ext)
+            if cand.exists():
+                source_script = cand
+                break
+    else:
+        raise HTTPException(status_code=400, detail="請指定欲放大的資產包路徑 (package_path) 或媒體檔案 (media_path)")
+
+    if not target_media or not target_media.exists():
+        raise HTTPException(status_code=404, detail="找不到欲放大的來源媒體檔案")
+
+    return target_media, source_srt, source_script, source_pkg_dir
+
+
+@app.post("/api/upscale/estimate")
+def estimate_upscale_endpoint(req: UpscaleVideoRequest):
+    """【影格耗時試算與紅字預警】解析影片規格，計算總影格數與預估運算耗時"""
+    target_media, _, _, _ = _resolve_upscale_target(req)
+    info = get_video_stream_info(str(target_media))
+    total_frames = info["nb_frames"]
+    estimate = estimate_upscale_time(
+        width=info["width"],
+        height=info["height"],
+        total_frames=total_frames,
+        model_name=req.model_name,
+        scale=req.scale
+    )
+    return {
+        "status": "success",
+        "target_media": target_media.name,
+        "stream_info": info,
+        "estimate": estimate
+    }
+
+
+@app.post("/api/upscale/start")
+def start_upscale_endpoint(req: UpscaleVideoRequest):
+    """【啟動非同步 AI 放大任務】回傳 task_id 以供前端即時輪詢進度與支援中途停止"""
+    if not model_task_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="模型或放大任務執行中，請稍候再試。")
+
+    try:
+        target_media, source_srt, source_script, source_pkg_dir = _resolve_upscale_target(req)
+        base_name = source_pkg_dir.name if source_pkg_dir else target_media.stem
+        new_pkg_name = f"{base_name}_{req.scale}x"
+        new_pkg_dir = UPLOADS_DIR / new_pkg_name
+        new_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        out_media_name = f"{target_media.stem}_{req.scale}x{target_media.suffix}"
+        out_media_path = new_pkg_dir / out_media_name
+
+        info = get_video_stream_info(str(target_media))
+        total_frames = info["nb_frames"]
+        task_id = f"upscale_{uuid.uuid4().hex[:8]}"
+
+        task = upscale_manager.create_task(task_id, target_media.name, total_frames)
+    except Exception:
+        model_task_lock.release()
+        raise
+
+    def worker():
+        try:
+            def progress_cb(data):
+                task.stage = data.get("stage", task.stage)
+                task.current_frame = data.get("current_frame", task.current_frame)
+                task.total_frames = data.get("total_frames", task.total_frames)
+                task.percent = data.get("percent", task.percent)
+                task.message = data.get("message", task.message)
+                task.eta_seconds = data.get("eta_seconds", 0)
+                task.eta_text = data.get("eta_text", "")
+
+            def cancel_cb():
+                return task.cancel_requested
+
+            def reg_proc(proc):
+                task.current_process = proc
+
+            def on_tmp(tmp):
+                task.temp_dir = tmp
+
+            upscale_video(
+                input_path=str(target_media),
+                output_path=str(out_media_path),
+                scale=req.scale,
+                model_name=req.model_name,
+                use_gpu=True,
+                progress_callback=progress_cb,
+                cancel_check=cancel_cb,
+                register_process=reg_proc,
+                on_temp_dir_created=on_tmp
+            )
+
+            if task.cancel_requested:
+                task.stage = "cancelled"
+                task.message = "任務已由使用者手動中止"
+                if out_media_path.exists():
+                    out_media_path.unlink(missing_ok=True)
+                return
+
+            if source_srt and source_srt.exists():
+                dest_srt = new_pkg_dir / f"{target_media.stem}_{req.scale}x{source_srt.suffix}"
+                shutil.copy2(str(source_srt), str(dest_srt))
+
+            if source_script and source_script.exists():
+                dest_script = new_pkg_dir / f"{target_media.stem}_{req.scale}x{source_script.suffix}"
+                shutil.copy2(str(source_script), str(dest_script))
+
+            with asset_packages.mutation_lock:
+                pkg_info = _describe_package(new_pkg_dir)
+
+            task.stage = "completed"
+            task.percent = 100.0
+            task.message = f"AI 畫質放大完成！已建立高畫質資產包【{new_pkg_name}】"
+            task.result = {
+                "status": "success",
+                "message": task.message,
+                "package": pkg_info,
+                "scale": req.scale,
+                "model_name": req.model_name
+            }
+        except InterruptedError:
+            logger.info(f"AI 放大任務 {task_id} 已手動中止")
+            task.stage = "cancelled"
+            task.message = "任務已手動中止，暫存檔案已自動清理。"
+            if out_media_path.exists():
+                out_media_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.error(f"AI 放大任務 {task_id} 失敗: {e}", exc_info=True)
+            task.stage = "failed"
+            task.error = str(e)
+            task.message = f"AI 畫質放大失敗: {str(e)}"
+            if out_media_path.exists():
+                out_media_path.unlink(missing_ok=True)
+        finally:
+            try:
+                model_task_lock.release()
+            except RuntimeError:
+                pass
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    return {
+        "status": "started",
+        "task_id": task_id,
+        "target_name": target_media.name,
+        "total_frames": total_frames
+    }
+
+
+@app.get("/api/upscale/task/{task_id}")
+def get_upscale_task_endpoint(task_id: str):
+    """查詢非同步 AI 放大任務的當前進度與 ETA"""
+    task = upscale_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到指定的放大任務")
+    return task.to_dict()
+
+
+@app.post("/api/upscale/task/{task_id}/cancel")
+def cancel_upscale_task_endpoint(task_id: str):
+    """中途手動中止 AI 放大任務並自動清理暫存目錄"""
+    task = upscale_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到指定的放大任務")
+    task.cancel()
+    return {"status": "cancelling", "task_id": task_id}
+
+
+@app.post("/api/upscale/video")
+@model_task
+def upscale_video_endpoint(req: UpscaleVideoRequest):
+    """
+    【資產 AI 畫質超解析放大 (同步阻塞端點)】
+    以 Real-ESRGAN Compact 輕量模型放大影片，並自動建立/衍生高畫質資產包（同步繼承既有字幕與原稿）
+    """
+    target_media, source_srt, source_script, source_pkg_dir = _resolve_upscale_target(req)
+
+    base_name = source_pkg_dir.name if source_pkg_dir else target_media.stem
+    new_pkg_name = f"{base_name}_{req.scale}x"
+    new_pkg_dir = UPLOADS_DIR / new_pkg_name
+    new_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    out_media_name = f"{target_media.stem}_{req.scale}x{target_media.suffix}"
+    out_media_path = new_pkg_dir / out_media_name
+
+    logger.info(f"開始執行 AI 超解析放大: {target_media} ➔ {out_media_path} ({req.scale}x, {req.model_name})")
+
+    try:
+        upscale_video(
+            input_path=str(target_media),
+            output_path=str(out_media_path),
+            scale=req.scale,
+            model_name=req.model_name,
+            use_gpu=True
+        )
+
+        if source_srt and source_srt.exists():
+            dest_srt = new_pkg_dir / f"{target_media.stem}_{req.scale}x{source_srt.suffix}"
+            shutil.copy2(str(source_srt), str(dest_srt))
+
+        if source_script and source_script.exists():
+            dest_script = new_pkg_dir / f"{target_media.stem}_{req.scale}x{source_script.suffix}"
+            shutil.copy2(str(source_script), str(dest_script))
+
+        with asset_packages.mutation_lock:
+            pkg_info = _describe_package(new_pkg_dir)
+
+        return {
+            "status": "success",
+            "message": f"AI 畫質放大完成！已建立高畫質資產包【{new_pkg_name}】",
+            "package": pkg_info,
+            "scale": req.scale,
+            "model_name": req.model_name
+        }
+    except Exception as e:
+        logger.error(f"AI 放大失敗: {e}", exc_info=True)
+        if out_media_path.exists():
+            out_media_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"AI 畫質放大失敗: {str(e)}")

@@ -62,6 +62,11 @@
 ### 5. ⚡ NVIDIA NVENC GPU 硬字幕壓制 (Hardsub)
 - 支援以 NVIDIA NVENC 硬體加速將 ASS 樣式字幕無損音軌直接燒錄進 MP4 影片中。
 
+### 6. ✨ AI 視訊超解析度放大 (Video Super-Resolution)
+- **Compact 輕量視訊模型**：整合 `realesrgan-ncnn-vulkan`（`realesr-animevideov3`），兼具高速、低顯存與邊緣銳化保真度。
+- **資產庫隨選放大與無痛繼承**：在資產庫可一鍵執行 2x / 4x 放大，自動衍生高畫質資產包，並同步繼承現有字幕與原稿（時間軸通用）。
+- **GPU 任務鎖排程保護**：嚴格納入 `ModelTaskLock`，避免與 Whisper / LLM 並行造成顯存溢出。
+
 ---
 
 ## 🛠️ 環境需求
@@ -204,7 +209,24 @@ python3 src/cli/main.py burn <影片路徑> <字幕路徑> [OPTIONS]
 | `--cpu` | - | `False` | 強制使用 CPU libx264 (預設自動啟用 NVIDIA NVENC) |
 | `-o`, `--output`| `-o` | `<影片名>.hardsub.mp4` | 輸出影片路徑 |
 
-#### 🔹 (4) `proofread`：地端 LLM 逐字稿校對
+#### 🔹 (4) `upscale`：AI 視訊超解析度放大 (Super-Resolution)
+使用 Real-ESRGAN Compact 輕量視訊模型將影片超解析放大 (2x / 4x)：
+```bash
+# 放大 2x (使用 Compact 輕量視訊模型，預設)
+python3 src/cli/main.py upscale <來源影片.mp4> --scale 2
+
+# 指定輸出路徑與動漫特化模型放大 4x
+python3 src/cli/main.py upscale anime.mp4 -o anime_4k.mp4 --scale 4 --model realesrgan-x4plus-anime
+```
+| 參數名稱 | 縮寫 | 預設值 | 說明 |
+| :--- | :--- | :--- | :--- |
+| `video_path` | (必填) | - | 來源影片檔案路徑 (MP4, MOV, MKV 等) |
+| `-s`, `--scale` | `-s` | `2` | 放大倍率 (`2` 或 `4`) |
+| `-m`, `--model` | `-m` | `realesr-animevideov3` | 模型 (`realesr-animevideov3`, `realesrgan-x4plus-anime`, `realesrgan-x4plus`) |
+| `--no-gpu` | - | `False` | 強制停用 NVENC 硬體加速編碼 |
+| `-o`, `--output`| `-o` | `<影片名>_<scale>x.mp4` | 輸出高解析度影片路徑 |
+
+#### 🔹 (5) `proofread`：地端 LLM 逐字稿校對
 調用本地 Qwen2.5-3B 模型全速修正語音辨識的同音異字：
 ```bash
 python3 src/cli/main.py proofread <字幕檔.srt/.json> [OPTIONS]
@@ -216,7 +238,7 @@ python3 src/cli/main.py proofread <字幕檔.srt/.json> [OPTIONS]
 | `--gpu-layers` | - | `-1` | GPU 卸載層數 (`-1` 為全層放入 VRAM 加速) |
 | `-o`, `--output`| `-o` | `<檔名>.proofread.srt` | 輸出校對後字幕檔路徑 |
 
-#### 🔹 (5) `fonts`：字型庫安裝與管理
+#### 🔹 (6) `fonts`：字型庫安裝與管理
 ```bash
 # 查看所有可用、已安裝與本機 Windows 字型清單
 python3 src/cli/main.py fonts list
@@ -232,7 +254,7 @@ python3 src/cli/main.py fonts install /path/to/MyFont.otf
 python3 src/cli/main.py fonts remove jf-openhuninn-2.0.ttf
 ```
 
-#### 🔹 (6) 其它單元模組工具
+#### 🔹 (7) 其它單元模組工具
 - **抽音**：`python3 src/cli/main.py extract <影片> -o <音訊.wav> --sr 16000`
 - **獨立辨識**：`python3 src/cli/main.py transcribe <音訊.wav> -d cuda`
 - **獨立斷句**：`python3 src/cli/main.py segment <raw.json> -c 16 -p 0.45`

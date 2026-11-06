@@ -100,6 +100,19 @@ const el = {
   inputUploadFolder: document.getElementById("input-upload-folder"),
   packageSaveStatus: document.getElementById("package-save-status"),
   btnSavePackage: document.getElementById("btn-save-package"),
+  btnUpscaleActiveVideo: document.getElementById("btn-upscale-active-video"),
+  modalUpscale: document.getElementById("modal-upscale"),
+  btnCloseUpscaleModal: document.getElementById("btn-close-upscale-modal"),
+  btnCancelUpscale: document.getElementById("btn-cancel-upscale"),
+  btnConfirmUpscale: document.getElementById("btn-confirm-upscale"),
+  upscaleTargetName: document.getElementById("upscale-target-name"),
+  upscaleTargetMeta: document.getElementById("upscale-target-meta"),
+  upscaleFramesInfo: document.getElementById("upscale-frames-info"),
+  upscaleTimeEst: document.getElementById("upscale-time-est"),
+  upscaleWarningBox: document.getElementById("upscale-warning-box"),
+  upscaleWarningText: document.getElementById("upscale-warning-text"),
+  selectUpscaleModel: document.getElementById("select-upscale-model"),
+  upscalePreviewPkgName: document.getElementById("upscale-preview-pkg-name"),
   assetLibraryContainer: document.getElementById("asset-library-container"),
   btnRefreshAssets: document.getElementById("btn-refresh-assets"),
   btnModeUnscripted: document.getElementById("btn-mode-unscripted"),
@@ -120,6 +133,7 @@ const el = {
   btnAnalyzeBreakpoints: document.getElementById("btn-analyze-breakpoints"),
   checkLockedOnlyEmpty: document.getElementById("check-locked-only-empty"),
   checkLockedProofread: document.getElementById("check-locked-proofread"),
+  selectLockedLlmEngine: document.getElementById("select-locked-llm-engine"),
   btnTranscribeLocked: document.getElementById("btn-transcribe-locked"),
   btnSetInPoint: document.getElementById("btn-set-in-point"),
   btnSetOutPoint: document.getElementById("btn-set-out-point"),
@@ -202,12 +216,55 @@ const el = {
 // 輔助日誌輸出
 // ---------------- 長時間處理遮罩 (半透明覆蓋整頁) ----------------
 let _busyTimer = null;
-function showBusyOverlay(text = "處理中...") {
+let _busyCancelHandler = null;
+
+function showBusyOverlay(text = "處理中...", options = {}) {
   const ov = document.getElementById("busy-overlay");
   if (!ov) return;
   const txt = document.getElementById("busy-overlay-text");
   const elapsed = document.getElementById("busy-overlay-elapsed");
+  const progressContainer = document.getElementById("busy-overlay-progress-container");
+  const progressBar = document.getElementById("busy-overlay-progress-bar");
+  const frameCount = document.getElementById("busy-overlay-frame-count");
+  const percentText = document.getElementById("busy-overlay-percent");
+  const etaWrapper = document.getElementById("busy-overlay-eta-wrapper");
+  const etaText = document.getElementById("busy-overlay-eta");
+  const detailText = document.getElementById("busy-overlay-detail");
+  const btnCancel = document.getElementById("btn-cancel-busy-task");
+
   if (txt) txt.textContent = text;
+
+  if (options.showProgress) {
+    if (progressContainer) progressContainer.classList.remove("hidden");
+    if (progressBar) progressBar.style.width = "0%";
+    if (frameCount) frameCount.textContent = "0 / 0 幀";
+    if (percentText) percentText.textContent = "0%";
+    if (etaWrapper) etaWrapper.classList.remove("hidden");
+    if (etaText) etaText.textContent = "計算中...";
+    if (detailText) {
+      detailText.textContent = "";
+      detailText.classList.remove("hidden");
+    }
+  } else {
+    if (progressContainer) progressContainer.classList.add("hidden");
+    if (etaWrapper) etaWrapper.classList.add("hidden");
+    if (detailText) detailText.classList.add("hidden");
+  }
+
+  if (btnCancel) {
+    if (options.onCancel) {
+      btnCancel.classList.remove("hidden");
+      _busyCancelHandler = options.onCancel;
+      btnCancel.onclick = () => {
+        if (_busyCancelHandler) _busyCancelHandler();
+      };
+    } else {
+      btnCancel.classList.add("hidden");
+      btnCancel.onclick = null;
+      _busyCancelHandler = null;
+    }
+  }
+
   const t0 = Date.now();
   const tick = () => {
     const s = Math.floor((Date.now() - t0) / 1000);
@@ -219,10 +276,49 @@ function showBusyOverlay(text = "處理中...") {
   ov.classList.remove("hidden");
   ov.classList.add("flex");
 }
+
+function updateBusyProgress(data = {}) {
+  const progressBar = document.getElementById("busy-overlay-progress-bar");
+  const frameCount = document.getElementById("busy-overlay-frame-count");
+  const percentText = document.getElementById("busy-overlay-percent");
+  const etaText = document.getElementById("busy-overlay-eta");
+  const detailText = document.getElementById("busy-overlay-detail");
+  const txt = document.getElementById("busy-overlay-text");
+
+  const pct = Math.max(0, Math.min(100, data.percent || 0));
+  if (progressBar) progressBar.style.width = `${pct}%`;
+  if (percentText) percentText.textContent = `${pct}%`;
+  if (frameCount && data.total_frames !== undefined) {
+    frameCount.textContent = `${data.current_frame || 0} / ${data.total_frames} 幀`;
+  }
+  if (etaText && data.eta_text) {
+    etaText.textContent = data.eta_text;
+  }
+  if (detailText && data.message) {
+    detailText.textContent = data.message;
+  }
+  if (txt && data.stage_text) {
+    txt.textContent = data.stage_text;
+  }
+}
+
 function hideBusyOverlay() {
   const ov = document.getElementById("busy-overlay");
   clearInterval(_busyTimer);
   _busyTimer = null;
+  _busyCancelHandler = null;
+  const btnCancel = document.getElementById("btn-cancel-busy-task");
+  if (btnCancel) {
+    btnCancel.classList.add("hidden");
+    btnCancel.onclick = null;
+  }
+  const progressContainer = document.getElementById("busy-overlay-progress-container");
+  if (progressContainer) progressContainer.classList.add("hidden");
+  const etaWrapper = document.getElementById("busy-overlay-eta-wrapper");
+  if (etaWrapper) etaWrapper.classList.add("hidden");
+  const detailText = document.getElementById("busy-overlay-detail");
+  if (detailText) detailText.classList.add("hidden");
+
   if (!ov) return;
   ov.classList.add("hidden");
   ov.classList.remove("flex");
@@ -814,6 +910,7 @@ function saveSessionToStorage() {
 function updateWorkspaceSlots() {
   // 1. 影片槽狀態
   if (state.video.filename) {
+    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.remove("hidden");
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-blue-950/20 border border-blue-500/40 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-medium";
     el.slotVideoStatus.textContent = "● 使用中";
@@ -822,6 +919,7 @@ function updateWorkspaceSlots() {
     const durStr = state.video.duration ? ` • ${state.video.duration.toFixed(1)}s` : "";
     el.slotVideoMeta.textContent = `${state.video.width}x${state.video.height}${durStr}`;
   } else {
+    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.add("hidden");
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]";
     el.slotVideoStatus.textContent = "未載入";
@@ -1085,6 +1183,7 @@ function renderFilteredAssetLibrary() {
       <div class="flex gap-3 text-[11px] text-zinc-500">
         <button class="package-rename hover:text-zinc-200">重新命名</button>
         <button class="package-move hover:text-zinc-200">移動</button>
+        <button class="package-upscale text-violet-400 hover:text-violet-300">✨ AI 放大</button>
         <button class="package-delete hover:text-red-400">刪除整包</button>
       </div>`;
     if (item.error) {
@@ -1099,6 +1198,15 @@ function renderFilteredAssetLibrary() {
       item.script ? `📄 ${item.script.name}` : "📄 尚無原詞（選填）"
     ].join("\n");
     card.querySelector(".package-open").addEventListener("click", () => openPackage(item.path));
+    const upscaleBtn = card.querySelector(".package-upscale");
+    if (upscaleBtn) {
+      upscaleBtn.addEventListener("click", () => openUpscaleModal({
+        package_path: item.path,
+        media_name: item.media ? item.media.name : item.path,
+        target_name: `資產包: ${item.path}`,
+        meta_info: item.media ? `原始影片: ${item.media.name} (${item.media.size_mb || 0} MB)` : "準備就緒"
+      }));
+    }
     for (const action of ["rename", "move", "delete"]) {
       card.querySelector(`.package-${action}`).addEventListener("click", () => managePackage(action, item));
     }
@@ -1233,6 +1341,42 @@ function initAiButtons() {
       el.btnModeUnscripted.className = "flex-1 py-1.5 px-2 rounded text-zinc-400 hover:text-zinc-200 transition";
     });
   }
+
+  // 雙向即時連動：Tab 1 大腦引擎 <-> Tab 2 鎖定填字校對引擎
+  const syncLlmEngine = (val) => {
+    if (el.selectLlmEngine) el.selectLlmEngine.value = val;
+    if (el.selectLockedLlmEngine) el.selectLockedLlmEngine.value = val;
+    try { localStorage.setItem("autosub_llm_engine", val); } catch (e) {}
+  };
+
+  if (el.selectLlmEngine) {
+    el.selectLlmEngine.addEventListener("change", (e) => syncLlmEngine(e.target.value));
+  }
+  if (el.selectLockedLlmEngine) {
+    el.selectLockedLlmEngine.addEventListener("change", (e) => syncLlmEngine(e.target.value));
+  }
+
+  // 雙向即時連動：Tab 1 校對開關 <-> Tab 2 鎖定填字校對開關
+  const syncProofreadCheck = (checked) => {
+    if (el.checkAutoProofread) el.checkAutoProofread.checked = checked;
+    if (el.checkLockedProofread) el.checkLockedProofread.checked = checked;
+    try { localStorage.setItem("autosub_auto_proofread", checked ? "1" : "0"); } catch (e) {}
+  };
+
+  if (el.checkAutoProofread) {
+    el.checkAutoProofread.addEventListener("change", (e) => syncProofreadCheck(e.target.checked));
+  }
+  if (el.checkLockedProofread) {
+    el.checkLockedProofread.addEventListener("change", (e) => syncProofreadCheck(e.target.checked));
+  }
+
+  // 還原上次儲存的 LLM 偏好設定
+  try {
+    const savedEngine = localStorage.getItem("autosub_llm_engine");
+    if (savedEngine) syncLlmEngine(savedEngine);
+    const savedProof = localStorage.getItem("autosub_auto_proofread");
+    if (savedProof !== null) syncProofreadCheck(savedProof === "1");
+  } catch (e) {}
 
   // AI 自動產生字幕 (單一入口：自動依據是否有填寫原詞智慧雙分流)
   if (el.btnAiTranscribe) {
@@ -1947,11 +2091,19 @@ async function runLockedTimelineTranscribe() {
 
   const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
   const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
+  const llmProvider = el.selectLockedLlmEngine ? el.selectLockedLlmEngine.value : (el.selectLlmEngine ? el.selectLlmEngine.value : "local");
+  const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
+  const proofText = autoProofread ? `AI校對: ${brainName}` : "無校對";
 
-  addLog(`【階段 3：鎖定時間軸填字】正在嚴格依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (絕不改動起訖時間)...`);
+  addLog(`【階段 3：鎖定時間軸填字】正在依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (${proofText}，起訖時間100%鎖定)...`, "info");
+  
   if (el.btnTranscribeLocked) {
     el.btnTranscribeLocked.disabled = true;
     el.btnTranscribeLocked.textContent = "⏳ 按鎖定時間軸逐段辨識中...";
+  }
+
+  if (typeof showBusyOverlay === "function") {
+    showBusyOverlay(`🎙️ 正在依鎖定時間軸逐段填入 AI 字幕... (${state.track.segments.length} 段 · ${proofText})`);
   }
 
   const request = captureSubtitleRequest();
@@ -1966,20 +2118,22 @@ async function runLockedTimelineTranscribe() {
         prompt: "繁體中文",
         only_empty: onlyEmpty,
         auto_proofread: autoProofread,
-        llm_provider: el.selectLlmEngine ? el.selectLlmEngine.value : "local"
+        llm_provider: llmProvider
       })
     });
     const data = await res.json();
     if (data.status === "success") {
       if (!canApplySubtitleResult(request)) return;
       setSubtitleTrack(data.track);
-      addLog(data.proofread_warning || `已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入。`, data.proofread_warning ? "error" : "success");
+      addLog(data.proofread_warning || `✔ 已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入！`, data.proofread_warning ? "error" : "success");
     } else {
       throw new Error(data.detail || "填字失敗");
     }
   } catch (err) {
-    addLog(`鎖定時間軸填字失敗: ${err.message}`, "error");
+    addLog(`❌ 鎖定時間軸填字失敗: ${err.message}`, "error");
+    if (typeof alert === "function") alert(`鎖定時間軸填字失敗: ${err.message}`);
   } finally {
+    if (typeof hideBusyOverlay === "function") hideBusyOverlay();
     if (el.btnTranscribeLocked) {
       el.btnTranscribeLocked.disabled = false;
       el.btnTranscribeLocked.innerHTML = `<span>🎙️ 依目前時間軸填入 AI 字幕</span>`;
@@ -3253,6 +3407,238 @@ function initExport() {
   });
 }
 
+// ---------------- 8. AI 視訊超解析放大 (Upscale) ----------------
+let currentUpscaleTarget = null;
+let currentUpscaleTaskId = null;
+let activeUpscalePolling = false;
+
+async function requestUpscaleEstimate() {
+  if (!currentUpscaleTarget) return;
+  const scale = parseInt(document.querySelector('input[name="upscale-scale"]:checked')?.value || "2", 10);
+  const modelName = el.selectUpscaleModel?.value || "realesr-animevideov3";
+
+  if (el.upscaleFramesInfo) el.upscaleFramesInfo.textContent = "試算中...";
+  if (el.upscaleTimeEst) el.upscaleTimeEst.textContent = "試算中...";
+  if (el.upscaleWarningBox) el.upscaleWarningBox.classList.add("hidden");
+
+  try {
+    const payload = {
+      package_path: currentUpscaleTarget.package_path || null,
+      media_path: (!currentUpscaleTarget.package_path && currentUpscaleTarget.media_path) ? currentUpscaleTarget.media_path : null,
+      scale: scale,
+      model_name: modelName
+    };
+    const res = await fetch("/api/upscale/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error("試算失敗");
+    const data = await res.json();
+    const info = data.stream_info || {};
+    const est = data.estimate || {};
+
+    if (el.upscaleFramesInfo) {
+      const fpsVal = typeof info.fps === "number" ? info.fps.toFixed(1) : "30.0";
+      const totalF = (est.total_frames !== undefined && est.total_frames !== null) ? est.total_frames : (info.nb_frames || 0);
+      el.upscaleFramesInfo.textContent = `${info.width || '?'}x${info.height || '?'} @ ${fpsVal}fps · 總影格: ${totalF.toLocaleString()} 幀`;
+    }
+    if (el.upscaleTimeEst) {
+      el.upscaleTimeEst.textContent = `${est.estimated_text || '未知'} (~${est.sec_per_frame}s/幀)`;
+      if (est.is_heavy_warning) {
+        el.upscaleTimeEst.className = "font-bold text-red-400 font-mono";
+      } else {
+        el.upscaleTimeEst.className = "font-semibold text-emerald-400 font-mono";
+      }
+    }
+
+    if (el.upscaleWarningBox && el.upscaleWarningText) {
+      if (est.is_heavy_warning && est.warning_message) {
+        el.upscaleWarningText.textContent = est.warning_message;
+        el.upscaleWarningBox.classList.remove("hidden");
+      } else {
+        el.upscaleWarningBox.classList.add("hidden");
+      }
+    }
+  } catch (err) {
+    if (el.upscaleFramesInfo) el.upscaleFramesInfo.textContent = "無法取得視訊規格";
+    if (el.upscaleTimeEst) el.upscaleTimeEst.textContent = "無法預估";
+    if (el.upscaleWarningBox) el.upscaleWarningBox.classList.add("hidden");
+  }
+}
+
+function openUpscaleModal(target) {
+  if (!el.modalUpscale) return;
+  currentUpscaleTarget = target;
+  if (el.upscaleTargetName) el.upscaleTargetName.textContent = target.target_name || target.media_name || "未指定";
+  if (el.upscaleTargetMeta) el.upscaleTargetMeta.textContent = target.meta_info || "準備就緒";
+  updateUpscalePreviewName();
+  el.modalUpscale.classList.remove("hidden");
+  el.modalUpscale.classList.add("flex");
+  requestUpscaleEstimate();
+}
+
+function closeUpscaleModal() {
+  currentUpscaleTarget = null;
+  if (el.modalUpscale) {
+    el.modalUpscale.classList.add("hidden");
+    el.modalUpscale.classList.remove("flex");
+  }
+}
+
+function updateUpscalePreviewName() {
+  if (!currentUpscaleTarget) return;
+  const scale = document.querySelector('input[name="upscale-scale"]:checked')?.value || "2";
+  const base = (currentUpscaleTarget.package_path || currentUpscaleTarget.media_name || "video").replace(/\.[^/.]+$/, "");
+  if (el.upscalePreviewPkgName) {
+    el.upscalePreviewPkgName.textContent = `${base}_${scale}x`;
+  }
+}
+
+async function startUpscale() {
+  if (!currentUpscaleTarget) return;
+  const scale = parseInt(document.querySelector('input[name="upscale-scale"]:checked')?.value || "2", 10);
+  const modelName = el.selectUpscaleModel?.value || "realesr-animevideov3";
+  const target = currentUpscaleTarget;
+  closeUpscaleModal();
+
+  const payload = {
+    package_path: target.package_path || null,
+    media_path: (!target.package_path && target.media_path) ? target.media_path : null,
+    scale: scale,
+    model_name: modelName
+  };
+
+  try {
+    addLog(`發起 AI 畫質超解析任務: ${target.target_name} (${scale}x, ${modelName})...`, "info");
+
+    const response = await fetch("/api/upscale/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "無法啟動 AI 放大任務");
+    }
+
+    currentUpscaleTaskId = data.task_id;
+    activeUpscalePolling = true;
+
+    showBusyOverlay(`✨ 正在進行 AI 畫質超解析放大 (${scale}x)...`, {
+      showProgress: true,
+      onCancel: async () => {
+        if (!confirm("確定要中止目前正在執行的 AI 畫質放大任務嗎？\n已產生的暫存影格將會被自動清理。")) {
+          return;
+        }
+        if (!currentUpscaleTaskId) return;
+        addLog(`正在請求中途停止 AI 放大任務 (${currentUpscaleTaskId})...`, "warning");
+        try {
+          await fetch(`/api/upscale/task/${currentUpscaleTaskId}/cancel`, { method: "POST" });
+        } catch (e) {
+          console.error("Cancel task error:", e);
+        }
+      }
+    });
+
+    // 輪詢任務進度
+    await pollUpscaleTask(currentUpscaleTaskId);
+
+  } catch (err) {
+    hideBusyOverlay();
+    addLog(`❌ AI 畫質放大失敗：${err.message}`, "error");
+    alert(`AI 畫質放大失敗：${err.message}`);
+  }
+}
+
+async function pollUpscaleTask(taskId) {
+  while (activeUpscalePolling) {
+    await new Promise(r => setTimeout(r, 1200));
+    if (!activeUpscalePolling) break;
+
+    try {
+      const res = await fetch(`/api/upscale/task/${taskId}`);
+      if (!res.ok) {
+        if (res.status === 404) throw new Error("任務不存在或已被移除");
+        continue;
+      }
+      const task = await res.json();
+
+      updateBusyProgress({
+        percent: task.percent,
+        current_frame: task.current_frame,
+        total_frames: task.total_frames,
+        eta_text: task.eta_text,
+        message: task.message,
+        stage_text: task.stage === "extracting" ? "🎬 正在分解影片影格..." :
+                    task.stage === "upscaling" ? `✨ 正在放大影格 (${task.percent}%)` :
+                    task.stage === "encoding" ? "🎞️ 正在合成高解析度視訊..." : "✨ 處理中..."
+      });
+
+      if (task.stage === "completed") {
+        activeUpscalePolling = false;
+        hideBusyOverlay();
+        addLog(`✔ ${task.message || 'AI 畫質放大完成！'}`, "success");
+        await loadAssetLibrary();
+        if (task.result && task.result.package && task.result.package.path) {
+          await openPackage(task.result.package.path);
+        }
+        break;
+      } else if (task.stage === "cancelled") {
+        activeUpscalePolling = false;
+        hideBusyOverlay();
+        addLog(`⏹️ AI 放大任務已手動中止，暫存檔案已自動清理乾淨。`, "warning");
+        break;
+      } else if (task.stage === "failed") {
+        activeUpscalePolling = false;
+        hideBusyOverlay();
+        addLog(`❌ AI 放大任務失敗: ${task.error || task.message}`, "error");
+        alert(`AI 放大失敗: ${task.error || task.message}`);
+        break;
+      }
+    } catch (e) {
+      console.warn("Poll upscale task warning:", e);
+    }
+  }
+}
+
+function initUpscaleModal() {
+  if (el.btnUpscaleActiveVideo) {
+    el.btnUpscaleActiveVideo.addEventListener("click", () => {
+      if (!state.video.filename) return;
+      openUpscaleModal({
+        package_path: state.activePackage ? state.activePackage.path : null,
+        media_path: state.video.path || state.video.filename,
+        media_name: state.video.filename,
+        target_name: state.activePackage ? `資產包: ${state.activePackage.path}` : `影片: ${state.video.filename}`,
+        meta_info: `目前解析度: ${el.video.videoWidth || '...'}x${el.video.videoHeight || '...'}`
+      });
+    });
+  }
+
+  if (el.btnCloseUpscaleModal) {
+    el.btnCloseUpscaleModal.addEventListener("click", closeUpscaleModal);
+  }
+  if (el.btnCancelUpscale) {
+    el.btnCancelUpscale.addEventListener("click", closeUpscaleModal);
+  }
+  if (el.btnConfirmUpscale) {
+    el.btnConfirmUpscale.addEventListener("click", startUpscale);
+  }
+
+  document.querySelectorAll('input[name="upscale-scale"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      updateUpscalePreviewName();
+      requestUpscaleEstimate();
+    });
+  });
+
+  if (el.selectUpscaleModel) {
+    el.selectUpscaleModel.addEventListener("change", requestUpscaleEstimate);
+  }
+}
+
 // ---------------- 應用程式啟動入口 ----------------
 window.addEventListener("DOMContentLoaded", async () => {
   // 0. 嘗試還原上次儲存的樣式
@@ -3280,6 +3666,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   safeInit(initEditorViewToggle, "initEditorViewToggle");
   safeInit(initStyleEditor, "initStyleEditor");
   safeInit(initExport, "initExport");
+  safeInit(initUpscaleModal, "initUpscaleModal");
   safeInit(syncStateToControls, "syncStateToControls");
   safeInit(applySubtitleStyleToOverlay, "applySubtitleStyleToOverlay");
   safeInit(ensureSubtitlePreviewVisible, "ensureSubtitlePreviewVisible");

@@ -549,6 +549,49 @@ def fonts_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("upscale")
+def upscale_cmd(
+    video_path: str = typer.Argument(..., help="來源影片檔案路徑 (MP4, MOV, MKV 等)"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出高畫質影片路徑 (預設為同目錄 [name]_{scale}x.mp4)"),
+    scale: int = typer.Option(2, "-s", "--scale", help="放大倍率 (2, 4，預設 2)"),
+    model: str = typer.Option("realesr-animevideov3", "-m", "--model", help="模型名稱 (預設 realesr-animevideov3)"),
+    no_gpu: bool = typer.Option(False, "--no-gpu", help="強制停用 NVENC 硬體加速編碼"),
+):
+    """【AI 畫質放大】使用 Real-ESRGAN Compact 輕量模型進行視訊超解析度放大 (2x / 4x)"""
+    from src.core.video_upscaler import upscale_video, find_upscaler_binary, get_video_stream_info
+
+    binary = find_upscaler_binary()
+    if not binary:
+        console.print("[bold red]錯誤: 系統未找到 realesrgan-ncnn-vulkan 執行檔！[/bold red]")
+        raise typer.Exit(code=1)
+
+    p = Path(video_path).resolve()
+    if not p.exists():
+        console.print(f"[bold red]錯誤: 找不到影片檔案: {video_path}[/bold red]")
+        raise typer.Exit(code=1)
+
+    info = get_video_stream_info(str(p))
+    console.rule(f"[bold magenta]✨ AI 視訊超解析放大 ({scale}x - {model})[/bold magenta]")
+    console.print(f"  來源影片: [yellow]{p.name}[/yellow]")
+    console.print(f"  原始解析度: [yellow]{info['width']}x{info['height']} ({info['fps']:.2f} fps)[/yellow]")
+    console.print(f"  目標解析度: [green]{info['width'] * scale}x{info['height'] * scale}[/green]")
+    console.print(f"  執行核心: [cyan]{binary.name}[/cyan]\n")
+
+    try:
+        out_file = upscale_video(
+            input_path=str(p),
+            output_path=output,
+            scale=scale,
+            model_name=model,
+            use_gpu=not no_gpu
+        )
+        console.print(f"\n[bold green]✔ AI 畫質超解析放大完成！[/bold green]")
+        console.print(f"  輸出影片: [bold yellow]{out_file}[/bold yellow]")
+    except Exception as e:
+        console.print(f"[bold red]放大失敗: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
 @app.command("serve")
 def serve_cmd(
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="監聽主機 IP (0.0.0.0 可供區網存取)"),

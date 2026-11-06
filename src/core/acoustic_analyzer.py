@@ -366,7 +366,7 @@ def transcribe_on_locked_timeline(
             # 根據該段合理字數動態限制 token 上限，防止拖長音產生重複幻覺
             max_tokens = max(12, min(64, exp_chars * 3 + 10))
 
-            if len(audio_slice) < int(0.15 * sr):
+            if len(audio_slice) < int(0.20 * sr):
                 rec_text = existing_text
             else:
                 result = model.transcribe(

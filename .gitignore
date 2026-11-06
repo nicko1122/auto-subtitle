@@ -29,6 +29,8 @@ whisper_comparison_result.json
 models/
 huggingface/
 fonts/
+tools/
+.pytest_cache/
 
 # Node (Frontend)
 node_modules/
