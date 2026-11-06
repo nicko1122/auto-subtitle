@@ -37,6 +37,17 @@ def test_strict_subtitle_parser_preserves_empty_cues_and_vtt_metadata():
     assert parse_srt_content('', strict=True).segments == []
 
 
+@pytest.mark.parametrize('end', [0,float('inf')])
+def test_invalid_json_timestamps_do_not_replace_working_subtitle(tmp_path,end):
+    (tmp_path/'video.mp4').touch()
+    subtitle=tmp_path/'video.srt'
+    subtitle.write_text('original')
+    content=json.dumps({'source_file':'test','segments':[{'id':1,'start':1,'end':end,'text':'bad'}]}).encode()
+    with pytest.raises(ValueError):
+        asset_packages.import_files(tmp_path,'',[('video.json',io.BytesIO(content))],target=tmp_path)
+    assert subtitle.read_text() == 'original'
+
+
 def test_keyword_matches_are_retained_and_reviewed(tmp_path, monkeypatch):
     text = '我想作曲給你聽'
     words = [{'word':c, 'start':i, 'end':i+1} for i,c in enumerate(text)]

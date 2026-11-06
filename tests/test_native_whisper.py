@@ -11,6 +11,32 @@ from src.core import luna_pipeline, transcriber
 from src.schemas.subtitle import SubtitleTrack
 
 
+@pytest.mark.parametrize('command', ['transcribe', 'pipeline'])
+@pytest.mark.parametrize('model', [None, 'small'])
+def test_unscripted_cli_uses_shared_default_or_selected_model(tmp_path, monkeypatch, command, model):
+    media = tmp_path / 'audio.wav'
+    media.touch()
+    asr = Mock(return_value={'source_file':str(media),'duration':1,'language':'zh','language_probability':1,'raw_segments':[],'all_words':[]})
+    monkeypatch.setattr(cli, 'transcribe_audio', asr)
+    arguments = [command, str(media), '-o', str(tmp_path / ('raw.json' if command == 'transcribe' else 'result'))]
+    if model:
+        arguments += ['-m', model]
+    result = CliRunner().invoke(cli.app, arguments)
+    assert result.exit_code == 0, result.output
+    assert asr.call_args.kwargs['model_size'] == (model or transcriber.DEFAULT_WHISPER_MODEL)
+
+
+def test_locked_api_uses_shared_model_default(tmp_path, monkeypatch):
+    media = tmp_path / 'audio.wav'
+    media.touch()
+    monkeypatch.setattr(server, 'UPLOADS_DIR', tmp_path)
+    transcribe = Mock(return_value=SubtitleTrack(source_file='test'))
+    monkeypatch.setattr(server, 'transcribe_on_locked_timeline', transcribe)
+    response = TestClient(server.app, base_url='http://localhost').post('/api/ai/transcribe-segments', json={'media_path':str(media),'track':{'source_file':'test'}})
+    assert response.status_code == 200
+    assert transcribe.call_args.kwargs['model_size'] == transcriber.DEFAULT_WHISPER_MODEL
+
+
 @pytest.mark.parametrize('endpoint', ['/api/ai/transcribe', '/api/ai/align'])
 @pytest.mark.parametrize('model', [None, 'small'])
 @pytest.mark.parametrize('audit', [True, False])

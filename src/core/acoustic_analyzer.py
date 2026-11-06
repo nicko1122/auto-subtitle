@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 
 from .env_utils import preload_cuda_libs
-from .transcriber import load_whisper_model, unload_whisper_model
+from .transcriber import DEFAULT_WHISPER_MODEL, load_whisper_model, unload_whisper_model
 from ..schemas.subtitle import SubtitleSegment, SubtitleTrack
 
 logger = logging.getLogger(__name__)
@@ -319,7 +319,7 @@ def snap_time_to_valley(
 def transcribe_on_locked_timeline(
     media_path: str,
     track: SubtitleTrack,
-    model_size: str = "small",
+    model_size: str = DEFAULT_WHISPER_MODEL,
     device: str = "cuda",
     prompt: str = "繁體中文",
     only_empty: bool = False,

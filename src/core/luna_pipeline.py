@@ -18,7 +18,7 @@ from .env_utils import preload_cuda_libs, release_gpu_memory
 preload_cuda_libs()
 
 import stable_whisper
-from .transcriber import transcribe_native_audio, load_native_whisper_model, unload_native_whisper_model
+from .transcriber import DEFAULT_WHISPER_MODEL, transcribe_native_audio, load_native_whisper_model, unload_native_whisper_model
 from .proofreader import SubtitleProofreader, _extract_json_payload
 from .lyric_reference import build_lyric_occurrences
 from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
@@ -200,7 +200,7 @@ class LunaPipeline:
         llm_provider: str = "local",  # "local" | "api"
         local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        whisper_model: str = "large-v3-turbo",
+        whisper_model: str = DEFAULT_WHISPER_MODEL,
         device: str = "auto",
         prompt: Optional[str] = None,
         llm_audit: bool = True,
@@ -208,6 +208,8 @@ class LunaPipeline:
     ):
         if script_mode not in ("reference", "transcript"):
             raise ValueError("script_mode 必須為 reference 或 transcript")
+        if llm_provider not in ("local", "api"):
+            raise ValueError("llm_provider 必須為 local 或 api")
         self.audio_path = str(Path(audio_path).resolve())
         self.lyrics_source = lyrics_source
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -830,7 +832,7 @@ def run_luna_pipeline(
     llm_provider: str = "local",
     local_model_name: str = "qwen2.5-3b-instruct-q4_k_m.gguf",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    whisper_model: str = "large-v3-turbo",
+    whisper_model: str = DEFAULT_WHISPER_MODEL,
     device: str = "auto",
     prompt: Optional[str] = None,
     llm_audit: bool = True,

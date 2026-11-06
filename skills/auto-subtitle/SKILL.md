@@ -19,7 +19,7 @@ Choose the appropriate command or pipeline based on input assets:
 
 | Scenario / Goal | Recommended Command | Key Arguments |
 | :--- | :--- | :--- |
-| **Singing / Lyrics Alignment** (Media + `.txt` lyrics) | `python src/cli/main.py luna` (or `align`) | `<media> <lyrics.txt> --llm auto/local/api -o <dir>` |
+| **Singing / Lyrics Alignment** (Media + `.txt` lyrics) | `python src/cli/main.py luna` (or `align`) | `<media> <lyrics.txt> --llm local/api -o <dir>` |
 | **Speech / Talk / Video to Subtitles** (No script) | `python src/cli/main.py pipeline` | `<media> -m large-v3-turbo -d cuda -o <dir>` |
 | **Audio Only Extraction** | `python src/cli/main.py extract` | `<video> -o <audio.wav> --sr 16000` |
 | **Fix Typos / Homophones** (with Edge LLM) | `python src/cli/main.py proofread` | `<subtitles.srt> --gpu-layers -1` |
@@ -130,7 +130,7 @@ for video in "$INPUT_DIR"/*.mp4; do
   
   if [ -f "$lyrics" ]; then
     # Scripted lyrics pipeline
-    python3 src/cli/main.py luna "$video" "$lyrics" --output-dir "$OUTPUT_DIR/$stem" --llm auto
+    python3 src/cli/main.py luna "$video" "$lyrics" --output-dir "$OUTPUT_DIR/$stem" --llm local
     sub_file="$OUTPUT_DIR/$stem/lyrics.srt"
   else
     # Unscripted speech pipeline
@@ -163,7 +163,7 @@ track = run_luna_pipeline(
     audio_path=media_file,
     lyrics_source=lyrics_file,
     output_dir=str(out_dir),
-    llm_provider="auto"
+    llm_provider="local"
 )
 
 # 2. Define Subtitle Style with Opacity & Outward Stroke
@@ -184,8 +184,8 @@ print(f"Burned video created: {burned_mp4}")
 
 ### Recipe 3: REST API Integration (FastAPI)
 The server runs on `http://localhost:8000`:
-- **Transcribe / Unscripted**: `POST /api/ai/transcribe` with JSON `{"media_path": "...", "model": "large-v3-turbo", "use_llm_proofread": true}`
-- **Align / Luna Pipeline**: `POST /api/ai/align` with JSON `{"media_path": "...", "lyrics": "...", "llm_provider": "auto"}`
+- **Transcribe / Unscripted**: `POST /api/ai/transcribe` with Form fields `media_path=...`, `model=large-v3-turbo`, `auto_proofread=true`
+- **Align / Luna Pipeline**: `POST /api/ai/align` with JSON `{"media_path": "...", "script_text": "...", "script_mode": "reference", "llm_provider": "local"}`
 - **Parse CSS**: `POST /api/style/parse-css` with JSON `{"css": "font-size: 36px; opacity: 0.8;"}`
 - **Burn Video**: `POST /api/burn` with JSON `{"video_path": "...", "subtitle_path": "...", "css": "..."}`
 
@@ -199,7 +199,7 @@ When designing subtitle styles with `--css`:
 | :--- | :--- | :--- |
 | `opacity: 0.85` | Inverted alpha hex `&H26FFFFFF&` | Alpha = `round((1 - opacity) * 255)`. 0=opaque, 255=transparent. |
 | `-webkit-text-stroke: 4px #000` | `Outline: 2.0`, `OutlineColour: &H00000000&` | With `paint-order: stroke fill;`, stroke grows outward only. |
-| `text-shadow: 2px 2px 3px #000` | `Shadow: 2.8`, `BackColour: &H80000000&` | Distance calculated via `hypot(x, y)`. |
+| `text-shadow: 2px 2px 3px #000` | `Shadow: 2.0`, `BackColour: &H80000000&` | Uses the larger absolute axis offset; equal-axis CSS round-trips without drift. |
 | `writing-mode: vertical-rl` | Vertical column layout with `\N` breaks | Auto-wraps right-to-left when exceeding viewport height. |
 | `text-align: center/left/right` | 九宮格 alignment mapping (1~9) | Bottom-center = 2, Top-center = 8, Middle-center = 5. |
 | `padding: 50px 40px 60px 40px` | `MarginV`, `MarginL`, `MarginR` | Converted to ASS pixel margins relative to PlayRes resolution. |
@@ -209,9 +209,9 @@ When designing subtitle styles with `--css`:
 ## ⚠️ Important Implementation Notes
 
 1. **GPU Acceleration**:
-   - Whisper: Uses Faster-Whisper with CUDA `compute_type=float32` or `float16`.
-   - Video Burn: Default `use_gpu=True` attempts FFmpeg `h264_nvenc`. If GPU encoding fails, it gracefully falls back to CPU `libx264`.
+   - Whisper: Scripted modes use native Whisper; unscripted and locked-timeline modes use Faster-Whisper. All default to `large-v3-turbo`.
+   - Video Burn: Default `use_gpu=True` attempts FFmpeg `h264_nvenc`. Use CLI `--cpu` for `libx264` when NVENC is unavailable at runtime.
 2. **Lyrics Multi-line Strings vs File Paths**:
-   - Both `run_luna_pipeline` and `align_cmd` accept either a file path (`.txt`) or a raw multiline lyrics string. Multi-line strings are parsed directly without file system path checks.
+   - `run_luna_pipeline` accepts either a file path (`.txt`) or a raw multiline lyrics string; the CLI takes a TXT path. Multi-line strings are parsed directly without file system path checks.
 3. **No Overwriting of Source Subtitles**:
    - When generating `.srt` or `.vtt`, outputs are written to the target output directory or suffixed with `.generated.srt` if a file with the same name exists.

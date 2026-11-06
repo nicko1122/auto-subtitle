@@ -12,7 +12,7 @@ from rich.table import Table
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.core.audio_extractor import extract_audio, check_ffmpeg
-from src.core.transcriber import transcribe_audio
+from src.core.transcriber import DEFAULT_WHISPER_MODEL, transcribe_audio
 from src.core.segmenter import build_subtitle_track
 from src.core.aligner import align_script_to_audio
 from src.core.luna_pipeline import run_luna_pipeline
@@ -62,7 +62,7 @@ def extract_cmd(
 @app.command("transcribe")
 def transcribe_cmd(
     audio_path: str = typer.Argument(..., help="音訊檔案路徑 (WAV, MP3 等)"),
-    model: str = typer.Option("base", "-m", "--model", help="Whisper 模型大小 (tiny, base, small, medium, large-v3)"),
+    model: str = typer.Option(DEFAULT_WHISPER_MODEL, "-m", "--model", help="Whisper 模型大小 (tiny, base, small, medium, large-v3)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     compute_type: str = typer.Option("default", "--compute-type", help="計算精度 (default, int8, float16)"),
     language: Optional[str] = typer.Option(None, "-l", "--lang", help="語言代碼 (如 zh, en)，未提供則自動辨識"),
@@ -164,7 +164,7 @@ def export_cmd(
 @app.command("pipeline")
 def pipeline_cmd(
     media_path: str = typer.Argument(..., help="來源影音檔案路徑 (MP4, MOV, WAV, MP3 等)"),
-    model: str = typer.Option("base", "-m", "--model", help="Whisper 模型 (tiny, base, small, medium, large-v3)"),
+    model: str = typer.Option(DEFAULT_WHISPER_MODEL, "-m", "--model", help="Whisper 模型 (tiny, base, small, medium, large-v3)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     language: Optional[str] = typer.Option(None, "-l", "--lang", help="指定語言 (如 zh, en)"),
     prompt: Optional[str] = typer.Option("繁體中文", "--prompt", help="初始提示詞 (預設引導輸出繁體中文)"),
@@ -240,7 +240,7 @@ def align_cmd(
     script_path: str = typer.Argument(..., help="原稿或歌詞文字檔案路徑 (TXT)"),
     llm_provider: str = typer.Option("local", "--llm", help="決策審核大腦 (local 或 api)"),
     output_dir: Optional[str] = typer.Option(None, "-o", "--output-dir", help="輸出目錄 (預設在影音同目錄建立獨立資料夾)"),
-    model: str = typer.Option("large-v3-turbo", "-m", "--model", help="原生 Whisper 模型 (預設 large-v3-turbo)"),
+    model: str = typer.Option(DEFAULT_WHISPER_MODEL, "-m", "--model", help="原生 Whisper 模型 (預設 large-v3-turbo)"),
     device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     prompt: str = typer.Option("繁體中文", "--prompt", help="辨識引導詞"),
     audit: bool = typer.Option(True, "--audit/--no-audit", help="執行 LLM 時間候選審核"),
@@ -329,7 +329,7 @@ def proofread_cmd(
     else:
         # 假設為影音檔，先跑 pipeline 核心
         console.print(f"[1/3] 執行快速語音辨識與切分...")
-        trans_res = transcribe_audio(str(input_p), model_size="small", device="cuda", initial_prompt="繁體中文")
+        trans_res = transcribe_audio(str(input_p), model_size=DEFAULT_WHISPER_MODEL, device="cuda", initial_prompt="繁體中文")
         track = build_subtitle_track(trans_res)
 
     console.print(f"[2/3] 載入本地 Qwen2.5-3B-Instruct 模型 (GPU 全速加速)...")

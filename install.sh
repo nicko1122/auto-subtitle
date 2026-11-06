@@ -49,13 +49,18 @@ echo "📥 正在下載與準備地端模型..."
 echo "   [1/3] 下載 Qwen2.5-3B-Instruct-GGUF (供同音錯字校對使用)..."
 python3 src/core/download_model.py
 
-# (B) 預載 Faster-Whisper Small 模型
-echo "   [2/3] 預先快取 Faster-Whisper (small) 語音辨識模型..."
+# (B) 預載兩種後端的預設 Whisper 模型
+echo "   [2/3] 預先快取原生與 Faster-Whisper 預設模型..."
 python3 -c "
 from faster_whisper import WhisperModel
-print('   正在快取 faster-whisper small 模型...')
-WhisperModel('small', device='cpu', compute_type='int8')
-print('   ✔ Faster-Whisper small 模型快取完成')
+from src.core.transcriber import DEFAULT_WHISPER_MODEL, load_native_whisper_model, unload_native_whisper_model
+print('   正在快取原生 Whisper', DEFAULT_WHISPER_MODEL)
+model = load_native_whisper_model(DEFAULT_WHISPER_MODEL, device='cpu')
+unload_native_whisper_model(model)
+del model
+print('   正在快取 Faster-Whisper', DEFAULT_WHISPER_MODEL)
+WhisperModel(DEFAULT_WHISPER_MODEL, device='cpu', compute_type='int8')
+print('   ✔ 預設 Whisper 模型快取完成')
 "
 
 # (C) 預載開源繁中精選字型 (jf open 粉圓 2.0)

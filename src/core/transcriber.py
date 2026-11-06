@@ -6,6 +6,8 @@ from .env_utils import preload_cuda_libs, release_gpu_memory
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_WHISPER_MODEL = "large-v3-turbo"
+
 preload_cuda_libs()
 
 from faster_whisper import WhisperModel
@@ -70,7 +72,7 @@ def unload_native_whisper_model(model):
         release_gpu_memory()
 
 
-def transcribe_native_audio(audio_path, model_size="large-v3-turbo", device="auto", initial_prompt=None):
+def transcribe_native_audio(audio_path, model_size=DEFAULT_WHISPER_MODEL, device="auto", initial_prompt=None):
     audio_p = Path(audio_path).resolve()
     if not audio_p.is_file():
         raise FileNotFoundError(f"找不到音訊檔案: {audio_path}")
@@ -97,7 +99,7 @@ def transcribe_native_audio(audio_path, model_size="large-v3-turbo", device="aut
 
 def transcribe_audio(
     audio_path: str,
-    model_size: str = "large-v3-turbo",
+    model_size: str = DEFAULT_WHISPER_MODEL,
     device: str = "auto",
     compute_type: str = "default",
     language: Optional[str] = None,

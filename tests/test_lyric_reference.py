@@ -90,3 +90,8 @@ def test_empty_reference_asr_does_not_allocate_aligner_or_fabricate_cues(tmp_pat
 def test_unknown_script_mode_fails_before_processing(tmp_path):
     with pytest.raises(ValueError, match='script_mode'):
         luna_pipeline.LunaPipeline('unused', '', output_dir=str(tmp_path), script_mode='other')
+
+
+def test_unknown_provider_does_not_fall_through_to_cloud(tmp_path):
+    with pytest.raises(ValueError, match='llm_provider'):
+        luna_pipeline.LunaPipeline('unused', '原詞', output_dir=str(tmp_path), llm_provider='auto')

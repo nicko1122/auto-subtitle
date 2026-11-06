@@ -8,22 +8,6 @@ def is_cjk(text: str) -> bool:
     return bool(re.search(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]', text))
 
 
-HALLUCINATION_PATTERNS = [
-    r"^作[詞词].*[李周林劉陳王張]",
-    r"^曲名字幕",
-    r"独播剧场",
-    r"Television Series Exclusive",
-    r"^(請|请)?(點贊|点赞|關注|关注|訂閱|订阅)",
-    r"^(謝謝|谢谢)觀?看",
-]
-
-
-def is_hallucination(text: str) -> bool:
-    """判斷文字是否為 Whisper 在純音樂/靜音時常見的片頭片尾幻覺"""
-    cleaned = text.strip()
-    return any(bool(re.search(pat, cleaned, re.IGNORECASE)) for pat in HALLUCINATION_PATTERNS)
-
-
 def split_words_into_segments(
     words: List[WordItem],
     config: SegmentationConfig

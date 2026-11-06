@@ -1202,14 +1202,15 @@ function captureSubtitleRequest() {
   return {
     id: ++subtitleRequestId, track: state.track, media: state.video.path,
     packagePath: state.activePackage?.path, content: subtitleFingerprint(),
-    script: el.alignScriptTextarea.value
+    script: el.alignScriptTextarea.value, editorText: el.rawSubtitleTextarea.value
   };
 }
 
 function canApplySubtitleResult(request) {
   if (request.id !== subtitleRequestId || request.track !== state.track ||
       request.media !== state.video.path || request.packagePath !== state.activePackage?.path ||
-      request.content !== subtitleFingerprint() || request.script !== el.alignScriptTextarea.value || state.packageBusy) {
+      request.content !== subtitleFingerprint() || request.script !== el.alignScriptTextarea.value ||
+      request.editorText !== el.rawSubtitleTextarea.value || state.packageBusy) {
     addLog("工作區已變更，已略過過期結果，保留目前字幕。", "info");
     return false;
   }

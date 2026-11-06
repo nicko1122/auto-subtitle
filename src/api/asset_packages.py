@@ -1,4 +1,5 @@
 import os
+import math
 import shutil
 import tempfile
 from threading import RLock
@@ -138,6 +139,8 @@ def import_files(root: Path, name: str, items, target=None):
                     track = SubtitleTrack.model_validate_json(content)
                 else:
                     track = parse_srt_content(content, strict=True)
+                if any(not math.isfinite(s.start) or not math.isfinite(s.end) or s.start >= s.end for s in track.segments):
+                    raise ValueError("字幕時間必須有效，且結束時間晚於開始")
                 content = to_srt(track)
                 dest_name = subtitle.name if subtitle else video.stem + '.srt'
             else:

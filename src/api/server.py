@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
 from ..core.audio_extractor import extract_audio
-from ..core.transcriber import transcribe_audio
+from ..core.transcriber import DEFAULT_WHISPER_MODEL, transcribe_audio
 from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
 from ..core.luna_pipeline import run_luna_pipeline, LunaPipeline
@@ -119,7 +119,7 @@ class AlignRequest(BaseModel):
     script_text: Optional[str] = None
     script_path: Optional[str] = None
     llm_provider: Literal["local", "api"] = "local"
-    model: str = "large-v3-turbo"
+    model: str = DEFAULT_WHISPER_MODEL
     device: str = "cuda"
     prompt: Optional[str] = "繁體中文"
     auto_proofread: bool = True
@@ -152,7 +152,7 @@ class SnapSplitRequest(BaseModel):
 class TranscribeLockedRequest(BaseModel):
     media_path: str
     track: SubtitleTrack
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL
     device: str = "cuda"
     prompt: str = "繁體中文"
     only_empty: bool = False
@@ -399,7 +399,7 @@ async def list_fonts_endpoint():
 
 
 @app.post("/api/fonts/upload")
-async def upload_fonts_endpoint(files: List[UploadFile] = File(...)):
+def upload_fonts_endpoint(files: List[UploadFile] = File(...)):
     """上傳 .ttf / .otf / .ttc / .woff2 字型檔案安裝至專案 fonts/ 目錄"""
     installed = []
     for file in files:
@@ -544,7 +544,7 @@ def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
 @model_task
 def transcribe_endpoint(
     media_path: str = Form(...),
-    model: str = Form("large-v3-turbo"),
+    model: str = Form(DEFAULT_WHISPER_MODEL),
     device: str = Form("cuda"),
     prompt: Optional[str] = Form("繁體中文"),
     auto_proofread: bool = Form(True),

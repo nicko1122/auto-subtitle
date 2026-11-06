@@ -91,6 +91,10 @@ chmod +x install.sh
 
 Web 校對依「本地 / 雲端」選單執行；本地模式不讀取雲端金鑰。API 拒絕跨來源瀏覽器請求，檔案路徑限於 `uploads/`、`inputclip/`、`output/`、`temp/`。自訂服務網域需以 `AUTOSUBTITLE_ALLOWED_HOSTS=your.domain,localhost` 指定。
 
+單一 API 服務行程一次執行一個辨識、對齊、校對或燒錄任務；忙碌時回覆 HTTP 409 與 `Retry-After`，可在目前任務完成後重試。此鎖不涵蓋另外啟動的 CLI 或多個服務行程。
+
+LLM 回覆會驗證編號與文字型別；失敗、漏答或重複編號保留該段原文，API 的 `proofread_warning`／`proofread_report` 回報未完成項目。有詞時間審核的失敗記錄於執行 manifest 與 `decision_batches.json`。
+
 每次 Web 任務使用獨立輸出目錄／檔名；CLI `luna` 預設建立獨立資料夾，明確指定 `-o` 時沿用該目錄。除七項標準交付檔，另保留 `corrections.json` 與 `validation.json` 診斷檔。
 
 ### ⚙️ 設定檔 (.env，可選)
@@ -115,6 +119,8 @@ OPENAI_MODEL=gpt-4o
 每個 `uploads/訪談/` 資料夾管理一支影片，以及選填的 `訪談.txt` 原詞與 `訪談.srt` 工作字幕。可匯入整個資料夾，或一起選取影片、原詞和字幕建立資產包；直接在 `uploads/` 放入整理好的資料夾後，重新整理也能讀取。
 
 開啟資產包會同時載入三者。編輯文字、時間軸或原詞後自動儲存，也可按「儲存字幕」或 Ctrl+S；SRT 不存在時會建立，已存在時更新同一份檔案。切換資產包前會先完成儲存，儲存失敗則保留目前工作區。包內不建立編輯紀錄 JSON。
+
+AI 結果套用前會核對工作區與內容，過期回覆不會覆寫新編輯。全文編輯以 `[#序號]` 保留每段的多行文字及空字幕；貼上每行一段的純文字時，段數須與時間軸一致。無效的字幕匯入會被拒絕，字型經暫存驗證成功後才替換。
 
 可重新命名、移動或刪除整包；移動路徑相對於 `uploads/`。重複匯入同名包會建立另一個資料夾，不覆蓋既有包。未來多語字幕可沿用 `訪談_EN.srt` 命名，目前優先編輯與影片同名的 SRT。
 
@@ -141,6 +147,8 @@ python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 
 有詞模式的辨識、全曲及局部強制對齊均使用原生 Whisper，預設 `large-v3-turbo`。介面選擇的模型、API 的 `model` 與 CLI 的 `--model` 都會實際套用；完整版 `large-v3` 可另外選取。執行紀錄會保存模型、後端及辨識裝置。無詞與鎖定時間軸填字仍使用 Faster-Whisper。
 
+CLI、API 與核心模型預設值統一由 `DEFAULT_WHISPER_MODEL` 定義為 `large-v3-turbo`；安裝腳本預載兩種後端的對應模型。舊 `scripts/pipeline_luna.py` 現在轉呼叫正式 `luna` CLI，需提供影音與 TXT 路徑；重複實驗流程 `scripts/test_pipeline_inputclip.py` 已移除。關鍵字命中的疑似幻覺會保留並標記待複核。
+
 中文原詞先經繁簡正規化與整串拼音比對，映射回 Whisper 逐詞時間；詞內字元共用完整詞時間窗。映射有效時作為主時間，缺少有效映射才保留強制對齊候選並標記待確認。LLM 每批審核最多 4 句，`decision_batches.json` 保存證據、回覆及漏答編號；未提供的句號或候選不會套用。原稿文字與 0.16 秒閱讀延長規則保留。
 
 取消介面的「AI 決策與錯字校對」、API 傳入 `auto_proofread=false`，或有詞 CLI 使用 `--no-audit`，即可保留 Whisper 映射與待複核標記，不載入 LLM 或套用其時間建議。
@@ -164,7 +172,7 @@ python3 src/cli/main.py pipeline <媒體檔案> [OPTIONS]
 | 參數名稱 | 縮寫 | 預設值 | 說明 |
 | :--- | :--- | :--- | :--- |
 | `media_path` | (必填) | - | 來源影音檔案路徑 |
-| `-m`, `--model` | `-m` | `base` | Faster-Whisper 模型大小 (`tiny`, `base`, `small`, `medium`, `large-v3-turbo`) |
+| `-m`, `--model` | `-m` | `large-v3-turbo` | Faster-Whisper 模型大小 (`tiny`, `base`, `small`, `medium`, `large-v3-turbo`) |
 | `-d`, `--device` | `-d` | `auto` | 運算裝置 (`auto`, `cuda`, `cpu`) |
 | `-l`, `--lang` | `-l` | 自動辨識 | 指定語言代碼 (如 `zh`, `en`, `ja`) |
 | `--prompt` | - | `繁體中文` | 引導詞 (預設引導模型產出正體中文) |
@@ -259,7 +267,7 @@ for video in "$INPUT_DIR"/*.mp4; do
   
   if [ -f "$lyrics" ]; then
     # 有歌詞原稿：走 Luna 雙軌對齊管線
-    python3 src/cli/main.py luna "$video" "$lyrics" -o "$OUTPUT_DIR/$stem" --llm auto
+    python3 src/cli/main.py luna "$video" "$lyrics" -o "$OUTPUT_DIR/$stem" --llm local
     sub_file="$OUTPUT_DIR/$stem/lyrics.srt"
   else
     # 無稿口播影片：走全自動辨識 + 智慧斷句流水線
@@ -296,7 +304,7 @@ track = run_luna_pipeline(
     audio_path="inputclip/test_video.mp4",
     lyrics_source="inputclip/audio-org.txt",
     output_dir="output_run",
-    llm_provider="auto"
+    llm_provider="local"
 )
 
 # 2. 宣告樣式 (支援標準 CSS 字串)
