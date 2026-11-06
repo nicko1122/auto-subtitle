@@ -1197,6 +1197,25 @@ function initUniversalDragAndDrop() {
 }
 
 // ---------------- 6. AI 功能按鈕與模式切換 ----------------
+let subtitleRequestId = 0;
+function captureSubtitleRequest() {
+  return {
+    id: ++subtitleRequestId, track: state.track, media: state.video.path,
+    packagePath: state.activePackage?.path, content: subtitleFingerprint(),
+    script: el.alignScriptTextarea.value
+  };
+}
+
+function canApplySubtitleResult(request) {
+  if (request.id !== subtitleRequestId || request.track !== state.track ||
+      request.media !== state.video.path || request.packagePath !== state.activePackage?.path ||
+      request.content !== subtitleFingerprint() || request.script !== el.alignScriptTextarea.value || state.packageBusy) {
+    addLog("工作區已變更，已略過過期結果，保留目前字幕。", "info");
+    return false;
+  }
+  return true;
+}
+
 function initAiButtons() {
   // 模式切換：無稿辨識 vs 有稿對齊
   if (el.btnModeUnscripted && el.btnModeScripted) {
@@ -1260,10 +1279,12 @@ function initAiButtons() {
         formData.append("script_mode", scriptMode);
       }
 
+      const request = captureSubtitleRequest();
       try {
         const res = await fetch("/api/ai/transcribe", { method: "POST", body: formData });
         const data = await res.json();
         if (data.status === "success") {
+          if (!canApplySubtitleResult(request)) return;
           data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
           setSubtitleTrack(data.track);
           if (data.proofread_warning) {
@@ -1308,6 +1329,7 @@ function initAiButtons() {
       el.btnAiAlign.textContent = "⏳ 強制對齊與時間軸審核中...";
       showBusyOverlay("歌詞強制對齊與時間軸審核中，請稍候...");
 
+      const request = captureSubtitleRequest();
       try {
         const payload = { media_path: media, llm_provider: llmProvider };
         if (scriptText) payload.script_text = scriptText;
@@ -1319,6 +1341,7 @@ function initAiButtons() {
         });
         const data = await res.json();
         if (data.status === "success") {
+          if (!canApplySubtitleResult(request)) return;
           data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.aligned.srt`;
           setSubtitleTrack(data.track);
           addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕（已輸出交付檔案）！`, "success");
@@ -1351,6 +1374,7 @@ function initAiButtons() {
       el.btnAiProofread.disabled = true;
       el.btnAiProofread.textContent = "⏳ 校對中...";
 
+      const request = captureSubtitleRequest();
       try {
         const payload = { track: state.track, batch_size: 25, llm_provider: el.selectLlmEngine ? el.selectLlmEngine.value : "local" };
         if (scriptText) {
@@ -1363,6 +1387,7 @@ function initAiButtons() {
         });
         const data = await res.json();
         if (data.status === "success") {
+          if (!canApplySubtitleResult(request)) return;
           setSubtitleTrack(data.track);
           if (data.has_reference) {
             addLog(`【校對完成】已依據原稿歌詞 100% 還原正確正字！`, "success");
@@ -1472,6 +1497,28 @@ function normalizeTrackSegments() {
   });
 }
 
+function formatEditorText(segments) {
+  return segments.map((segment, index) => `[#${index + 1}]\n${segment.text}`).join("\n\n");
+}
+
+function parseEditorText(value, count) {
+  const text = value.replace(/\r\n/g, "\n");
+  const markers = [...text.matchAll(/^\[#(\d+)\]\n/gm)];
+  if (markers.length) {
+    if (markers.length !== count || markers[0].index !== 0 || markers.some((m, i) => Number(m[1]) !== i + 1 || (i > 0 && text.slice(m.index - 2, m.index) !== "\n\n"))) {
+      throw new Error("請保留每段的 [#序號]，段數與順序須和時間軸一致。");
+    }
+    return markers.map((marker, i) => {
+      const end = i + 1 < markers.length ? markers[i + 1].index - 2 : text.length;
+      return text.slice(marker.index + marker[0].length, end);
+    });
+  }
+  const lines = text.split("\n");
+  if (lines.length === count + 1 && lines.at(-1) === "") lines.pop();
+  if (lines.length !== count) throw new Error(`文字共 ${lines.length} 段，時間軸共 ${count} 段；請調整後再套用。`);
+  return lines;
+}
+
 function setSubtitleTrack(track) {
   if (state.activePackage) {
     track.source_file = state.activePackage.subtitle ? state.activePackage.subtitle.name : state.activePackage.media.stem + ".srt";
@@ -1507,7 +1554,7 @@ function renderSegmentList() {
     return;
   }
 
-  el.rawSubtitleTextarea.value = state.track.segments.map(s => s.text).join("\n");
+  el.rawSubtitleTextarea.value = formatEditorText(state.track.segments);
 
   state.track.segments.forEach((seg, idx) => {
     const card = document.createElement("div");
@@ -1624,7 +1671,7 @@ function renderSegmentList() {
 
     textInput.addEventListener("input", (e) => {
       seg.text = e.target.value;
-      el.rawSubtitleTextarea.value = state.track.segments.map(s => s.text).join("\n");
+      el.rawSubtitleTextarea.value = formatEditorText(state.track.segments);
       refreshCapBadge();
       if (state.selectedSegmentIndex === idx) {
         renderOverlayText(seg.text);
@@ -1782,6 +1829,7 @@ async function splitSegmentAtPlayhead() {
   }
 
   const cur = segs[targetIdx];
+  const request = captureSubtitleRequest();
   // 呼叫後端吸附附近 ±0.18s 的聲學能量波谷
   if (state.video.path) {
     try {
@@ -1799,6 +1847,7 @@ async function splitSegmentAtPlayhead() {
     }
   }
 
+  if (!canApplySubtitleResult(request)) return;
   const origEnd = cur.end;
   const origText = (cur.text || "").trim();
   let text1 = origText;
@@ -1854,6 +1903,7 @@ async function runBreakpointAnalysis() {
     el.btnAnalyzeBreakpoints.textContent = "⏳ 掃描聲學斷點中...";
   }
 
+  const request = captureSubtitleRequest();
   try {
     const res = await fetch("/api/audio/breakpoints", {
       method: "POST",
@@ -1862,6 +1912,7 @@ async function runBreakpointAnalysis() {
     });
     const data = await res.json();
     if (data.status === "success") {
+      if (!canApplySubtitleResult(request)) return;
       state.waveformPeaks = data.waveform_peaks || [];
       state.selectedSegmentIndex = 0;
       setSubtitleTrack(data.track);
@@ -1904,6 +1955,7 @@ async function runLockedTimelineTranscribe() {
     el.btnTranscribeLocked.textContent = "⏳ 按鎖定時間軸逐段辨識中...";
   }
 
+  const request = captureSubtitleRequest();
   try {
     const res = await fetch("/api/ai/transcribe-segments", {
       method: "POST",
@@ -1921,6 +1973,7 @@ async function runLockedTimelineTranscribe() {
     });
     const data = await res.json();
     if (data.status === "success") {
+      if (!canApplySubtitleResult(request)) return;
       setSubtitleTrack(data.track);
       addLog(`🎉 已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入！時間軸起訖點 100% 保持不變！`, "success");
     } else {
@@ -1953,23 +2006,20 @@ function initEditorViewToggle() {
 
   // 1:1 將多行文字依序填入目前鎖定的 #1 ~ #N 時間軸
   el.btnApplyRawText.addEventListener("click", () => {
-    const lines = el.rawSubtitleTextarea.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const segs = state.track.segments;
     if (!segs.length) {
       addLog("目前尚無時間軸段落，請先執行「🔍 分析音訊斷點」建立時間軸！", "error");
       return;
     }
-    const fillCount = Math.min(lines.length, segs.length);
-    for (let i = 0; i < fillCount; i++) {
+    let lines;
+    try { lines = parseEditorText(el.rawSubtitleTextarea.value, segs.length); }
+    catch (error) { addLog(error.message, "error"); return; }
+    for (let i = 0; i < segs.length; i++) {
       segs[i].text = lines[i];
     }
     setSubtitleTrack(state.track);
     el.btnViewList.click();
-    if (lines.length === segs.length) {
-      addLog(`✔ 已將 ${lines.length} 行文字 1:1 完美填入 #1 ~ #${segs.length} 時間軸！`, "success");
-    } else {
-      addLog(`✔ 已將前 ${fillCount} 行文字依序填入時間軸 (文字共 ${lines.length} 行，時間軸共 ${segs.length} 段)`, "info");
-    }
+    addLog(`已更新 ${lines.length} 段文字，保留時間軸。`, "success");
   });
 
   // 綁定斷點分析、鎖定時間軸填字與拍點快修按鈕

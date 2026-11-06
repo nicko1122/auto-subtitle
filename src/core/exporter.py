@@ -249,7 +249,7 @@ def to_json(track: SubtitleTrack, indent: int = 2) -> str:
     return track.model_dump_json(indent=indent)
 
 
-def parse_srt_content(content: str, source_file: str = "manual") -> SubtitleTrack:
+def parse_srt_content(content: str, source_file: str = "manual", strict: bool = False) -> SubtitleTrack:
     """解析 SRT 與 WebVTT，保留多行文字並支援省略小時的 VTT 時間戳。"""
     lines = content.lstrip("\ufeff").replace("\r\n", "\n").splitlines()
     timestamp = r"(?:\d+:)?\d{2}:\d{2}[,.]\d+"
@@ -271,17 +271,24 @@ def parse_srt_content(content: str, source_file: str = "manual") -> SubtitleTrac
             continue
         match = timing.fullmatch(line)
         if not match:
+            if strict and line and not line.startswith("WEBVTT") and not (i + 1 < len(lines) and timing.fullmatch(lines[i + 1].strip())):
+                raise ValueError(f"字幕第 {i + 1} 行格式無法解析")
             i += 1
             continue
         seg_id = int(lines[i - 1]) if i > 0 and lines[i - 1].strip().isdigit() else len(segments) + 1
         i += 1
         text = []
         while i < len(lines) and lines[i].strip() and not timing.fullmatch(lines[i].strip()):
+            if strict and "-->" in lines[i]:
+                raise ValueError(f"字幕第 {i + 1} 行時間格式無法解析")
             if lines[i].strip().isdigit() and i + 1 < len(lines) and timing.fullmatch(lines[i + 1].strip()):
                 break
             text.append(lines[i])
             i += 1
-        segments.append(SubtitleSegment(id=seg_id, start=parse_t(match[1]), end=parse_t(match[2]), text="\n".join(text).strip()))
+        start, end = parse_t(match[1]), parse_t(match[2])
+        if strict and start >= end:
+            raise ValueError(f"字幕第 {seg_id} 段結束時間必須晚於開始")
+        segments.append(SubtitleSegment(id=seg_id, start=start, end=end, text="\n".join(text).strip()))
 
     duration = max((s.end for s in segments), default=0.0)
     return SubtitleTrack(source_file=source_file, duration=duration, segments=segments)

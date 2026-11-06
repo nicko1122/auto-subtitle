@@ -329,8 +329,6 @@ class LunaPipeline:
         clean_segs = []
         for s in raw_segs:
             txt = s.get("text", "").strip()
-            if is_hallucination_text(txt):
-                continue
             words = [dict(word) for word in s.get("words", [])]
             
             clean_segs.append({
@@ -340,6 +338,11 @@ class LunaPipeline:
                 "text": txt,
                 "words": words
             })
+
+        self.manifest["suspected_hallucinations"] = [
+            {"segment_id": s["id"], "text": s["text"], "reason": "keyword_pattern", "action": "retained_for_review"}
+            for s in clean_segs if is_hallucination_text(s["text"])
+        ]
 
         self.asr_clean_segments = clean_segs
         if self.script_mode == "reference":
@@ -417,6 +420,8 @@ class LunaPipeline:
                     diff_end = abs(t_asr_end - t_align_end)
                     dur = t_align_end - t_align_start
                     anomalies = []
+                    if is_hallucination_text(asr_text):
+                        anomalies.append("suspected_hallucination")
                     if self.script_mode == "reference":
                         if mapping["source_line_id"] is None:
                             anomalies.append("asr_only_not_in_reference")
@@ -649,7 +654,7 @@ class LunaPipeline:
                     "reason": decision_reason
                 })
 
-            unresolved = {"asr_mapping_missing", "asr_only_not_in_reference", "asr_segment_timing_only"}
+            unresolved = {"asr_mapping_missing", "asr_only_not_in_reference", "asr_segment_timing_only", "suspected_hallucination"}
             status = "needs_review" if (ev["anomalies"] and decision_action == "keep") or unresolved.intersection(ev["anomalies"]) else "passed"
             if def_et <= def_st or def_st >= self.audio_duration:
                 status = "needs_review"

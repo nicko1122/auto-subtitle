@@ -83,7 +83,7 @@ def split_words_into_segments(
             # 清理文字，並確保起訖時間準確
             clean_text = current_text.strip()
             # 移除結尾的空格或可能的多餘換行
-            if clean_text and not is_hallucination(clean_text):
+            if clean_text:
                 seg = SubtitleSegment(
                     id=current_id,
                     start=current_words[0].start,

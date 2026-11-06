@@ -137,7 +137,7 @@ def import_files(root: Path, name: str, items, target=None):
                 if extension == '.json':
                     track = SubtitleTrack.model_validate_json(content)
                 else:
-                    track = parse_srt_content(content)
+                    track = parse_srt_content(content, strict=True)
                 content = to_srt(track)
                 dest_name = subtitle.name if subtitle else video.stem + '.srt'
             else:
