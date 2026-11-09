@@ -52,9 +52,9 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     raw_lines = [l.strip() for l in text.replace("\r\n", "\n").split("\n") if l.strip()]
     columns: list[str] = []
 
-    punct_no_start = set("，。！？；、,.!?;:）】』」〉》”’%‰…~～·")
+    punct_no_start = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·—–―⋯-")
     punct_no_end = set("（【『「〈《“‘")
-    punct_breaks = set("，。！？；、,.!?;: 　")
+    punct_breaks = set("，。！？；、：,!?;: 　")
 
     for line in raw_lines:
         tokens = re.findall(r'[A-Za-z0-9]+|.', line)
@@ -63,8 +63,8 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
             continue
 
         while len(tokens) > max_chars_per_col:
-            # 若僅超過 1~2 個字元且結尾為標點符號，容許留在同列，絕不孤立標點到新列
-            if len(tokens) <= max_chars_per_col + 2 and tokens[-1] in punct_no_start:
+            # 若僅超過 1~3 個字元且結尾為標點符號 (如句號或破折號 ——)，容許留在同列，絕不孤立標點到新列
+            if len(tokens) <= max_chars_per_col + 3 and tokens[-1] in punct_no_start:
                 break
 
             # 於後半段尋找最佳標點斷點
@@ -151,13 +151,14 @@ def to_ass(
     margin_l = style.padding_left
     margin_r = style.padding_right
 
-    # 3. 換算 CSS 像素 (96 DPI) 為 ASS libass 字級點數 (72 DPI):
-    # libass 在 PlayResY 等同影片高度時以 72 DPI 點數渲染 Fontsize，
-    # 透過 *(96/72) 等比換算，確保在硬壓燒錄 (Hardcopy) 影片中的字體像素大小與 Web Preview CSS 100% 精確貼合
-    ass_font_size = max(10, int(round(style.font_size * 96.0 / 72.0)))
-    ass_outline = round(style.outline_width * 96.0 / 72.0, 1) if style.outline_enabled else 0.0
-    ass_shadow = round(style.shadow_offset * 96.0 / 72.0, 1)
-    ass_spacing = round(style.letter_spacing * 96.0 / 72.0, 1)
+    # 3. ASS 字級與樣式度量：
+    # 在 ASS 規範中，當設定 PlayResY (影片原生高度) 時，Fontsize、Outline、Shadow 與 Margin
+    # 之數值單位即為影片畫布上的原生像素 (Script Resolution Pixels)。
+    # 因此 style.font_size 等參數與 Web Preview CSS 像素 1:1 精確對應，毋須額外做 96/72 放大
+    ass_font_size = max(10, int(round(style.font_size)))
+    ass_outline = round(style.outline_width, 1) if style.outline_enabled else 0.0
+    ass_shadow = round(style.shadow_offset, 1)
+    ass_spacing = round(style.letter_spacing, 1)
 
     # 4. 組合 ASS Style 定義行
     style_line = (
@@ -187,9 +188,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
     # 計算直式排版時，單列可容納的最大字數與列間距
     avail_height = max(180, res_y - style.padding_top - style.padding_bottom)
-    char_step = max(12, int(ass_font_size * 1.05))
-    max_chars_per_col = max(6, avail_height // char_step)
-    col_spacing = int(ass_font_size * 1.45)
+    char_step = max(10, int(ass_font_size * 1.0))
+    max_chars_per_col = max(6, int(round(avail_height / char_step)))
+    col_spacing = int(ass_font_size * 1.4)
 
     for seg in track.segments:
         start_str = format_ass_timestamp(seg.start)
