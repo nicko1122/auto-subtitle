@@ -747,6 +747,10 @@ function applySubtitleStyleToOverlay() {
 
   overlay.style.fontFamily = `"${s.font_name}", sans-serif`;
   overlay.style.fontSize = `${fontSize}px`;
+  // 字幕框左右內距 = 影片原生 4px 等比縮放 (與後端 ASS 燒錄計算一致，避免預覽與硬字幕位置偏移)
+  overlay.style.paddingLeft = `${(4 * scale).toFixed(2)}px`;
+  overlay.style.paddingRight = `${(4 * scale).toFixed(2)}px`;
+  overlay.style.lineHeight = "1.5";
   overlay.style.color = s.primary_color;
   overlay.style.fontWeight = s.bold ? "bold" : "normal";
   overlay.style.fontStyle = s.italic ? "italic" : "normal";

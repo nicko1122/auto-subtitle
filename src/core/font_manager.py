@@ -251,6 +251,83 @@ def extract_font_family(font_path: Path) -> Dict[str, str]:
     }
 
 
+def _read_font_tables(data: bytes, font_offset: int) -> Dict[bytes, int]:
+    """讀取單一字型 (sfnt) 的表格目錄，回傳 {tag: offset}"""
+    num_tables = struct.unpack(">H", data[font_offset + 4:font_offset + 6])[0]
+    tables: Dict[bytes, int] = {}
+    for i in range(num_tables):
+        pos = font_offset + 12 + i * 16
+        if pos + 16 > len(data):
+            break
+        tables[data[pos:pos + 4]] = struct.unpack(">I", data[pos + 8:pos + 12])[0]
+    return tables
+
+
+def get_font_em_ratio_from_file(font_path: Path, index: int = 0) -> Optional[float]:
+    """
+    計算 libass 字級換算比例 = (OS/2.usWinAscent + usWinDescent) / head.unitsPerEm。
+
+    libass (與 VSFilter 相容) 會把 ASS 的 Fontsize 視為「字型 Win 行高」而非 em 方框，
+    但瀏覽器 CSS font-size 指的是 em 方框。因此同樣數字下，libass 實際字面會縮小為 1/ratio。
+    以 CSS px * ratio 作為 ASS Fontsize，即可讓燒錄字面與網頁預覽一致。
+    """
+    try:
+        data = font_path.read_bytes()
+        offset = 0
+        if data[:4] == b"ttcf":
+            num_fonts = struct.unpack(">I", data[8:12])[0]
+            idx = index if 0 <= index < num_fonts else 0
+            offset = struct.unpack(">I", data[12 + idx * 4:16 + idx * 4])[0]
+        tables = _read_font_tables(data, offset)
+        if b"head" not in tables or b"OS/2" not in tables:
+            return None
+        upem = struct.unpack(">H", data[tables[b"head"] + 18:tables[b"head"] + 20])[0]
+        os2 = tables[b"OS/2"]
+        win_ascent, win_descent = struct.unpack(">HH", data[os2 + 74:os2 + 78])
+        if upem <= 0 or (win_ascent + win_descent) <= 0:
+            return None
+        return (win_ascent + win_descent) / float(upem)
+    except Exception as e:
+        logger.debug(f"字型度量解析失敗 ({font_path}): {e}")
+        return None
+
+
+def resolve_font_file(font_name: str) -> Optional[tuple]:
+    """依 Family 名稱找出 libass 實際會使用的字型檔 (優先專案 fonts/，其次 fc-match)"""
+    if FONTS_DIR.exists():
+        for p in FONTS_DIR.iterdir():
+            if p.is_file() and p.suffix.lower() in ALLOWED_FONT_EXTS:
+                try:
+                    if extract_font_family(p)["family"] == font_name:
+                        return (p, 0)
+                except Exception:
+                    continue
+    try:
+        res = subprocess.run(
+            ["fc-match", "-f", "%{file}|%{index}", font_name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+        )
+        if res.returncode == 0 and "|" in res.stdout:
+            file_str, idx_str = res.stdout.strip().split("|", 1)
+            p = Path(file_str)
+            if p.exists():
+                return (p, int(idx_str or 0))
+    except Exception:
+        pass
+    return None
+
+
+def get_font_em_ratio(font_name: str) -> float:
+    """取得 Family 對應的 libass 字級換算比例 (找不到時回傳 1.0)"""
+    ratio = 1.0
+    resolved = resolve_font_file(font_name)
+    if resolved:
+        r = get_font_em_ratio_from_file(resolved[0], resolved[1])
+        if r and 0.5 < r < 3.0:
+            ratio = r
+    return ratio
+
+
 def list_installed_custom_fonts() -> List[Dict[str, Any]]:
     """掃描專案 fonts/ 目錄下所有已安裝的自訂字型"""
     custom_fonts = []
@@ -342,10 +419,71 @@ def get_font_catalog() -> Dict[str, Any]:
     }
 
 
+def _repair_broken_ttf_hinting(path: Path) -> None:
+    """
+    若 TrueType 字型含有損壞的 bytecode hinting 表 (例如 ChenYuluoyan 的 fpgm 定義大量函式，
+    但 maxp.maxFunctionDefs 卻僅設為 7，會導致 FreeType 報 FT_Err_Too_Many_Function_Defs 而使字距歸零)，
+    自動移除損壞的 fpgm / prep / cvt 表並設定 gasp 為灰階平滑渲染。
+    """
+    try:
+        raw = path.read_bytes()
+        if len(raw) < 12 or raw[:4] not in (b"\x00\x01\x00\x00", b"true"):
+            return
+        num_tables = struct.unpack(">H", raw[4:6])[0]
+        entries = []
+        fpgm_len = 0
+        max_fdefs = None
+        for i in range(num_tables):
+            pos = 12 + i * 16
+            if pos + 16 > len(raw):
+                return
+            tag = raw[pos:pos + 4]
+            chk, off, length = struct.unpack(">III", raw[pos + 4:pos + 16])
+            entries.append((tag, chk, off, length))
+            if tag == b"fpgm":
+                fpgm_len = length
+            elif tag == b"maxp" and length >= 22 and off + 22 <= len(raw):
+                max_fdefs = struct.unpack(">H", raw[off + 20:off + 22])[0]
+        # 當 fpgm 很大但 maxFunctionDefs 明顯過小 (< 32) 時判定為損壞的 hinting 表
+        if fpgm_len <= 256 or max_fdefs is None or max_fdefs >= 32:
+            return
+        kept = [e for e in entries if e[0] not in (b"fpgm", b"prep", b"cvt ")]
+        if len(kept) == len(entries):
+            return
+        data = bytearray(raw)
+        for tag, chk, off, length in kept:
+            if tag == b"gasp" and length >= 8 and off + length <= len(data):
+                n_ranges = struct.unpack(">H", data[off + 2:off + 4])[0]
+                for r in range(n_ranges):
+                    roff = off + 4 + r * 4
+                    if roff + 4 <= off + length:
+                        struct.pack_into(">H", data, roff + 2, 0x000A)
+        new_num = len(kept)
+        max_pow2 = 1
+        entry_sel = 0
+        while (max_pow2 << 1) <= new_num:
+            max_pow2 <<= 1
+            entry_sel += 1
+        search_range = max_pow2 * 16
+        range_shift = new_num * 16 - search_range
+        struct.pack_into(">HHHH", data, 4, new_num, search_range, entry_sel, range_shift)
+        for idx, (tag, chk, off, length) in enumerate(kept):
+            pos = 12 + idx * 16
+            data[pos:pos + 4] = tag
+            struct.pack_into(">III", data, pos + 4, chk, off, length)
+        for idx in range(new_num, num_tables):
+            pos = 12 + idx * 16
+            data[pos:pos + 16] = b"\x00" * 16
+        path.write_bytes(bytes(data))
+    except Exception as e:
+        logger.debug(f"TTF hinting 檢查略過 ({path.name}): {e}")
+
+
 def validate_font_file(path: Path) -> None:
     with path.open("rb") as stream:
         if stream.read(4) not in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOFF", b"wOF2"):
             raise ValueError("內容不是支援的字型檔案")
+    _repair_broken_ttf_hinting(path)
     try:
         result = subprocess.run(["fc-query", "--format=%{family}", str(path)], capture_output=True, text=True, timeout=10)
     except FileNotFoundError:

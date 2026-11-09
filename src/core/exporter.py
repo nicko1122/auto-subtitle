@@ -151,18 +151,25 @@ def to_ass(
     margin_l = style.padding_left
     margin_r = style.padding_right
 
-    # 3. ASS 字級與樣式度量：
-    # 在 ASS 規範中，當設定 PlayResY (影片原生高度) 時，Fontsize、Outline、Shadow 與 Margin
-    # 之數值單位即為影片畫布上的原生像素 (Script Resolution Pixels)。
-    # 因此 style.font_size 等參數與 Web Preview CSS 像素 1:1 精確對應，毋須額外做 96/72 放大
-    ass_font_size = max(10, int(round(style.font_size)))
+    # 3. ASS 字級換算：
+    # 瀏覽器 CSS font-size 指的是字型 em 方框；libass (VSFilter 相容) 卻把 Fontsize 當作
+    # 字型的 Win 行高 (usWinAscent + usWinDescent)。CJK 字型此比例通常為 1.3~1.45，
+    # 若直接沿用數字，燒錄字面會比預覽小約 25~30%。因此依實際字型檔度量換算。
+    # Outline / Shadow / Spacing / Margin 在 PlayRes = 影片解析度時即為原生像素，與 CSS 1:1。
+    try:
+        from .font_manager import get_font_em_ratio
+        em_ratio = get_font_em_ratio(style.font_name)
+    except Exception:
+        em_ratio = 1.0
+    css_px = float(style.font_size)
+    ass_font_size = max(1.0, round(css_px * em_ratio, 2))
     ass_outline = round(style.outline_width, 1) if style.outline_enabled else 0.0
     ass_shadow = round(style.shadow_offset, 1)
     ass_spacing = round(style.letter_spacing, 1)
 
     # 4. 組合 ASS Style 定義行
     style_line = (
-        f"Style: Default,{style.font_name},{ass_font_size},"
+        f"Style: Default,{style.font_name},{ass_font_size:g},"
         f"{pri_col},{sec_col},{out_col},{bak_col},"
         f"{bold_val},{italic_val},0,0,100,100,{ass_spacing},0,1,"
         f"{ass_outline},{ass_shadow},"
@@ -186,33 +193,67 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
     event_lines = [header]
 
-    # 計算直式排版時，單列可容納的最大字數與列間距
-    avail_height = max(180, res_y - style.padding_top - style.padding_bottom)
-    char_step = max(10, int(ass_font_size * 1.0))
-    max_chars_per_col = max(6, int(round(avail_height / char_step)))
-    col_spacing = int(ass_font_size * 1.4)
+    # 直式排版度量 (完全比照預覽 CSS writing-mode: vertical-rl)：
+    # - 每字沿直列前進 1em (+ letter-spacing)
+    # - 列與列間距 = line-height (預覽為 Tailwind leading-normal = 1.5em)
+    char_step = css_px + float(style.letter_spacing or 0)
+    col_pitch = css_px * 1.5
+    box_pad_x = 4.0  # 預覽字幕框左右內距 (影片原生像素，前端等比縮放)
+    avail_height = max(char_step, res_y - style.padding_top - style.padding_bottom)
+    avail_width = max(col_pitch, res_x - style.padding_left - style.padding_right)
+    max_chars_per_col = max(1, int(avail_height // max(1.0, char_step)))
+
+    def _fmt(v: float) -> str:
+        return f"{v:.1f}".rstrip("0").rstrip(".")
 
     for seg in track.segments:
         start_str = format_ass_timestamp(seg.start)
         end_str = format_ass_timestamp(seg.end)
 
         if style.orientation == "vertical":
-            cols = split_vertical_columns(seg.text, max_chars_per_col=max_chars_per_col)
-            for col_idx, col_text in enumerate(cols):
-                if style.pos_x is not None and style.pos_y is not None:
-                    # 精準座標模式下，每多一列往左偏移 col_spacing
-                    cx = max(0, style.pos_x - col_idx * col_spacing)
-                    text_field = f"{{\\pos({cx},{style.pos_y})}}{col_text}"
-                    event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text_field}")
+            cols = [c for c in split_vertical_columns(seg.text, max_chars_per_col=max_chars_per_col) if c]
+            if not cols:
+                continue
+            col_tokens = [c.split("\\N") for c in cols]
+            block_w = len(cols) * col_pitch
+            box_h = max(len(t) for t in col_tokens) * char_step
+
+            # 區塊水平位置 (flex justify-content)；block_right 為文字內容右緣 (扣除字幕框內距)
+            if style.pos_x is not None:
+                block_right = float(style.pos_x)
+            elif style.horizontal_align == "left":
+                block_right = style.padding_left + box_pad_x + block_w
+            elif style.horizontal_align == "center":
+                block_right = style.padding_left + (avail_width + block_w) / 2.0
+            else:
+                block_right = res_x - style.padding_right - box_pad_x
+
+            # 區塊垂直位置 (flex align-items)
+            if style.pos_y is not None:
+                box_top = float(style.pos_y)
+            elif style.vertical_align == "top":
+                box_top = float(style.padding_top)
+            elif style.vertical_align == "middle":
+                box_top = style.padding_top + (avail_height - box_h) / 2.0
+            else:
+                box_top = res_y - style.padding_bottom - box_h
+
+            for col_idx, tokens in enumerate(col_tokens):
+                col_len = len(tokens) * char_step
+                # 列內對齊 (text-align: start / center / end)
+                if style.vertical_align == "bottom":
+                    col_top = box_top + (box_h - col_len)
+                elif style.vertical_align == "middle":
+                    col_top = box_top + (box_h - col_len) / 2.0
                 else:
-                    # 盒模型邊距模式下，根據對齊方向偏移 MarginR 或 MarginL (模擬 vertical-rl 右至左換列)
-                    if style.horizontal_align == "left":
-                        ml = margin_l + col_idx * col_spacing
-                        mr = margin_r
-                    else:
-                        ml = margin_l
-                        mr = margin_r + col_idx * col_spacing
-                    event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,{ml},{mr},{margin_v},,{col_text}")
+                    col_top = box_top
+                cx = block_right - (col_idx + 0.5) * col_pitch
+                for ch_idx, tok in enumerate(tokens):
+                    cy = col_top + (ch_idx + 0.5) * char_step
+                    event_lines.append(
+                        f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,"
+                        f"{{\\an5\\pos({_fmt(cx)},{_fmt(cy)})}}{tok}"
+                    )
         else:
             formatted_text = format_text_for_layout(seg.text, orientation="horizontal")
             if style.pos_x is not None and style.pos_y is not None:
