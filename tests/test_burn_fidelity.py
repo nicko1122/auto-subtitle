@@ -5,28 +5,31 @@ from src.schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
 
 
 def test_split_vertical_columns_kinsoku_shori():
-    # 1. Closing punctuation and em dashes must never be orphaned into their own column
-    line = "你和我卡在沙發兩端晃啊晃。"
-    cols = split_vertical_columns(line, max_chars_per_col=12)
-    assert len(cols) == 1
-    assert "。" in cols[0]
-    assert not any(c.startswith("。") or c.startswith("\\N。") for c in cols)
+    # 1. Columns strictly obey max_chars_per_col (never overflow avail_height)
+    # "我想戳破這死寂的感覺。" (11 chars) with max_chars_per_col=9 -> Col 1 has 9 chars, Col 2 has "覺\N。"
+    line = "我想戳破這死寂的感覺。"
+    cols = split_vertical_columns(line, max_chars_per_col=9)
+    assert cols == ["我\\N想\\N戳\\N破\\N這\\N死\\N寂\\N的\\N感", "覺\\N。"]
 
-    # 1b. Em-dash ending must not break to orphan column
-    line_dash = "本能在深處合作無間——"
-    cols_dash = split_vertical_columns(line_dash, max_chars_per_col=9)
-    assert len(cols_dash) == 1
-    assert "—" in cols_dash[0]
-    assert not any(c.startswith("—") for c in cols_dash[1:])
+    # 1b. Kinsoku Oikomi (推入下一列): if the (max+1)-th char is a non-starter punctuation (e.g. 。 or ，),
+    # pull the preceding character into the next column so the column neither overflows nor starts with punctuation.
+    line_oikomi = "一二三四五六七八九。"
+    cols_oikomi = split_vertical_columns(line_oikomi, max_chars_per_col=9)
+    assert cols_oikomi == ["一\\N二\\N三\\N四\\N五\\N六\\N七\\N八", "九\\N。"]
 
-    # 2. Long text splitting respects kinsoku
+    # 1c. Mid-column commas do NOT cause premature column breaks (matches CSS writing-mode: vertical-rl)
+    line_comma = "沒交集，不理解，被命運推到邊緣。"
+    cols_comma = split_vertical_columns(line_comma, max_chars_per_col=9)
+    assert cols_comma == ["沒\\N交\\N集\\N，\\N不\\N理\\N解\\N，\\N被", "命\\N運\\N推\\N到\\N邊\\N緣\\N。"]
+
+    # 2. Long text splitting respects both max_chars_per_col and kinsoku
     long_line = "這是一段非常非常長非常非常長的直排字幕測試內容，包含標點符號。"
     cols_long = split_vertical_columns(long_line, max_chars_per_col=12)
     assert len(cols_long) >= 2
     for c in cols_long:
-        # No column should start with closing punctuation
-        first_token = c.split("\\N")[0]
-        assert first_token not in "，。！？；、,.!?;—"
+        tokens = c.split("\\N")
+        assert len(tokens) <= 12
+        assert tokens[0] not in "，。！？；、,.!?;）】』」〉》"
 
 
 def test_to_ass_font_size_and_metrics_fidelity():

@@ -44,46 +44,40 @@ def format_ass_timestamp(seconds: float) -> str:
 
 def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     """
-    將直式字幕文字切分為多列 (模擬 CSS writing-mode: vertical-rl 自動換列)：
-    - 英數連續詞彙維持塊狀 (Tate-chu-yoko 縱中橫)
-    - 嚴格實作避頭尾法則 (Kinsoku Shori)：禁止標點符號 (如 。，、！？) 孤立於新列開頭
-    - 單列超過 max_chars_per_col 時，優先於標點或自然詞界處換列
+    將直式字幕文字切分為多列 (1:1 模擬 CSS writing-mode: vertical-rl 自動換列)：
+    - 英數連續詞彙與連續半形句點 (...) 維持塊狀
+    - 嚴格遵守每列最大字數上限 max_chars_per_col (絕不超出畫面高度)
+    - 實作 CSS / UAX #14 避頭尾法則 (Oikomi 推入下一列)：
+      - 禁止閉合/結尾標點 (如 。，、！？）】」等) 孤立於新列開頭 (連同前一字推入下一列)
+      - 禁止開啟標點 (如 （【「等) 孤立於本列結尾 (推入下一列)
     """
+    max_chars_per_col = max(1, int(max_chars_per_col))
     raw_lines = [l.strip() for l in text.replace("\r\n", "\n").split("\n") if l.strip()]
     columns: list[str] = []
 
-    punct_no_start = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·—–―⋯-")
-    punct_no_end = set("（【『「〈《“‘")
-    punct_breaks = set("，。！？；、：,!?;: 　")
+    punct_no_start = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·.．")
+    punct_no_end = set("（【『「〈《“‘([")
 
     for line in raw_lines:
-        tokens = re.findall(r'[A-Za-z0-9]+|.', line)
+        tokens = re.findall(r'\.{2,}|[A-Za-z0-9]+|.', line)
         tokens = [t for t in tokens if t not in ('\r', '\n')]
         if not tokens:
             continue
 
         while len(tokens) > max_chars_per_col:
-            # 若僅超過 1~3 個字元且結尾為標點符號 (如句號或破折號 ——)，容許留在同列，絕不孤立標點到新列
-            if len(tokens) <= max_chars_per_col + 3 and tokens[-1] in punct_no_start:
-                break
-
-            # 於後半段尋找最佳標點斷點
             split_idx = max_chars_per_col
-            for k in range(max_chars_per_col - 1, max(2, max_chars_per_col // 2) - 1, -1):
-                if tokens[k] in punct_breaks and (k + 1 < len(tokens)) and tokens[k + 1] not in punct_no_start:
-                    split_idx = k + 1
-                    break
 
-            # 避頭點檢查：禁止新列以不可開頭的標點符號起始
-            while split_idx < len(tokens) and tokens[split_idx] in punct_no_start:
-                split_idx += 1
-
-            # 避尾點檢查：禁止前列以開括號等起始標點結尾
-            if split_idx > 1 and tokens[split_idx - 1] in punct_no_end:
+            # 避頭尾法則 (Oikomi)：若斷點處會使新列以禁止行首標點開頭，或使本列以禁止行尾標點結尾，
+            # 則將斷點往前推 (把前一字一併推入下一列)，確保單列絕不超過 max_chars_per_col。
+            while split_idx > 1 and (
+                tokens[split_idx] in punct_no_start
+                or (tokens[split_idx].startswith(".") and len(tokens[split_idx]) >= 2)
+                or tokens[split_idx - 1] in punct_no_end
+            ):
                 split_idx -= 1
 
-            if split_idx >= len(tokens):
-                break
+            if split_idx <= 0:
+                split_idx = max_chars_per_col
 
             col_tokens = [t for t in tokens[:split_idx] if t.strip()]
             if col_tokens:
@@ -238,6 +232,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
             else:
                 box_top = res_y - style.padding_bottom - box_h
 
+            sideways_chars = set("—–―…⋯～~-－ー（）()「」『』【】《》〈〉〔〕［］｛｝:;")
             for col_idx, tokens in enumerate(col_tokens):
                 col_len = len(tokens) * char_step
                 # 列內對齊 (text-align: start / center / end)
@@ -250,9 +245,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
                 cx = block_right - (col_idx + 0.5) * col_pitch
                 for ch_idx, tok in enumerate(tokens):
                     cy = col_top + (ch_idx + 0.5) * char_step
+                    rot = "\\frz-90" if (tok in sideways_chars or (tok.startswith(".") and len(tok) >= 2)) else ""
                     event_lines.append(
                         f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,"
-                        f"{{\\an5\\pos({_fmt(cx)},{_fmt(cy)})}}{tok}"
+                        f"{{\\an5\\pos({_fmt(cx)},{_fmt(cy)}){rot}}}{tok}"
                     )
         else:
             formatted_text = format_text_for_layout(seg.text, orientation="horizontal")
