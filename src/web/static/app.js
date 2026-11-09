@@ -512,13 +512,15 @@ function initPlayer() {
     el.videoResolutionPill.classList.remove("hidden");
     el.placeholder.classList.add("hidden");
 
-    // 若為直式短影音（寬度小於 600px，如 448x768 等小解析度）且尚未手動自訂樣式，自適應縮減預設字級與邊距，防止字體過大爆框
-    if (!state.styleCustomized && state.video.width < 600 && state.style.font_size > 26) {
-      state.style.font_size = 22;
-      state.style.padding_left = 16;
-      state.style.padding_right = 16;
-      state.style.padding_bottom = 45;
-      state.style.padding_top = 40;
+    // 自適應調整預設字級與邊距：若使用者尚未手動修改樣式，依據影片原生解析度比例自適應縮放，防止不同解析度下字級失衡
+    if (!state.styleCustomized) {
+      const minDim = Math.min(state.video.width || 1920, state.video.height || 1080);
+      const refScale = Math.max(0.48, Math.min(1.5, minDim / 1080));
+      state.style.font_size = Math.round(36 * refScale);
+      state.style.padding_left = Math.max(16, Math.round(40 * (state.video.width / 1920)));
+      state.style.padding_right = Math.max(16, Math.round(40 * (state.video.width / 1920)));
+      state.style.padding_bottom = Math.max(20, Math.round(60 * (state.video.height / 1080)));
+      state.style.padding_top = Math.max(20, Math.round(50 * (state.video.height / 1080)));
       syncStateToControls();
     }
 
@@ -738,8 +740,8 @@ function applySubtitleStyleToOverlay() {
   container.style.paddingBottom = `${padBottom}px`;
   container.style.paddingLeft = `${padLeft}px`;
 
-  // 2. 文字外觀與特效 (依據影片原生解析度等比縮放)
-  const fontSize = Math.max(10, Math.round(s.font_size * scale));
+  // 2. 文字外觀與特效 (依據影片原生解析度等比縮放，支援亞像素平滑渲染)
+  const fontSize = Math.max(6, Number((s.font_size * scale).toFixed(1)));
   const outlineWidth = Math.max(0.0, (s.outline_width * scale)).toFixed(1);
   const shadowDist = (s.shadow_offset * scale).toFixed(1);
 

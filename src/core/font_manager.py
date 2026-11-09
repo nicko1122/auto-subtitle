@@ -207,17 +207,28 @@ def extract_font_family(font_path: Path) -> Dict[str, str]:
     # 1. 嘗試使用 fc-query (Linux / WSL 內與 libass 使用相同 Fontconfig 解析引擎)
     try:
         res = subprocess.run(
-            ["fc-query", "--format=%{family}\\n", str(font_path)],
+            ["fc-query", "--format=%{family}\\n%{fullname}\\n", str(font_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=5
         )
         if res.returncode == 0 and res.stdout.strip():
-            first_line = res.stdout.strip().splitlines()[0]
-            names = [n.strip() for n in first_line.split(",") if n.strip()]
+            lines = res.stdout.strip().splitlines()
+            names = [n.strip() for n in lines[0].split(",") if n.strip()] if len(lines) > 0 else []
+            fullnames = [n.strip() for n in lines[1].split(",") if n.strip()] if len(lines) > 1 else []
             if names:
-                family_primary = names[0]
+                preferred = names[0]
+                stem_lower = font_path.stem.lower()
+                for style_keyword in ("thin", "light", "bold", "medium", "black", "heavy", "regular"):
+                    if style_keyword in stem_lower:
+                        for n in names:
+                            if style_keyword in n.lower():
+                                preferred = n
+                                break
+                        break
+
+                family_primary = preferred
                 family_display = " / ".join(names[:2]) if len(names) > 1 else names[0]
     except Exception:
         pass

@@ -46,11 +46,14 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     """
     將直式字幕文字切分為多列 (模擬 CSS writing-mode: vertical-rl 自動換列)：
     - 英數連續詞彙維持塊狀 (Tate-chu-yoko 縱中橫)
-    - 單列超過 max_chars_per_col 時，優先於標點或空白處換至下一列
+    - 嚴格實作避頭尾法則 (Kinsoku Shori)：禁止標點符號 (如 。，、！？) 孤立於新列開頭
+    - 單列超過 max_chars_per_col 時，優先於標點或自然詞界處換列
     """
     raw_lines = [l.strip() for l in text.replace("\r\n", "\n").split("\n") if l.strip()]
     columns: list[str] = []
 
+    punct_no_start = set("，。！？；、,.!?;:）】』」〉》”’%‰…~～·")
+    punct_no_end = set("（【『「〈《“‘")
     punct_breaks = set("，。！？；、,.!?;: 　")
 
     for line in raw_lines:
@@ -60,12 +63,28 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
             continue
 
         while len(tokens) > max_chars_per_col:
-            # 尋找最佳斷點 (在 max_chars_per_col 附近尋找標點符號)
+            # 若僅超過 1~2 個字元且結尾為標點符號，容許留在同列，絕不孤立標點到新列
+            if len(tokens) <= max_chars_per_col + 2 and tokens[-1] in punct_no_start:
+                break
+
+            # 於後半段尋找最佳標點斷點
             split_idx = max_chars_per_col
             for k in range(max_chars_per_col - 1, max(2, max_chars_per_col // 2) - 1, -1):
-                if tokens[k] in punct_breaks:
+                if tokens[k] in punct_breaks and (k + 1 < len(tokens)) and tokens[k + 1] not in punct_no_start:
                     split_idx = k + 1
                     break
+
+            # 避頭點檢查：禁止新列以不可開頭的標點符號起始
+            while split_idx < len(tokens) and tokens[split_idx] in punct_no_start:
+                split_idx += 1
+
+            # 避尾點檢查：禁止前列以開括號等起始標點結尾
+            if split_idx > 1 and tokens[split_idx - 1] in punct_no_end:
+                split_idx -= 1
+
+            if split_idx >= len(tokens):
+                break
+
             col_tokens = [t for t in tokens[:split_idx] if t.strip()]
             if col_tokens:
                 columns.append("\\N".join(col_tokens))
@@ -132,12 +151,20 @@ def to_ass(
     margin_l = style.padding_left
     margin_r = style.padding_right
 
-    # 3. 組合 ASS Style 定義行
+    # 3. 換算 CSS 像素 (96 DPI) 為 ASS libass 字級點數 (72 DPI):
+    # libass 在 PlayResY 等同影片高度時以 72 DPI 點數渲染 Fontsize，
+    # 透過 *(96/72) 等比換算，確保在硬壓燒錄 (Hardcopy) 影片中的字體像素大小與 Web Preview CSS 100% 精確貼合
+    ass_font_size = max(10, int(round(style.font_size * 96.0 / 72.0)))
+    ass_outline = round(style.outline_width * 96.0 / 72.0, 1) if style.outline_enabled else 0.0
+    ass_shadow = round(style.shadow_offset * 96.0 / 72.0, 1)
+    ass_spacing = round(style.letter_spacing * 96.0 / 72.0, 1)
+
+    # 4. 組合 ASS Style 定義行
     style_line = (
-        f"Style: Default,{style.font_name},{style.font_size},"
+        f"Style: Default,{style.font_name},{ass_font_size},"
         f"{pri_col},{sec_col},{out_col},{bak_col},"
-        f"{bold_val},{italic_val},0,0,100,100,{style.letter_spacing},0,1,"
-        f"{style.outline_width if style.outline_enabled else 0},{style.shadow_offset},"
+        f"{bold_val},{italic_val},0,0,100,100,{ass_spacing},0,1,"
+        f"{ass_outline},{ass_shadow},"
         f"{alignment},{margin_l},{margin_r},{margin_v},1"
     )
 
@@ -160,9 +187,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
     # 計算直式排版時，單列可容納的最大字數與列間距
     avail_height = max(180, res_y - style.padding_top - style.padding_bottom)
-    char_step = max(12, int(style.font_size * 1.18))
-    max_chars_per_col = max(4, avail_height // char_step)
-    col_spacing = int(style.font_size * 1.45)
+    char_step = max(12, int(ass_font_size * 1.05))
+    max_chars_per_col = max(6, avail_height // char_step)
+    col_spacing = int(ass_font_size * 1.45)
 
     for seg in track.segments:
         start_str = format_ass_timestamp(seg.start)
