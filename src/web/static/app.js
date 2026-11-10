@@ -100,6 +100,7 @@ const el = {
   inputUploadFolder: document.getElementById("input-upload-folder"),
   packageSaveStatus: document.getElementById("package-save-status"),
   btnSavePackage: document.getElementById("btn-save-package"),
+  btnDeletePackage: document.getElementById("btn-delete-package"),
   btnUpscaleActiveVideo: document.getElementById("btn-upscale-active-video"),
   modalUpscale: document.getElementById("modal-upscale"),
   btnCloseUpscaleModal: document.getElementById("btn-close-upscale-modal"),
@@ -1010,6 +1011,13 @@ function setPackageSaveStatus(text, failed = false) {
     el.packageSaveStatus.textContent = text;
     el.packageSaveStatus.className = failed ? "text-xs text-red-400" : "text-xs text-zinc-400";
   }
+  if (el.btnDeletePackage) {
+    if (state.activePackage) {
+      el.btnDeletePackage.classList.remove("hidden");
+    } else {
+      el.btnDeletePackage.classList.add("hidden");
+    }
+  }
 }
 
 let packageSaveTimer = null;
@@ -1120,7 +1128,7 @@ async function managePackage(action, item) {
   if (state.packageBusy) return;
   let destination = item.path;
   if (action === "delete") {
-    if (!confirm(`刪除整個「${item.name}」資產包及其中的影片、原詞與 SRT？`)) return;
+    if (!confirm(`確定要永久刪除「${item.name || item.path}」資產包及其中的影片、原詞與 SRT？此操作無法復原。`)) return;
   } else {
     const value = prompt(action === "rename" ? "資產包的新名稱" : "資產庫內的目標路徑，例如：客戶A/訪談", action === "rename" ? item.name : item.path);
     if (!value || !value.trim()) return;
@@ -1131,10 +1139,14 @@ async function managePackage(action, item) {
     } else destination = value.trim();
   }
   state.packageBusy = true;
-  showBusyOverlay("正在更新資產包…");
+  showBusyOverlay(action === "delete" ? "正在刪除資產包…" : "正在更新資產包…");
   let reopen = null;
   try {
-    await saveActivePackage();
+    if (action !== "delete") {
+      await saveActivePackage();
+    } else if (state.activePackage && state.activePackage.path === item.path) {
+      clearPackageWorkspace();
+    }
     const response = await fetch(action === "delete" ? `/api/packages?path=${encodeURIComponent(item.path)}` : "/api/packages/move", {
       method: action === "delete" ? "DELETE" : "POST",
       headers: { "Content-Type": "application/json" },
@@ -1147,6 +1159,9 @@ async function managePackage(action, item) {
       else reopen = data.package.path;
     }
     await loadAssetLibrary();
+    if (action === "delete") {
+      addLog(`已成功刪除資產包「${item.name || item.path}」`, "success");
+    }
   } catch (error) {
     addLog(`資產包操作失敗：${error.message}`, "error");
   } finally {
@@ -1189,10 +1204,10 @@ function renderFilteredAssetLibrary() {
       </div>
       <div class="package-files text-[11px] text-zinc-400 break-all whitespace-pre-line"></div>
       <div class="flex gap-3 text-[11px] text-zinc-500">
-        <button class="package-rename hover:text-zinc-200">重新命名</button>
-        <button class="package-move hover:text-zinc-200">移動</button>
-        <button class="package-upscale text-violet-400 hover:text-violet-300">✨ AI 放大</button>
-        <button class="package-delete hover:text-red-400">刪除整包</button>
+        <button class="package-rename hover:text-zinc-200 transition">重新命名</button>
+        <button class="package-move hover:text-zinc-200 transition">移動</button>
+        <button class="package-upscale text-violet-400 hover:text-violet-300 transition">✨ AI 放大</button>
+        <button class="package-delete text-red-400/80 hover:text-red-400 transition">🗑️ 刪除資產</button>
       </div>`;
     if (item.error) {
       card.textContent = `📁 ${item.path}：${item.error}`;
@@ -1299,6 +1314,13 @@ function initUniversalDragAndDrop() {
   el.inputUploadFolder.addEventListener("change", event => handleBatchFileUpload(event.target.files));
   el.btnRefreshAssets.addEventListener("click", loadAssetLibrary);
   el.btnSavePackage.addEventListener("click", () => saveActivePackage().catch(error => addLog(error.message, "error")));
+  if (el.btnDeletePackage) {
+    el.btnDeletePackage.addEventListener("click", () => {
+      if (state.activePackage) {
+        managePackage("delete", state.activePackage);
+      }
+    });
+  }
   el.alignScriptTextarea.addEventListener("input", schedulePackageSave);
   window.addEventListener("beforeunload", event => {
     if (packageHasChanges()) { event.preventDefault(); event.returnValue = ""; }

@@ -336,11 +336,20 @@ def delete_package(path: str):
         with asset_packages.mutation_lock:
             directory = asset_packages.resolve_package(UPLOADS_DIR, path)
             asset_packages.package_files(directory)
-            shutil.rmtree(directory)
+
+            def _handle_remove_readonly(func, file_path, exc_info):
+                import stat
+                try:
+                    os.chmod(file_path, stat.S_IWRITE)
+                    func(file_path)
+                except Exception:
+                    pass
+
+            shutil.rmtree(directory, onerror=_handle_remove_readonly)
             return {"status": "success"}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
+    except (ValueError, PermissionError, OSError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
