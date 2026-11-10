@@ -90,3 +90,32 @@ def test_custom_font_family_matching_chenyuluoyan():
         info = extract_font_family(chen_file)
         # Family name must contain "Thin" to avoid generic fallback in libass
         assert "Thin" in info["family"] or info["family"] == "ChenYuluoyan 2.0 Thin"
+
+
+def test_line_breaks_and_br_tag_support():
+    from src.core.exporter import to_srt, to_vtt
+
+    # 1. split_vertical_columns supports <br> and \n
+    text_br = "第一行<br>第二行<br/>第三行"
+    cols = split_vertical_columns(text_br, max_chars_per_col=10)
+    assert cols == ["第\\N一\\N行", "第\\N二\\N行", "第\\N三\\N行"]
+
+    text_nl = "第一行\n第二行"
+    cols_nl = split_vertical_columns(text_nl, max_chars_per_col=10)
+    assert cols_nl == ["第\\N一\\N行", "第\\N二\\N行"]
+
+    # 2. to_ass horizontal supports <br>
+    track = SubtitleTrack(
+        source_file="test.mp4",
+        segments=[SubtitleSegment(id=1, start=0.0, end=2.0, text="上半句<br>下半句")]
+    )
+    style = SubtitleStyle(orientation="horizontal")
+    ass = to_ass(track, style=style)
+    assert "上半句\\N下半句" in ass
+
+    # 3. to_srt and to_vtt convert <br> to newline
+    srt = to_srt(track)
+    assert "上半句\n下半句" in srt
+
+    vtt = to_vtt(track)
+    assert "上半句\n下半句" in vtt

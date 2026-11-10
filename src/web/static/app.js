@@ -892,7 +892,9 @@ function updateSubtitleOverlayOnTime(currentTime) {
 
 function renderOverlayText(text) {
   if (el.overlay) {
-    const str = (text !== null && text !== undefined) ? String(text).replace(/\\N/g, "\n") : "";
+    const str = (text !== null && text !== undefined)
+      ? String(text).replace(/<br\s*\/?>/gi, "\n").replace(/\\N/g, "\n")
+      : "";
     el.overlay.textContent = str;
     el.overlay.style.whiteSpace = "pre-wrap";
     if (!str.trim()) {
@@ -1781,17 +1783,23 @@ function renderSegmentList() {
       }
     });
 
-    const textInput = document.createElement("input");
-    textInput.type = "text";
-    textInput.className = "seg-text-input w-full bg-zinc-900 border border-zinc-800/80 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-blue-500 placeholder:text-zinc-600";
-    textInput.placeholder = `[#${seg.id} 待填字幕 — 可直接手打 (Enter 跳下一段)，或校對完時間軸後點上方「填入 AI 字幕」]`;
+    const textInput = document.createElement("textarea");
+    const lineCount = (seg.text || "").split(/\n|<br\s*\/?>/i).length;
+    textInput.rows = Math.min(4, Math.max(1, lineCount));
+    textInput.className = "seg-text-input w-full bg-zinc-900 border border-zinc-800/80 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-blue-500 placeholder:text-zinc-600 resize-y font-sans";
+    textInput.placeholder = `[#${seg.id} 待填字幕 — Enter跳下一段, Shift+Enter換行, 亦支援<br>]`;
     textInput.value = seg.text || "";
+
+    function autoResizeInput(target) {
+      target.style.height = 'auto';
+      target.style.height = `${target.scrollHeight}px`;
+    }
 
     card.appendChild(topRow);
     card.appendChild(textInput);
 
     card.addEventListener("click", (e) => {
-      if (e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON") {
+      if (e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON" && e.target.tagName !== "TEXTAREA") {
         selectAndJumpToSegment(idx);
       }
     });
@@ -1803,7 +1811,7 @@ function renderSegmentList() {
     });
 
     textInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         const nextIdx = idx + 1;
         if (nextIdx < state.track.segments.length) {
@@ -1821,6 +1829,7 @@ function renderSegmentList() {
 
     textInput.addEventListener("input", (e) => {
       seg.text = e.target.value;
+      autoResizeInput(e.target);
       el.rawSubtitleTextarea.value = formatEditorText(state.track.segments);
       refreshCapBadge();
       if (state.selectedSegmentIndex === idx) {
@@ -1892,6 +1901,8 @@ function selectAndJumpToSegment(index) {
     renderOverlayText(textToShow);
     if (el.inputStylePreviewText && seg.text && seg.text.trim()) {
       el.inputStylePreviewText.value = seg.text;
+      el.inputStylePreviewText.style.height = 'auto';
+      el.inputStylePreviewText.style.height = `${el.inputStylePreviewText.scrollHeight}px`;
     }
     highlightActiveSegmentInList(seg.id);
     if (el.selectedSubBadge) {
@@ -2316,7 +2327,7 @@ function updateSubtitleSelectDropdown() {
   state.track.segments.forEach((seg, idx) => {
     const opt = document.createElement("option");
     opt.value = String(idx);
-    const labelText = (seg.text && seg.text.trim()) ? seg.text : "[待填字幕斷點]";
+    const labelText = (seg.text && seg.text.trim()) ? seg.text.replace(/\n|<br\s*\/?>/gi, " ") : "[待填字幕斷點]";
     opt.textContent = `#${seg.id} [${formatTime(seg.start)}]: ${labelText}`;
     if (idx === state.selectedSegmentIndex) opt.selected = true;
     sel.appendChild(opt);
@@ -2495,7 +2506,12 @@ function initStyleEditor() {
   }
 
   if (el.inputStylePreviewText) {
+    const adjustHeight = () => {
+      el.inputStylePreviewText.style.height = 'auto';
+      el.inputStylePreviewText.style.height = `${el.inputStylePreviewText.scrollHeight}px`;
+    };
     el.inputStylePreviewText.addEventListener("input", (e) => {
+      adjustHeight();
       const txt = e.target.value;
       renderOverlayText(txt || "字幕樣式與位置即時預覽 Sample");
       // 若目前已選取某句字幕，也可同步更新該句預覽

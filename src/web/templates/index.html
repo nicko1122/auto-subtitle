@@ -538,9 +538,9 @@
             <select id="select-subtitle-line" class="w-full bg-zinc-900 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
               <option value="0">尚無字幕 (顯示預設範例文字)</option>
             </select>
-            <div class="flex items-center gap-1.5 pt-0.5">
-              <span class="text-[11px] text-zinc-400 shrink-0">預覽文字:</span>
-              <input type="text" id="input-style-preview-text" value="字幕樣式與位置即時預覽 Sample" class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-blue-500" placeholder="輸入文字即時預覽字幕外觀...">
+            <div class="flex items-start gap-1.5 pt-0.5">
+              <span class="text-[11px] text-zinc-400 shrink-0 mt-1">預覽文字:</span>
+              <textarea id="input-style-preview-text" rows="1" class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 resize-y font-sans" placeholder="輸入文字即時預覽字幕外觀 (支援 <br> 或 Shift+Enter 換行)...">字幕樣式與位置即時預覽 Sample</textarea>
             </div>
           </div>
 
@@ -979,6 +979,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261109_v2"></script>
+  <script src="/static/app.js?v=20261110_v1"></script>
 </body>
 </html>

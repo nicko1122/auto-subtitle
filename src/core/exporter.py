@@ -45,6 +45,7 @@ def format_ass_timestamp(seconds: float) -> str:
 def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     """
     將直式字幕文字切分為多列 (1:1 模擬 CSS writing-mode: vertical-rl 自動換列)：
+    - 支援 <br> / <br/> / <br /> / \\N / 換行符號手動強制換列
     - 英數連續詞彙與連續半形句點 (...) 維持塊狀
     - 嚴格遵守每列最大字數上限 max_chars_per_col (絕不超出畫面高度)
     - 實作 CSS / UAX #14 避頭尾法則 (Oikomi 推入下一列)：
@@ -52,7 +53,8 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
       - 禁止開啟標點 (如 （【「等) 孤立於本列結尾 (推入下一列)
     """
     max_chars_per_col = max(1, int(max_chars_per_col))
-    raw_lines = [l.strip() for l in text.replace("\r\n", "\n").split("\n") if l.strip()]
+    norm_text = re.sub(r'<br\s*/?>|\\N', '\n', text or "", flags=re.IGNORECASE)
+    raw_lines = [l.strip() for l in norm_text.replace("\r\n", "\n").split("\n") if l.strip()]
     columns: list[str] = []
 
     punct_no_start = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·.．")
@@ -94,13 +96,14 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
 def format_text_for_layout(text: str, orientation: str = "horizontal", max_chars_per_col: int = 12) -> str:
     """
     根據排版方向格式化單列字幕文字內容：
-    - horizontal: 橫排文字，保留或轉為 ASS 的 \\N 換行
-    - vertical: 直排文字，英數連續詞彙維持塊狀，中文字元垂直堆疊
+    - horizontal: 橫排文字，保留或轉為 ASS 的 \\N 換行 (支援 <br>)
+    - vertical: 直排文字，英數連續詞彙維持塊狀，中文字元垂直堆疊 (支援 <br>)
     """
+    norm_text = re.sub(r'<br\s*/?>', '\n', text or "", flags=re.IGNORECASE)
     if orientation != "vertical":
-        return text.replace("\r\n", "\\N").replace("\n", "\\N")
+        return norm_text.replace("\r\n", "\\N").replace("\n", "\\N")
 
-    cols = split_vertical_columns(text, max_chars_per_col=max_chars_per_col)
+    cols = split_vertical_columns(norm_text, max_chars_per_col=max_chars_per_col)
     return cols[0] if cols else ""
 
 
@@ -284,27 +287,29 @@ def format_timestamp(seconds: float, decimal_separator: str = ",") -> str:
 
 
 def to_srt(track: SubtitleTrack) -> str:
-    """將 SubtitleTrack 轉成標準 SRT 格式字串"""
+    """將 SubtitleTrack 轉成標準 SRT 格式字串 (支援 <br> 轉換為換行)"""
     lines = []
     for seg in track.segments:
         start_str = format_timestamp(seg.start, decimal_separator=",")
         end_str = format_timestamp(seg.end, decimal_separator=",")
+        clean_text = re.sub(r'<br\s*/?>', '\n', seg.text or "", flags=re.IGNORECASE)
         lines.append(str(seg.id))
         lines.append(f"{start_str} --> {end_str}")
-        lines.append(seg.text)
+        lines.append(clean_text)
         lines.append("")  # 空行分隔
     return "\n".join(lines)
 
 
 def to_vtt(track: SubtitleTrack) -> str:
-    """將 SubtitleTrack 轉成 WebVTT 格式字串"""
+    """將 SubtitleTrack 轉成 WebVTT 格式字串 (支援 <br> 轉換為換行)"""
     lines = ["WEBVTT", ""]
     for seg in track.segments:
         start_str = format_timestamp(seg.start, decimal_separator=".")
         end_str = format_timestamp(seg.end, decimal_separator=".")
+        clean_text = re.sub(r'<br\s*/?>', '\n', seg.text or "", flags=re.IGNORECASE)
         lines.append(str(seg.id))
         lines.append(f"{start_str} --> {end_str}")
-        lines.append(seg.text)
+        lines.append(clean_text)
         lines.append("")
     return "\n".join(lines)
 
