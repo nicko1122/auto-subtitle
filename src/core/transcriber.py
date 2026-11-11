@@ -14,11 +14,21 @@ from .audio_extractor import get_media_duration
 from ..schemas.subtitle import WordItem
 
 
+def _verify_cuda_kernel():
+    """確認目前 PyTorch CUDA build 包含本機顯示卡之計算核心 (例如 Pascal sm_61)"""
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA 不可用")
+    _ = (torch.zeros(1, device="cuda") + 1).item()
+
+
 def load_whisper_model(device="auto"):
     targets = ("cuda", "cpu") if device in ("auto", "cuda") else (device,)
     last_error = None
     for target in targets:
         try:
+            if target == "cuda":
+                _verify_cuda_kernel()
             model = stable_whisper.load_model(WHISPER_MODEL, device=target)
             logger.info(f"原生 Whisper: model={WHISPER_MODEL}, device={target}")
             return model
