@@ -7,15 +7,33 @@ from pathlib import Path
 from typing import Tuple, Optional, Union
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
+from .audio_extractor import get_media_duration
 from .exporter import to_ass, save_file, parse_srt_content
 from .font_manager import FONTS_DIR
 
 logger = logging.getLogger(__name__)
 
 
+def has_video_stream(media_path: str) -> bool:
+    """檢查媒體檔案是否包含視訊軌 (純音訊檔案如 .wav/.mp3 會回傳 False)"""
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "csv=p=0",
+        str(media_path)
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return "video" in res.stdout
+    except Exception:
+        return False
+
+
 def get_video_info(video_path: str) -> Tuple[int, int, float]:
     """
-    使用 ffprobe 取得影片的 (寬度, 高度, 總時長秒數)
+    使用 ffprobe 取得影片的 (寬度, 高度, 總時長秒數)；若為純音訊則使用 1920x1080 與音訊時長
     """
     cmd = [
         "ffprobe",
@@ -28,14 +46,17 @@ def get_video_info(video_path: str) -> Tuple[int, int, float]:
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
         data = json.loads(res.stdout)
-        stream = data["streams"][0]
+        streams = data.get("streams") or []
+        if not streams:
+            return 1920, 1080, get_media_duration(str(video_path))
+        stream = streams[0]
         width = int(stream["width"])
         height = int(stream["height"])
-        duration = float(stream.get("duration", 0.0))
+        duration = float(stream.get("duration") or get_media_duration(str(video_path)) or 0.0)
         return width, height, duration
     except Exception as e:
         logger.warning(f"ffprobe 解析影片長寬失敗 ({e})，使用預設值 1920x1080")
-        return 1920, 1080, 0.0
+        return 1920, 1080, get_media_duration(str(video_path))
 
 
 def check_nvenc_support() -> bool:
@@ -139,15 +160,33 @@ def burn_subtitles_to_video(
             "-crf", "22"
         ]
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", str(input_v),
-        "-vf", vf_filter,
-        *encoder_args,
-        "-c:a", "copy",        # 音訊不重編碼，無損直通
-        str(out_v)
-    ]
+    is_video = has_video_stream(str(input_v))
+    if is_video:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(input_v),
+            "-vf", vf_filter,
+            *encoder_args,
+            "-c:a", "copy",        # 音訊不重編碼，無損直通
+            str(out_v)
+        ]
+    else:
+        # 純音訊檔 (如 .wav / .mp3)：自動產生 1920x1080 黑底畫布並轉碼 AAC 音軌，壓製為歌詞影片 MP4
+        canvas_dur = max(1.0, float(duration or 0.0))
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f", "lavfi",
+            "-i", f"color=c=black:s={width}x{height}:r=24:d={canvas_dur:.3f}",
+            "-i", str(input_v),
+            "-vf", vf_filter,
+            *encoder_args,
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            str(out_v)
+        ]
 
     logger.info(f"開始執行壓制: {' '.join(cmd)}")
     try:

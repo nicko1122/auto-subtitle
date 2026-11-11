@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
-from ..core.audio_extractor import extract_audio
+from ..core.audio_extractor import extract_audio, get_media_duration
 from ..core.transcriber import WHISPER_MODEL, transcribe_audio
 from ..core.segmenter import build_subtitle_track
 from ..core.aligner import align_script_to_audio
@@ -402,7 +402,10 @@ def upload_asset(files: List[UploadFile] = File(...), package_path: Optional[str
             media, subtitle, script = package["media"], package["subtitle"], package["script"]
             if media["type"] == "video":
                 width, height, duration = get_video_info(media["absolute_path"])
-                media.update(width=width, height=height, duration=duration)
+                media.update(width=width, height=height, duration=duration, is_audio_only=False)
+            elif media["type"] == "audio":
+                duration = get_media_duration(media["absolute_path"])
+                media.update(width=1920, height=1080, duration=duration, is_audio_only=True)
             videos.append(media)
             uploaded.extend(item for item in (media, subtitle, script) if item)
             if subtitle:
@@ -589,14 +592,11 @@ def transcribe_endpoint(
     p = _resolve_media_path(media_path)
     job_id = uuid.uuid4().hex
 
-    # 若為影片，提取 16kHz WAV 至 TEMP_DIR (避免污染 uploads 資產庫)
-    is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
-    if is_video:
-        wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
-        extract_res = extract_audio(str(p), str(wav_path))
-        audio_file = extract_res["audio_path"]
-    else:
-        audio_file = str(p)
+    # 無論來源是影片或音檔 (mp4 / wav / mp3 / m4a / flac...)，統一抽取轉成 16kHz 單聲道 WAV 至 TEMP_DIR，
+    # 確保 Whisper 與局部切音對齊準確且不污染 uploads 資產庫
+    wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
+    extract_res = extract_audio(str(p), str(wav_path))
+    audio_file = extract_res["audio_path"]
 
     clean_script = (script_text or "").strip()
 
@@ -667,8 +667,7 @@ def transcribe_endpoint(
         logger.error(f"產生字幕失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if is_video:
-            wav_path.unlink(missing_ok=True)
+        wav_path.unlink(missing_ok=True)
 
 
 @app.post("/api/ai/align")
@@ -677,14 +676,6 @@ def align_endpoint(req: AlignRequest):
     """【有稿模式】利用完整 Luna Pipeline 進行原稿強制對齊與時間軸審核"""
     p = _resolve_media_path(req.media_path)
     job_id = uuid.uuid4().hex
-
-    is_video = p.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
-    if is_video:
-        wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
-        extract_res = extract_audio(str(p), str(wav_path))
-        audio_file = extract_res["audio_path"]
-    else:
-        audio_file = str(p)
 
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir()
@@ -700,7 +691,10 @@ def align_endpoint(req: AlignRequest):
     if not script_source:
         raise HTTPException(status_code=400, detail="請提供原稿文字內容或原稿檔案路徑")
 
+    wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
     try:
+        extract_res = extract_audio(str(p), str(wav_path))
+        audio_file = extract_res["audio_path"]
         track = run_luna_pipeline(
             audio_path=audio_file,
             lyrics_source=script_source,
@@ -718,8 +712,7 @@ def align_endpoint(req: AlignRequest):
         logger.error(f"對齊失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if is_video:
-            wav_path.unlink(missing_ok=True)
+        wav_path.unlink(missing_ok=True)
 
 
 @app.post("/api/ai/proofread")

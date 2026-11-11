@@ -63,6 +63,8 @@ const el = {
   btnScaleCompact: document.getElementById("btn-scale-compact"),
   btnScaleLarge: document.getElementById("btn-scale-large"),
   placeholder: document.getElementById("video-placeholder"),
+  audioOnlyBackdrop: document.getElementById("audio-only-backdrop"),
+  audioOnlyTrackName: document.getElementById("audio-only-track-name"),
   videoCenterPlayBadge: document.getElementById("video-center-play-badge"),
   videoBufferingSpinner: document.getElementById("video-buffering-spinner"),
   leftPanel: document.getElementById("left-video-panel"),
@@ -495,9 +497,14 @@ function initPlayer() {
 
   v.addEventListener("loadedmetadata", () => {
     el.timeDuration.textContent = formatTime(v.duration);
+    const isAudioOnly = state.video.isAudioOnly || !v.videoWidth || !v.videoHeight;
+    state.video.isAudioOnly = isAudioOnly;
     state.video.duration = v.duration;
     state.video.width = v.videoWidth || 1920;
     state.video.height = v.videoHeight || 1080;
+    if (el.audioOnlyBackdrop) {
+      el.audioOnlyBackdrop.classList.toggle("hidden", !isAudioOnly);
+    }
 
     // 計算原生長寬比與標籤
     const ratio = state.video.width / state.video.height;
@@ -509,7 +516,9 @@ function initPlayer() {
     else if (ratio < 0.9) ratioDesc = " (直式)";
     else ratioDesc = " (橫式)";
 
-    el.videoResolutionPill.textContent = `${state.video.width}x${state.video.height}${ratioDesc}`;
+    el.videoResolutionPill.textContent = isAudioOnly
+      ? `🎵 純音訊 · 畫布 ${state.video.width}x${state.video.height}`
+      : `${state.video.width}x${state.video.height}${ratioDesc}`;
     el.videoResolutionPill.classList.remove("hidden");
     el.placeholder.classList.add("hidden");
 
@@ -917,24 +926,26 @@ function saveSessionToStorage() {
 
 // 更新頂部「當前工作台掛載看板 (Active Workspace Slots)」
 function updateWorkspaceSlots() {
-  // 1. 影片槽狀態
+  // 1. 影音來源槽狀態
   if (state.video.filename) {
-    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.remove("hidden");
+    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.toggle("hidden", !!state.video.isAudioOnly);
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-blue-950/20 border border-blue-500/40 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-medium";
     el.slotVideoStatus.textContent = "● 使用中";
     el.slotVideoName.textContent = state.video.filename;
     el.slotVideoName.className = "text-xs font-semibold text-blue-200 truncate";
     const durStr = state.video.duration ? ` • ${state.video.duration.toFixed(1)}s` : "";
-    el.slotVideoMeta.textContent = `${state.video.width}x${state.video.height}${durStr}`;
+    el.slotVideoMeta.textContent = state.video.isAudioOnly
+      ? `🎵 純音訊模式${durStr}`
+      : `${state.video.width}x${state.video.height}${durStr}`;
   } else {
     if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.add("hidden");
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]";
     el.slotVideoStatus.textContent = "未載入";
-    el.slotVideoName.textContent = "請從下方選擇或拖入影片";
+    el.slotVideoName.textContent = "請從下方選擇或拖入影片 / 音檔";
     el.slotVideoName.className = "text-xs font-semibold text-zinc-400 truncate";
-    el.slotVideoMeta.textContent = "支援 MP4 / MOV / WebM";
+    el.slotVideoMeta.textContent = "支援 MP4 / MOV / WAV / MP3";
   }
 
   // 2. 字幕槽狀態
@@ -1109,13 +1120,14 @@ function clearPackageWorkspace() {
   state.packageLoading = true;
   state.activePackage = null;
   state.waveformPeaks = [];
-  state.video = { filename: "", path: "", url: "", duration: 0, width: 1920, height: 1080 };
+  state.video = { filename: "", path: "", url: "", duration: 0, width: 1920, height: 1080, isAudioOnly: false };
   el.video.pause();
   el.video.removeAttribute("src");
   el.video.load();
-  el.videoFilename.textContent = "未載入影片";
-  el.mediaBadge.textContent = "未載入影片";
+  el.videoFilename.textContent = "未載入影音";
+  el.mediaBadge.textContent = "未載入影音";
   el.placeholder.classList.remove("hidden");
+  if (el.audioOnlyBackdrop) el.audioOnlyBackdrop.classList.add("hidden");
   if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.add("hidden");
   el.alignScriptTextarea.value = "";
   setSubtitleTrack({ source_file: "", segments: [], duration: 0, language: "zh" });
@@ -1214,21 +1226,26 @@ function renderFilteredAssetLibrary() {
       container.appendChild(card);
       return;
     }
+    const isAudioPkg = item.media && (item.media.type === "audio" || /\.(wav|mp3|m4a|aac|flac|ogg)$/i.test(item.media.name || ""));
     card.querySelector(".package-name").textContent = `📁 ${item.path}${active ? ' · 使用中' : ''}`;
     card.querySelector(".package-files").textContent = [
-      `🎬 ${item.media.name}`,
+      `${isAudioPkg ? '🎵' : '🎬'} ${item.media.name}`,
       item.subtitle ? `📝 ${item.subtitle.name} · ${item.subtitle.segment_count || 0} 句` : "📝 尚無 SRT",
       item.script ? `📄 ${item.script.name}` : "📄 尚無原詞（選填）"
     ].join("\n");
     card.querySelector(".package-open").addEventListener("click", () => openPackage(item.path));
     const upscaleBtn = card.querySelector(".package-upscale");
     if (upscaleBtn) {
-      upscaleBtn.addEventListener("click", () => openUpscaleModal({
-        package_path: item.path,
-        media_name: item.media ? item.media.name : item.path,
-        target_name: `資產包: ${item.path}`,
-        meta_info: item.media ? `原始影片: ${item.media.name} (${item.media.size_mb || 0} MB)` : "準備就緒"
-      }));
+      if (isAudioPkg) {
+        upscaleBtn.classList.add("hidden");
+      } else {
+        upscaleBtn.addEventListener("click", () => openUpscaleModal({
+          package_path: item.path,
+          media_name: item.media ? item.media.name : item.path,
+          target_name: `資產包: ${item.path}`,
+          meta_info: item.media ? `原始影片: ${item.media.name} (${item.media.size_mb || 0} MB)` : "準備就緒"
+        }));
+      }
     }
     for (const action of ["rename", "move", "delete"]) {
       card.querySelector(`.package-${action}`).addEventListener("click", () => managePackage(action, item));
@@ -1238,14 +1255,18 @@ function renderFilteredAssetLibrary() {
 }
 
 function loadVideoAsset(asset) {
+  const isAudioOnly = (asset.type === "audio") || /\.(wav|mp3|m4a|aac|flac|ogg)$/i.test(asset.name || "");
   state.video.filename = asset.name;
   state.video.url = asset.url;
   state.video.path = asset.absolute_path;
+  state.video.isAudioOnly = isAudioOnly;
   el.video.src = asset.url;
   el.video.load();
   el.videoFilename.textContent = asset.name;
-  el.mediaBadge.textContent = asset.name;
+  el.mediaBadge.textContent = `${isAudioOnly ? '🎵 ' : ''}${asset.name}`;
   el.placeholder.classList.add("hidden");
+  if (el.audioOnlyBackdrop) el.audioOnlyBackdrop.classList.toggle("hidden", !isAudioOnly);
+  if (el.audioOnlyTrackName) el.audioOnlyTrackName.textContent = asset.name;
   if (el.videoCenterPlayBadge) el.videoCenterPlayBadge.classList.remove("hidden");
   updateWorkspaceSlots();
 }
