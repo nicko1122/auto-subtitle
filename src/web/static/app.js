@@ -2596,7 +2596,18 @@ function initStyleEditor() {
   if (el.btnOrientH) {
     el.btnOrientH.addEventListener("click", () => {
       state.styleCustomized = true;
+      const changed = state.style.orientation !== "horizontal";
       state.style.orientation = "horizontal";
+      if (changed) {
+        const vidW = state.video.width || 1920;
+        const vidH = state.video.height || 1080;
+        state.style.vertical_align = "bottom";
+        state.style.horizontal_align = "center";
+        state.style.padding_bottom = Math.round(vidH * 0.06);
+        state.style.padding_top = Math.round(vidH * 0.04);
+        state.style.padding_left = Math.round(vidW * 0.04);
+        state.style.padding_right = Math.round(vidW * 0.04);
+      }
       el.btnOrientH.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
       if (el.btnOrientV) el.btnOrientV.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
       syncStateToControls();
@@ -2608,7 +2619,18 @@ function initStyleEditor() {
   if (el.btnOrientV) {
     el.btnOrientV.addEventListener("click", () => {
       state.styleCustomized = true;
+      const changed = state.style.orientation !== "vertical";
       state.style.orientation = "vertical";
+      if (changed) {
+        const vidW = state.video.width || 1920;
+        const vidH = state.video.height || 1080;
+        state.style.vertical_align = "top";
+        state.style.horizontal_align = "right";
+        state.style.padding_top = Math.round(vidH * 0.06);
+        state.style.padding_right = Math.round(vidW * 0.05);
+        state.style.padding_left = Math.round(vidW * 0.03);
+        state.style.padding_bottom = Math.round(vidH * 0.04);
+      }
       el.btnOrientV.className = "px-3 py-1 rounded text-xs bg-blue-600 text-white font-medium";
       if (el.btnOrientH) el.btnOrientH.className = "px-3 py-1 rounded text-xs text-zinc-400 hover:text-white";
       syncStateToControls();

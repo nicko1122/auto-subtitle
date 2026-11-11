@@ -328,6 +328,89 @@ def get_font_em_ratio(font_name: str) -> float:
     return ratio
 
 
+_FONT_ADVANCE_CACHE: Dict[str, Dict[str, float]] = {}
+
+
+def get_font_char_advances_from_file(font_path: Path, index: int = 0) -> Dict[str, float]:
+    """解析字型檔案中 ASCII 可印字元 (0x20..0x7E) 的標準化水平寬度比例 (advanceWidth / unitsPerEm)"""
+    char_adv: Dict[str, float] = {}
+    try:
+        data = font_path.read_bytes()
+        offset = 0
+        if data[:4] == b"ttcf":
+            num_fonts = struct.unpack(">I", data[8:12])[0]
+            idx = index if 0 <= index < num_fonts else 0
+            offset = struct.unpack(">I", data[12 + idx * 4:16 + idx * 4])[0]
+        tables = _read_font_tables(data, offset)
+        if not all(k in tables for k in (b"head", b"hhea", b"cmap", b"hmtx")):
+            return char_adv
+        upem = struct.unpack_from(">H", data, tables[b"head"] + 18)[0]
+        num_hmetrics = struct.unpack_from(">H", data, tables[b"hhea"] + 34)[0]
+        if upem <= 0 or num_hmetrics <= 0:
+            return char_adv
+        hmtx_off = tables[b"hmtx"]
+
+        def _adv(gid: int) -> int:
+            idx = gid if gid < num_hmetrics else num_hmetrics - 1
+            return struct.unpack_from(">H", data, hmtx_off + idx * 4)[0]
+
+        cmap_off = tables[b"cmap"]
+        num_sub = struct.unpack_from(">H", data, cmap_off + 2)[0]
+        sub_off = None
+        fmt = None
+        for i in range(num_sub):
+            plat, enc, rel = struct.unpack_from(">HHI", data, cmap_off + 4 + i * 8)
+            f = struct.unpack_from(">H", data, cmap_off + rel)[0]
+            if (plat == 3 and enc in (1, 10)) or plat == 0:
+                if f in (4, 12):
+                    sub_off = cmap_off + rel
+                    fmt = f
+                    if enc == 10 or f == 12:
+                        break
+        if sub_off and fmt == 4:
+            seg_count = struct.unpack_from(">H", data, sub_off + 6)[0] // 2
+            end_codes = struct.unpack_from(f">{seg_count}H", data, sub_off + 14)
+            start_codes = struct.unpack_from(f">{seg_count}H", data, sub_off + 16 + 2 * seg_count)
+            id_deltas = struct.unpack_from(f">{seg_count}h", data, sub_off + 16 + 4 * seg_count)
+            id_range_offs_base = sub_off + 16 + 6 * seg_count
+            id_range_offs = struct.unpack_from(f">{seg_count}H", data, id_range_offs_base)
+            for cp in range(32, 127):
+                for s in range(seg_count):
+                    if start_codes[s] <= cp <= end_codes[s]:
+                        if id_range_offs[s] == 0:
+                            gid = (cp + id_deltas[s]) & 0xFFFF
+                        else:
+                            addr = id_range_offs_base + s * 2 + id_range_offs[s] + 2 * (cp - start_codes[s])
+                            gid = struct.unpack_from(">H", data, addr)[0]
+                            if gid != 0:
+                                gid = (gid + id_deltas[s]) & 0xFFFF
+                        char_adv[chr(cp)] = _adv(gid) / float(upem)
+                        break
+        elif sub_off and fmt == 12:
+            n_groups = struct.unpack_from(">I", data, sub_off + 12)[0]
+            for g in range(n_groups):
+                sc, ec, sgid = struct.unpack_from(">III", data, sub_off + 16 + g * 12)
+                if sc > 126:
+                    break
+                for cp in range(max(32, sc), min(127, ec + 1)):
+                    char_adv[chr(cp)] = _adv(sgid + (cp - sc)) / float(upem)
+    except Exception as e:
+        logger.debug(f"字型字元寬度解析失敗 ({font_path}): {e}")
+    return char_adv
+
+
+def get_font_char_advances(font_name: str) -> Dict[str, float]:
+    """取得字型中 ASCII 字元的寬度比例表 (含快取)"""
+    if font_name in _FONT_ADVANCE_CACHE:
+        return _FONT_ADVANCE_CACHE[font_name]
+    resolved = resolve_font_file(font_name)
+    res: Dict[str, float] = {}
+    if resolved:
+        res = get_font_char_advances_from_file(resolved[0], resolved[1])
+    _FONT_ADVANCE_CACHE[font_name] = res
+    return res
+
+
 def list_installed_custom_fonts() -> List[Dict[str, Any]]:
     """掃描專案 fonts/ 目錄下所有已安裝的自訂字型"""
     custom_fonts = []

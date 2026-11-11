@@ -42,9 +42,165 @@ def format_ass_timestamp(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
 
 
+_SIDEWAYS_CHARS = set("—–―…⋯～~-－ー（）()「」『』【】《》〈〉〔〕［］｛｝:;")
+_PUNCT_NO_START = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·.．")
+_PUNCT_NO_END = set("（【『「〈《“‘([")
+
+
+def _fallback_ascii_ratio(ch: str) -> float:
+    if ch == " ":
+        return 0.25
+    if ch in "ilI1!.,:;|'\"`":
+        return 0.28
+    if ch in "mwMW@":
+        return 0.78
+    if ch.isupper():
+        return 0.62
+    return 0.52
+
+
+def _measure_ascii_advance(
+    text: str, css_px: float, letter_spacing: float, char_adv: dict[str, float]
+) -> float:
+    total = 0.0
+    for ch in text:
+        ratio = char_adv.get(ch)
+        if ratio is None:
+            ratio = _fallback_ascii_ratio(ch)
+        total += ratio * css_px + letter_spacing
+    return max(1.0, total)
+
+
+def _layout_vertical_columns(
+    text: str,
+    css_px: float,
+    letter_spacing: float,
+    avail_height: float,
+    char_adv: dict[str, float],
+) -> list[list[tuple[str, str, float]]]:
+    """
+    將字幕文字精確排版為直式欄位列表 (1:1 模擬 CSS writing-mode: vertical-rl, text-orientation: mixed)：
+    - 中日韓全形字元直立堆疊，每字步進 char_step = css_px + letter_spacing
+    - 連續 ASCII 英數與空白依字型實際寬度換算為垂直步進並順時針旋轉 90 度 (\\frz-90)
+    - 嚴格遵守可用高度 avail_height，並實作避頭尾法則 (Oikomi)
+    回傳每欄的 item 列表：[(text, kind, height), ...]，kind 為 "cjk" | "ascii" | "space"
+    """
+    norm_text = re.sub(r'<br\s*/?>|\\N', '\n', text or "", flags=re.IGNORECASE)
+    raw_lines = [l.strip() for l in norm_text.replace("\r\n", "\n").split("\n") if l.strip()]
+    if not raw_lines:
+        return []
+
+    char_step = css_px + letter_spacing
+    columns: list[list[tuple[str, str, float]]] = []
+
+    def _is_ascii_printable(ch: str) -> bool:
+        o = ord(ch)
+        return 0x21 <= o <= 0x7E
+
+    for line in raw_lines:
+        # 切分為字元 / 空白 / ASCII 單詞 token
+        tokens: list[tuple[str, str, float]] = []
+        i = 0
+        n = len(line)
+        while i < n:
+            ch = line[i]
+            if ch in ("\r", "\n"):
+                i += 1
+                continue
+            if ch in (" ", "\t"):
+                j = i + 1
+                while j < n and line[j] in (" ", "\t"):
+                    j += 1
+                # 多個連續半形空白折算為一個空白 (同 CSS white-space: pre-wrap 單空白寬)
+                sp_text = line[i:j]
+                sp_h = _measure_ascii_advance(sp_text, css_px, letter_spacing, char_adv)
+                tokens.append((sp_text, "space", sp_h))
+                i = j
+            elif ch == "\u3000":
+                tokens.append((ch, "space", char_step))
+                i += 1
+            elif _is_ascii_printable(ch):
+                j = i + 1
+                while j < n and _is_ascii_printable(line[j]):
+                    j += 1
+                word = line[i:j]
+                w_h = _measure_ascii_advance(word, css_px, letter_spacing, char_adv)
+                tokens.append((word, "ascii", w_h))
+                i = j
+            else:
+                tokens.append((ch, "cjk", char_step))
+                i += 1
+
+        if not tokens:
+            continue
+
+        # 依 avail_height 換欄 + 避頭尾法則
+        cur_col: list[tuple[str, str, float]] = []
+        cur_h = 0.0
+
+        def _flush_col(col: list[tuple[str, str, float]]):
+            while col and col[-1][1] == "space":
+                col.pop()
+            if col:
+                columns.append(col)
+
+        for tok in tokens:
+            t_text, t_kind, t_h = tok
+            if t_kind == "space" and not cur_col:
+                continue  # 欄首忽略前導空白
+
+            if cur_col and t_kind != "space" and (cur_h + t_h > avail_height + 0.5):
+                # 需要換欄！檢查避頭尾 (Oikomi)
+                pulled: list[tuple[str, str, float]] = []
+                is_no_start = (t_text in _PUNCT_NO_START) or (t_text.startswith(".") and len(t_text) >= 2)
+                # 剝除欄尾空白再檢查最後一個實質字元
+                while cur_col and cur_col[-1][1] == "space":
+                    cur_col.pop()
+                if is_no_start and len(cur_col) >= 2:
+                    pulled.append(cur_col.pop())
+                elif cur_col and len(cur_col) >= 2 and cur_col[-1][0] in _PUNCT_NO_END:
+                    pulled.append(cur_col.pop())
+
+                _flush_col(cur_col)
+                cur_col = list(reversed(pulled))
+                cur_h = sum(item[2] for item in cur_col)
+
+                cur_col.append(tok)
+                cur_h += t_h
+            else:
+                cur_col.append(tok)
+                cur_h += t_h
+
+        _flush_col(cur_col)
+
+    # 將同一欄中相鄰的 ascii / space 合併為單一橫向旋轉字串，確保英文字距與空白 100% 原生連貫
+    merged_columns: list[list[tuple[str, str, float]]] = []
+    for col in columns:
+        merged: list[tuple[str, str, float]] = []
+        for t_text, t_kind, t_h in col:
+            if t_kind == "ascii":
+                if merged and merged[-1][1] == "ascii":
+                    prev_t, _, prev_h = merged[-1]
+                    merged[-1] = (prev_t + t_text, "ascii", prev_h + t_h)
+                elif len(merged) >= 2 and merged[-1][1] == "space" and merged[-2][1] == "ascii":
+                    sp_t, _, sp_h = merged.pop()
+                    prev_t, _, prev_h = merged[-1]
+                    merged[-1] = (prev_t + sp_t + t_text, "ascii", prev_h + sp_h + t_h)
+                else:
+                    merged.append((t_text, t_kind, t_h))
+            else:
+                merged.append((t_text, t_kind, t_h))
+        while merged and merged[-1][1] == "space":
+            merged.pop()
+        if merged:
+            merged_columns.append(merged)
+
+    return merged_columns
+
+
 def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     """
-    將直式字幕文字切分為多列 (1:1 模擬 CSS writing-mode: vertical-rl 自動換列)：
+    將直式字幕文字切分為多列 (模擬 CSS writing-mode: vertical-rl 自動換列)：
     - 支援 <br> / <br/> / <br /> / \\N / 換行符號手動強制換列
     - 英數連續詞彙與連續半形句點 (...) 維持塊狀
     - 嚴格遵守每列最大字數上限 max_chars_per_col (絕不超出畫面高度)
@@ -57,8 +213,8 @@ def split_vertical_columns(text: str, max_chars_per_col: int = 12) -> list[str]:
     raw_lines = [l.strip() for l in norm_text.replace("\r\n", "\n").split("\n") if l.strip()]
     columns: list[str] = []
 
-    punct_no_start = set("，。！？；、：,!?;:）】』」〉》”’%‰…~～·.．")
-    punct_no_end = set("（【『「〈《“‘([")
+    punct_no_start = _PUNCT_NO_START
+    punct_no_end = _PUNCT_NO_END
 
     for line in raw_lines:
         tokens = re.findall(r'\.{2,}|[A-Za-z0-9]+|.', line)
@@ -148,21 +304,32 @@ def to_ass(
     margin_l = style.padding_left
     margin_r = style.padding_right
 
-    # 3. ASS 字級換算：
+    # 3. ASS 字級換算與字元寬度解析：
     # 瀏覽器 CSS font-size 指的是字型 em 方框；libass (VSFilter 相容) 卻把 Fontsize 當作
     # 字型的 Win 行高 (usWinAscent + usWinDescent)。CJK 字型此比例通常為 1.3~1.45，
     # 若直接沿用數字，燒錄字面會比預覽小約 25~30%。因此依實際字型檔度量換算。
     # Outline / Shadow / Spacing / Margin 在 PlayRes = 影片解析度時即為原生像素，與 CSS 1:1。
     try:
-        from .font_manager import get_font_em_ratio
+        from .font_manager import get_font_em_ratio, get_font_char_advances
         em_ratio = get_font_em_ratio(style.font_name)
+        char_adv = get_font_char_advances(style.font_name)
     except Exception:
         em_ratio = 1.0
+        char_adv = {}
     css_px = float(style.font_size)
     ass_font_size = max(1.0, round(css_px * em_ratio, 2))
     ass_outline = round(style.outline_width, 1) if style.outline_enabled else 0.0
     ass_shadow = round(style.shadow_offset, 1)
     ass_spacing = round(style.letter_spacing, 1)
+
+    # 橫式模式下防呆：避免切換自直式時殘留過大的左右邊距把橫排文字擠成窄條
+    if style.orientation != "vertical":
+        min_text_w = max(css_px * 3.0, res_x * 0.25)
+        if margin_l + margin_r > res_x - min_text_w:
+            avail_margin = max(0.0, res_x - min_text_w)
+            scale_m = avail_margin / max(1.0, float(margin_l + margin_r))
+            margin_l = int(round(margin_l * scale_m))
+            margin_r = int(round(margin_r * scale_m))
 
     # 4. 組合 ASS Style 定義行
     style_line = (
@@ -198,7 +365,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     box_pad_x = 4.0  # 預覽字幕框左右內距 (影片原生像素，前端等比縮放)
     avail_height = max(char_step, res_y - style.padding_top - style.padding_bottom)
     avail_width = max(col_pitch, res_x - style.padding_left - style.padding_right)
-    max_chars_per_col = max(1, int(avail_height // max(1.0, char_step)))
 
     def _fmt(v: float) -> str:
         return f"{v:.1f}".rstrip("0").rstrip(".")
@@ -208,12 +374,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         end_str = format_ass_timestamp(seg.end)
 
         if style.orientation == "vertical":
-            cols = [c for c in split_vertical_columns(seg.text, max_chars_per_col=max_chars_per_col) if c]
+            cols = _layout_vertical_columns(
+                seg.text,
+                css_px=css_px,
+                letter_spacing=float(style.letter_spacing or 0),
+                avail_height=avail_height,
+                char_adv=char_adv,
+            )
             if not cols:
                 continue
-            col_tokens = [c.split("\\N") for c in cols]
             block_w = len(cols) * col_pitch
-            box_h = max(len(t) for t in col_tokens) * char_step
+            col_heights = [sum(item[2] for item in col) for col in cols]
+            box_h = max(col_heights)
 
             # 區塊水平位置 (flex justify-content)；block_right 為文字內容右緣 (扣除字幕框內距)
             if style.pos_x is not None:
@@ -235,24 +407,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
             else:
                 box_top = res_y - style.padding_bottom - box_h
 
-            sideways_chars = set("—–―…⋯～~-－ー（）()「」『』【】《》〈〉〔〕［］｛｝:;")
-            for col_idx, tokens in enumerate(col_tokens):
-                col_len = len(tokens) * char_step
+            for col_idx, col_items in enumerate(cols):
+                col_len = col_heights[col_idx]
                 # 列內對齊 (text-align: start / center / end)
                 if style.vertical_align == "bottom":
-                    col_top = box_top + (box_h - col_len)
+                    cur_y = box_top + (box_h - col_len)
                 elif style.vertical_align == "middle":
-                    col_top = box_top + (box_h - col_len) / 2.0
+                    cur_y = box_top + (box_h - col_len) / 2.0
                 else:
-                    col_top = box_top
+                    cur_y = box_top
                 cx = block_right - (col_idx + 0.5) * col_pitch
-                for ch_idx, tok in enumerate(tokens):
-                    cy = col_top + (ch_idx + 0.5) * char_step
-                    rot = "\\frz-90" if (tok in sideways_chars or (tok.startswith(".") and len(tok) >= 2)) else ""
+                for tok, kind, h_px in col_items:
+                    if kind == "space":
+                        cur_y += h_px
+                        continue
+                    cy = cur_y + h_px * 0.5
+                    if kind == "ascii":
+                        rot = "\\frz-90"
+                    else:
+                        rot = "\\frz-90" if (tok in _SIDEWAYS_CHARS or (tok.startswith(".") and len(tok) >= 2)) else ""
                     event_lines.append(
                         f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,"
                         f"{{\\an5\\pos({_fmt(cx)},{_fmt(cy)}){rot}}}{tok}"
                     )
+                    cur_y += h_px
         else:
             formatted_text = format_text_for_layout(seg.text, orientation="horizontal")
             if style.pos_x is not None and style.pos_y is not None:

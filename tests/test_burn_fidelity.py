@@ -119,3 +119,39 @@ def test_line_breaks_and_br_tag_support():
 
     vtt = to_vtt(track)
     assert "上半句\n下半句" in vtt
+
+
+def test_vertical_mixed_cjk_and_english_rotation_and_wrapping():
+    track = SubtitleTrack(
+        source_file="test.mp4",
+        segments=[SubtitleSegment(id=1, start=0.0, end=2.0, text="在沙子上寫下 I love you")]
+    )
+    style = SubtitleStyle(
+        font_name="ChenYuluoyan 2.0 Thin", font_size=47, orientation="vertical",
+        vertical_align="top", horizontal_align="right",
+        padding_top=29, padding_right=154, padding_bottom=12, padding_left=21,
+        letter_spacing=1.0,
+    )
+    ass = to_ass(track, style=style, res_x=854, res_y=480)
+    dialogues = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+    # CJK 6 chars ("在沙子上寫下") + rotated ASCII runs ("I love" on col 1, "you" on col 2)
+    assert len(dialogues) == 8
+    assert any("\\frz-90}I love" in d for d in dialogues)
+    assert any("\\frz-90}you" in d for d in dialogues)
+
+
+def test_horizontal_margin_clamp_prevents_text_squish():
+    track = SubtitleTrack(
+        source_file="test.mp4",
+        segments=[SubtitleSegment(id=1, start=0.0, end=2.0, text="在沙子上寫下 I love you")]
+    )
+    style = SubtitleStyle(
+        font_name="ChenYuluoyan 2.0 Thin", font_size=40, orientation="horizontal",
+        padding_left=400, padding_right=400,
+    )
+    ass = to_ass(track, style=style, res_x=854, res_y=480)
+    style_line = [l for l in ass.splitlines() if l.startswith("Style: Default")][0]
+    parts = style_line.split(",")
+    margin_l, margin_r = int(parts[19]), int(parts[20])
+    # Must reserve at least 25% width (or 3*font_size) so text cannot get crushed into 1-char slivers
+    assert 854 - margin_l - margin_r >= 213
