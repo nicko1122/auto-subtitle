@@ -846,8 +846,16 @@
                 影音 Hardcopy 字幕壓制 (燒錄至 MP4)
               </h4>
               <p class="text-[11px] text-zinc-400 mt-0.5">
-                使用本地 NVIDIA NVENC 進行硬體轉碼，將上述 CSS 樣式與排版永久燒錄進影片中。
+                預設使用瀏覽器 CSS 透明圖層＋NVIDIA NVENC 硬體編碼，100% 還原預覽所見即所得排版。
               </p>
+            </div>
+
+            <div>
+              <label for="select-burn-render-mode" class="block text-[11px] text-zinc-400 mb-1">字幕渲染引擎</label>
+              <select id="select-burn-render-mode" class="w-full px-2.5 py-1.5 bg-zinc-900/90 border border-zinc-700 rounded-md text-xs text-zinc-200 focus:outline-none focus:border-blue-500">
+                <option value="css" selected>CSS 瀏覽器渲染 (100% 所見即所得・推薦)</option>
+                <option value="ass">ASS 傳統引擎 (libass 濾鏡)</option>
+              </select>
             </div>
 
             <button id="btn-start-burn" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition">
@@ -996,6 +1004,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261111_v3"></script>
+  <script src="/static/app.js?v=20261111_v4"></script>
 </body>
 </html>

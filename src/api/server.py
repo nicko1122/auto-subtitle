@@ -127,6 +127,7 @@ class BurnVideoRequest(BaseModel):
     subtitle_path: Optional[str] = None
     style: Optional[SubtitleStyle] = None
     css: Optional[str] = None
+    render_mode: Literal["css", "ass"] = "css"
 
 
 class UpscaleVideoRequest(BaseModel):
@@ -766,13 +767,15 @@ def burn_endpoint(req: BurnVideoRequest):
             subtitles_source=sub_source,
             output_path=str(out_file),
             style=style,
-            use_gpu=True
+            use_gpu=True,
+            render_mode=req.render_mode,
         )
         return {
             "status": "success",
             "filename": out_name,
             "url": f"/output/{out_name}",
-            "absolute_path": out_path
+            "absolute_path": out_path,
+            "render_mode": req.render_mode,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

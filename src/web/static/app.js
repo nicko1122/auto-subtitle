@@ -212,6 +212,7 @@ const el = {
   btnExportJson: document.getElementById("btn-export-json"),
   burnVideoCard: document.getElementById("burn-video-card"),
   audioOnlyExportNotice: document.getElementById("audio-only-export-notice"),
+  selectBurnRenderMode: document.getElementById("select-burn-render-mode"),
   btnStartBurn: document.getElementById("btn-start-burn"),
   burnResultBox: document.getElementById("burn-result-box"),
   linkDownloadBurned: document.getElementById("link-download-burned"),
@@ -3467,10 +3468,17 @@ function initExport() {
       return;
     }
 
-    addLog(`【影音壓制】啟動 NVIDIA NVENC 壓制燒錄影片至 ${videoPath}...`);
+    const renderMode = el.selectBurnRenderMode ? el.selectBurnRenderMode.value : "css";
+    const engineLabel = renderMode === "css" ? "CSS 精準圖層 + NVENC" : "ASS 傳統引擎 + NVENC";
+    addLog(`【影音壓制】啟動 ${engineLabel} 壓制燒錄影片至 ${videoPath}...`);
     el.btnStartBurn.disabled = true;
     el.btnStartBurn.textContent = "⏳ GPU 硬體編碼壓制中...";
     el.burnResultBox.classList.add("hidden");
+    showBusyOverlay(
+      renderMode === "css"
+        ? `🎬 正在進行 CSS 瀏覽器精準排版＋NVENC 影片壓制... (${state.track.segments.length} 句)`
+        : `🎬 正在進行 ASS 傳統引擎＋NVENC 影片壓制... (${state.track.segments.length} 句)`
+    );
 
     try {
       const res = await fetch("/api/burn", {
@@ -3479,12 +3487,13 @@ function initExport() {
         body: JSON.stringify({
           video_path: videoPath,
           track: state.track,
-          style: state.style
+          style: state.style,
+          render_mode: renderMode
         })
       });
-      const data = await res.json();
-      if (data.status === "success") {
-        addLog(`【壓制成功】已產出燒錄影片: ${data.filename}`, "success");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.status === "success") {
+        addLog(`【壓制成功】已產出燒錄影片 (${data.render_mode || renderMode}): ${data.filename}`, "success");
         el.burnResultBox.classList.remove("hidden");
         el.linkDownloadBurned.href = data.url;
         el.btnPreviewBurned.onclick = () => {
@@ -3494,11 +3503,12 @@ function initExport() {
         };
         loadAssetLibrary();
       } else {
-        throw new Error(data.detail || "壓制失敗");
+        throw new Error(data.detail || `壓制失敗 (HTTP ${res.status})`);
       }
     } catch (err) {
       addLog(`壓制失敗: ${err.message}`, "error");
     } finally {
+      hideBusyOverlay();
       el.btnStartBurn.disabled = false;
       el.btnStartBurn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>開始壓制燒錄影片`;
     }

@@ -380,6 +380,7 @@ def burn_cmd(
     shadow: Optional[float] = typer.Option(None, "--shadow", help="陰影偏移量 (像素，預設 1.2)"),
     pos_x: Optional[int] = typer.Option(None, "--x", help="精準絕對 X 座標 (像素，指定後將覆蓋對齊設定)"),
     pos_y: Optional[int] = typer.Option(None, "--y", help="精準絕對 Y 座標 (像素，指定後將覆蓋對齊設定)"),
+    render_mode: str = typer.Option("css", "--render-mode", help="字幕渲染引擎: css (瀏覽器 CSS 截圖疊加，100% 所見即所得) 或 ass (傳統 libass)"),
     cpu: bool = typer.Option(False, "--cpu", help="強制使用 CPU (預設自動啟用 NVIDIA NVENC 硬體加速)"),
 ):
     """【Hardcopy 壓制】將字幕硬燒錄進影片中，支援 CSS 樣式字串/檔案、陰影字、描邊字、Web 盒模型與自訂排版"""
@@ -469,7 +470,8 @@ def burn_cmd(
             subtitles_source=str(s_path),
             output_path=output,
             style=style,
-            use_gpu=not cpu
+            use_gpu=not cpu,
+            render_mode=render_mode.strip().lower(),
         )
         console.rule("[bold green]影片壓制完成[/bold green]")
         console.print(f"  ✔ 燒錄影片已產出: [bold green]{out_file}[/bold green]")
