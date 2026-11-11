@@ -774,6 +774,8 @@ def burn_endpoint(req: BurnVideoRequest):
             "url": f"/output/{out_name}",
             "absolute_path": out_path
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"壓制失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))

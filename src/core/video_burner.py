@@ -97,6 +97,9 @@ def burn_subtitles_to_video(
     if style is None:
         style = SubtitleStyle()
 
+    if not has_video_stream(str(input_v)):
+        raise ValueError("純音訊檔案 (.wav / .mp3 等) 不支援硬字幕影片壓制，請改為匯出 SRT / VTT 字幕檔")
+
     # 1. 取得影片長寬解析度
     width, height, duration = get_video_info(str(input_v))
     logger.info(f"偵測到影片解析度: {width}x{height}")
@@ -160,33 +163,15 @@ def burn_subtitles_to_video(
             "-crf", "22"
         ]
 
-    is_video = has_video_stream(str(input_v))
-    if is_video:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", str(input_v),
-            "-vf", vf_filter,
-            *encoder_args,
-            "-c:a", "copy",        # 音訊不重編碼，無損直通
-            str(out_v)
-        ]
-    else:
-        # 純音訊檔 (如 .wav / .mp3)：自動產生 1920x1080 黑底畫布並轉碼 AAC 音軌，壓製為歌詞影片 MP4
-        canvas_dur = max(1.0, float(duration or 0.0))
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-f", "lavfi",
-            "-i", f"color=c=black:s={width}x{height}:r=24:d={canvas_dur:.3f}",
-            "-i", str(input_v),
-            "-vf", vf_filter,
-            *encoder_args,
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-shortest",
-            str(out_v)
-        ]
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(input_v),
+        "-vf", vf_filter,
+        *encoder_args,
+        "-c:a", "copy",        # 音訊不重編碼，無損直通
+        str(out_v)
+    ]
 
     logger.info(f"開始執行壓制: {' '.join(cmd)}")
     try:

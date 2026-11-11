@@ -210,6 +210,8 @@ const el = {
   btnExportSrt: document.getElementById("btn-export-srt"),
   btnExportVtt: document.getElementById("btn-export-vtt"),
   btnExportJson: document.getElementById("btn-export-json"),
+  burnVideoCard: document.getElementById("burn-video-card"),
+  audioOnlyExportNotice: document.getElementById("audio-only-export-notice"),
   btnStartBurn: document.getElementById("btn-start-burn"),
   burnResultBox: document.getElementById("burn-result-box"),
   linkDownloadBurned: document.getElementById("link-download-burned"),
@@ -928,7 +930,10 @@ function saveSessionToStorage() {
 function updateWorkspaceSlots() {
   // 1. 影音來源槽狀態
   if (state.video.filename) {
-    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.toggle("hidden", !!state.video.isAudioOnly);
+    const audioOnly = !!state.video.isAudioOnly;
+    if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.toggle("hidden", audioOnly);
+    if (el.burnVideoCard) el.burnVideoCard.classList.toggle("hidden", audioOnly);
+    if (el.audioOnlyExportNotice) el.audioOnlyExportNotice.classList.toggle("hidden", !audioOnly);
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-blue-950/20 border border-blue-500/40 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-medium";
     el.slotVideoStatus.textContent = "● 使用中";
@@ -940,6 +945,8 @@ function updateWorkspaceSlots() {
       : `${state.video.width}x${state.video.height}${durStr}`;
   } else {
     if (el.btnUpscaleActiveVideo) el.btnUpscaleActiveVideo.classList.add("hidden");
+    if (el.burnVideoCard) el.burnVideoCard.classList.remove("hidden");
+    if (el.audioOnlyExportNotice) el.audioOnlyExportNotice.classList.add("hidden");
     el.slotCardVideo.className = "p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 flex flex-col justify-between gap-1.5 transition";
     el.slotVideoStatus.className = "px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]";
     el.slotVideoStatus.textContent = "未載入";
@@ -3427,6 +3434,10 @@ function initExport() {
     const videoPath = state.video.path;
     if (!videoPath) {
       addLog("請先載入或上傳影片後再執行壓制", "error");
+      return;
+    }
+    if (state.video.isAudioOnly) {
+      addLog("純音訊檔案 (.wav / .mp3) 不支援影片燒錄，請改為下載 SRT / WebVTT 字幕檔", "warning");
       return;
     }
     if (!state.track.segments.length) {

@@ -73,7 +73,9 @@ def test_audio_only_upload_and_package_metadata(tmp_path):
                 shutil.rmtree(target)
 
 
-def test_burn_subtitles_on_audio_only_creates_valid_mp4(tmp_path):
+def test_audio_only_burn_rejected_and_srt_exported_cleanly(tmp_path):
+    from src.core.exporter import to_srt
+
     mp3_file = tmp_path / "song.mp3"
     _make_sample_audio(mp3_file, "mp3")
     assert has_video_stream(str(mp3_file)) is False
@@ -87,17 +89,20 @@ def test_burn_subtitles_on_audio_only_creates_valid_mp4(tmp_path):
         source_file="song.mp3",
         segments=[SubtitleSegment(id=1, start=0.1, end=1.2, text="純音檔轉字幕測試")]
     )
+
+    # 純音檔不允許執行 Hardcopy MP4 壓製
     out_mp4 = tmp_path / "song_burned.mp4"
-    res_path = burn_subtitles_to_video(
-        video_path=str(mp3_file),
-        subtitles_source=track,
-        output_path=str(out_mp4),
-        style=SubtitleStyle(font_size=48, primary_color="#FFFFFF"),
-        use_gpu=False,
-    )
-    assert Path(res_path).exists()
-    assert has_video_stream(res_path) is True
-    vw, vh, vdur = get_video_info(res_path)
-    assert vw == 1920
-    assert vh == 1080
-    assert vdur > 1.0
+    with pytest.raises(ValueError, match="不支援"):
+        burn_subtitles_to_video(
+            video_path=str(mp3_file),
+            subtitles_source=track,
+            output_path=str(out_mp4),
+            style=SubtitleStyle(font_size=48, primary_color="#FFFFFF"),
+            use_gpu=False,
+        )
+    assert not out_mp4.exists()
+
+    # 純音檔可正常匯出 SRT
+    srt_text = to_srt(track)
+    assert "00:00:00,100 --> 00:00:01,200" in srt_text
+    assert "純音檔轉字幕測試" in srt_text
