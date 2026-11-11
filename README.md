@@ -24,6 +24,10 @@
   - Web 影片預覽即時疊層透明效果。
   - 雙向解析 CSS `opacity: 0.8;` 或 `80%`。
   - **ASS 影音硬字幕同步**：自動換算 ASS 色彩 Alpha 通道（$$\text{Alpha} = \text{round}((1.0 - \text{opacity}) \times 255)$$），MP4 壓制時與 Web 預覽保持完全一致的透明度。
+- **1:1 Web-to-ASS 字型度量與排版保真**：
+  - 自動讀取字型 `usWinAscent + usWinDescent` 計算 `em_ratio` 縮放倍率，並於壓制前自動修復損壞的 TrueType/OpenType 字型（補齊缺失表或異常字距），讓特定手寫/藝術字型與 Web CSS `font-size` 一致。
+  - **多行字幕支援**：時間軸與編輯框支援 `<br>` / `<br/>` 標籤及 `Shift+Enter` 換行（單按 `Enter` 仍跳至下一段），同步轉換為 ASS `\N` 與多行 SRT/VTT。
+  - **直排中英混排與避頭尾**：`vertical-rl` 直書自動偵測 ASCII / 英數區段套用真實 `hmtx`/`cmap` 字寬量測與 `\frz-90` 順時針旋轉、支援避頭尾推入法（Kinsoku Oikomi）折欄、水平安全邊距夾擠防溢出，且橫/直排切換時自動重置位置避免殘留偏移。
 - **描邊外側生長（Outward Stroke）**：
   - 新增獨立描邊開關。
   - 引入 CSS `paint-order: stroke fill;`，描邊往外生長，絕不侵蝕內部筆畫字型。
@@ -56,25 +60,28 @@
 
 ### 4. 🎨 Web CSS 盒模型排版與 ASS 壓制引擎
 - 支援標準 CSS 語法（`font-size`, `color`, `opacity`, `-webkit-text-stroke`, `paint-order`, `text-shadow`, `writing-mode: vertical-rl`, `padding`, `text-align`, `vertical-align`）。
-- **直書長字幕自動多欄換行**：根據畫面高度自動由右至左折行（符合 CSS `vertical-rl` 規範）。
+- **直書長字幕自動多欄換行與避頭尾**：根據畫面高度自動由右至左折行（符合 CSS `vertical-rl` 規範），套用中文避頭尾推入法與中英混排旋轉。
 - **畫面直覺拖曳**：可直接在影片預覽區拖曳字幕位置，或使用 X / Y 滑桿平滑微調。
 
-### 5. ⚡ NVIDIA NVENC GPU 硬字幕壓制 (Hardsub)
-- 支援以 NVIDIA NVENC 硬體加速將 ASS 樣式字幕無損音軌直接燒錄進 MP4 影片中。
+### 5. 🎧 純音訊字幕製作 & ⚡ NVIDIA NVENC 硬字幕壓制
+- **純音訊模式（WAV / MP3 / M4A / FLAC / AAC / OGG）**：支援直接上傳或建立純音訊資產包，提供專屬音訊播放背景預覽、聲學斷點、Whisper/Luna 辨識對齊與匯出 `SRT` / `WebVTT` / `JSON`；純音訊模式不執行 MP4 燒錄與視訊放大。
+- **NVIDIA NVENC GPU 硬字幕壓制**：支援以 NVIDIA NVENC 硬體加速將 ASS 樣式字幕無損音軌直接燒錄進 MP4 影片中。
 
 ### 6. ✨ AI 視訊超解析度放大 (Video Super-Resolution)
 - **Compact 輕量視訊模型**：整合 `realesrgan-ncnn-vulkan`（`realesr-animevideov3`），兼具高速、低顯存與邊緣銳化保真度。
-- **資產庫隨選放大與無痛繼承**：在資產庫可一鍵執行 2x / 4x 放大，自動衍生高畫質資產包，並同步繼承現有字幕與原稿（時間軸通用）。
+- **資產庫隨選放大與無痛繼承**：在資產庫可一鍵執行 2x / 4x 放大，自動衍生高畫質資產包，並同步繼承現有字幕與原稿（時間軸通用）；僅對視訊資產包開放（純音訊略過）。
+- **執行預警、取消與清理**：開始前自動試算總影格數與預估耗時並顯示風險提醒；支援任務中途停止與自動清理暫存／未完成目錄。
 - **GPU 任務鎖排程保護**：嚴格納入 `ModelTaskLock`，避免與 Whisper / LLM 並行造成顯存溢出。
 
 ---
 
 ## 🛠️ 環境需求
 
-- **作業系統**：Linux / Ubuntu / WSL2 (Windows Subsystem for Linux)
+- **作業系統**：Linux / Ubuntu / Windows 11 + WSL2（附 `run_web.bat` Windows 一鍵啟動器）
 - **Python**：3.10–3.12（目前 `av<14` 的相容範圍）
 - **系統相依**：`ffmpeg`, `ffprobe`, `fontconfig`
 - **GPU (可選但推薦)**：支援 CUDA 之 NVIDIA 顯卡（如 GTX 1070 Ti、RTX 3060 或更高等級）
+  - **Pascal 架構（GTX 1070 Ti / `sm_61`）注意事項**：需安裝 NVIDIA 驅動 **550+** 與 PyTorch **cu126**（`torch==2.8.0+cu126`）；避免安裝已移除 `sm_61` 支援的 CUDA 13.x 套件。`transcriber.py` 內建 1ms CUDA 核心預檢，若不支援會自動安全降級至 CPU 或報錯提示。
 
 ---
 
@@ -103,16 +110,26 @@ LLM 回覆會驗證編號與文字型別；失敗、漏答或重複編號保留�
 每次 Web 任務使用獨立輸出目錄／檔名；CLI `luna` 預設建立獨立資料夾，明確指定 `-o` 時沿用該目錄。除七項標準交付檔，另保留 `corrections.json` 與 `validation.json` 診斷檔。
 
 ### ⚙️ 設定檔 (.env，可選)
-若欲啟用雲端 LLM API（如 OpenAI / GPT-4o / GPT-6 Luna）：
+若欲啟用雲端 LLM API（支援 Gemini、OpenAI 相容端點、Anthropic，且系統支援熱重載無需重啟服務）：
 ```bash
 cp .env.example .env
 ```
-在 `.env` 中設定：
+在 `.env` 中設定（預設 `LLM_PROVIDER=auto`，依序偵測可用的 API Key）：
 ```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_api_key_here
+LLM_PROVIDER=auto
+
+# Google Gemini (推薦)
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+
+# OpenAI / 相容端點 (DeepSeek, OpenRouter, Ollama 等)
+OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=gpt-4o-mini
+
+# Anthropic Claude
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+ANTHROPIC_MODEL=claude-3-5-haiku-latest
 ```
 
 ---
@@ -121,16 +138,20 @@ OPENAI_MODEL=gpt-4o
 
 ### 本機資產包
 
-每個 `uploads/訪談/` 資料夾管理一支影片，以及選填的 `訪談.txt` 原詞與 `訪談.srt` 工作字幕。可匯入整個資料夾，或一起選取影片、原詞和字幕建立資產包；直接在 `uploads/` 放入整理好的資料夾後，重新整理也能讀取。
+每個 `uploads/訪談/` 資料夾管理一支影片或純音訊檔（支援 `MP4/MKV/MOV/AVI/WEBM` 及 `WAV/MP3/M4A/FLAC/AAC/OGG`），以及選填的 `訪談.txt` 原詞與 `訪談.srt` 工作字幕。可匯入整個資料夾，或一起選取媒體、原詞和字幕建立資產包；直接在 `uploads/` 放入整理好的資料夾後，重新整理也能讀取。
 
-開啟資產包會同時載入三者。編輯文字、時間軸或原詞後自動儲存，也可按「儲存字幕」或 Ctrl+S；SRT 不存在時會建立，已存在時更新同一份檔案。切換資產包前會先完成儲存，儲存失敗則保留目前工作區。包內不建立編輯紀錄 JSON。
+開啟資產包會同時載入三者。編輯文字、時間軸或原詞後自動儲存，也可按頂端「儲存字幕」或 Ctrl+S；SRT 不存在時會建立，已存在時更新同一份檔案。純音訊資產包會於預覽區自動切換為音訊播放介面，產出完字幕後可直接匯出 `SRT` / `WebVTT` / `JSON`（隱藏燒錄與 AI 放大操作）。切換資產包前會先完成儲存，儲存失敗則保留目前工作區。包內不建立編輯紀錄 JSON。
 
-AI 結果套用前會核對工作區與內容，過期回覆不會覆寫新編輯。全文編輯以 `[#序號]` 保留每段的多行文字及空字幕；貼上每行一段的純文字時，段數須與時間軸一致。無效的字幕匯入會被拒絕，字型經暫存驗證成功後才替換。
+AI 結果套用前會核對工作區與內容，過期回覆不會覆寫新編輯。全文編輯以 `[#序號]` 保留每段的多行文字及空字幕；字幕框內支援 `<br>` / `<br/>` 或 `Shift+Enter` 換行，貼上每行一段的純文字時，段數須與時間軸一致。無效的字幕匯入會被拒絕，字型經暫存驗證成功後才替換。
 
-可重新命名、移動或刪除整包；移動路徑相對於 `uploads/`。重複匯入同名包會建立另一個資料夾，不覆蓋既有包。未來多語字幕可沿用 `訪談_EN.srt` 命名，目前優先編輯與影片同名的 SRT。
+頂端「儲存字幕」旁提供 `🗑️ 刪除資產` 按鈕（亦可於資產庫管理頁面操作），刪除前會先釋放 `<video>`/`<audio>` 檔案鎖定並清除 Windows NTFS 唯讀屬性後移除整包；亦可重新命名或相對於 `uploads/` 移動。重複匯入同名包會建立另一個資料夾，不覆蓋既有包。未來多語字幕可沿用 `訪談_EN.srt` 命名，目前優先編輯與媒體同名的 SRT。
 
 ### 1. 啟動 Web Studio 視覺化工作台
 
+**方法 A：Windows 一鍵獨立背景啟動（推薦）**
+雙擊專案根目錄的 [`run_web.bat`](run_web.bat)，將以獨立背景程序透過 WSL2 啟動服務（關閉命令提示字元視窗亦不中斷）。
+
+**方法 B：Linux / WSL2 終端手動啟動**
 ```bash
 source .venv/bin/activate
 python3 src/cli/main.py serve --host 0.0.0.0 --port 8000
@@ -348,9 +369,14 @@ print("輸出完成:", out_mp4)
 - 完整的 Swagger 互動式文件：造訪 `http://localhost:8000/docs`
 - 常用 API 端點：
   - `POST /api/ai/transcribe`：無稿辨識（接收媒體路徑與模型參數）
+  - `POST /api/ai/transcribe-segments`：分段語音辨識
   - `POST /api/ai/align`：Luna 歌詞雙軌對齊（接收媒體與歌詞文字）
+  - `POST /api/ai/proofread`：LLM 字幕校對
+  - `POST /api/audio/breakpoints` / `POST /api/audio/snap-split`：聲學斷點與能量波谷吸附切分
   - `POST /api/style/parse-css`：CSS 樣式雙向解析
-  - `POST /api/burn`：背景壓制燒錄硬字幕
+  - `POST /api/burn`：背景壓制燒錄硬字幕（視訊限定）
+  - `DELETE /api/packages` / `DELETE /api/assets/{filename}`：刪除資產包或單一資產
+  - `POST /api/upscale/estimate` / `POST /api/upscale/start` / `POST /api/upscale/task/{task_id}/cancel`：AI 超解析度試算、執行與取消
 
 ### 4. 🧠 Antigravity Workspace Skill 整合
 本專案已在倉庫內建標準 Antigravity Agent Skill：
@@ -361,12 +387,14 @@ print("輸出完成:", out_mp4)
 
 ## 🧪 執行單元測試
 
-專案包含音訊聲學斷點、DTW 對齊、CSS 樣式解析、透明度與直排換欄的完整測試集：
+專案包含 Python 後端（聲學斷點、DTW 對齊、CSS 解析、Web-to-ASS 度量/中英直排與破損字型修復、純音訊流程、AI 放大等）與 Node.js 前端完整性測試集：
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=. python3 tests/test_pipeline.py
-PYTHONPATH=. python3 tests/test_api_endpoints.py
+.venv/bin/pytest
+node tests/editor_integrity.cjs
+node tests/frontend_security.cjs
+node tests/package_workflow.cjs
 ```
 
 ---
@@ -378,28 +406,35 @@ auto-subtitle/
 ├── .agents/skills/auto-subtitle/ # Antigravity 專用 Agent Skill 定義檔
 │   └── SKILL.md
 ├── src/
-│   ├── api/             # FastAPI 後端服務 (資產庫、AI 路由、樣式解析、字型管理 API)
-│   ├── cli/             # Typer CLI 命令列介面
-│   ├── core/            # 核心邏輯
+│   ├── api/                      # FastAPI 後端服務
+│   │   ├── asset_packages.py     # 本機資產包管理與清理
+│   │   ├── model_tasks.py        # GPU 模型任務互斥鎖 (ModelTaskLock)
+│   │   └── server.py             # API 路由與靜態檔案服務
+│   ├── cli/                      # Typer CLI 命令列介面
+│   ├── core/                     # 核心邏輯
 │   │   ├── acoustic_analyzer.py  # 聲學斷點分析、能量波谷吸附、受控 Whisper
 │   │   ├── aligner.py            # Needleman-Wunsch + Sakoe-Chiba DTW 強制對齊
 │   │   ├── audio_extractor.py    # FFmpeg 抽音
 │   │   ├── css_parser.py         # CSS 解析 (支援 opacity, paint-order, stroke)
-│   │   ├── env_utils.py          # .env 與環境變數載入工具
-│   │   ├── exporter.py           # SRT / VTT / JSON / ASS (含 Alpha 透明度計算) 匯出
-│   │   ├── font_manager.py       # 字型安裝與管理中心
-│   │   ├── luna_pipeline.py      # Whisper ＋ GPT-6 Luna 雙軌驗證管線核心
+│   │   ├── env_utils.py          # .env 與環境變數熱重載工具
+│   │   ├── exporter.py           # SRT / VTT / JSON / ASS (含 em_ratio、旋轉、避頭尾)
+│   │   ├── font_manager.py       # 字型安裝、管理與破損字型自動修復
+│   │   ├── luna_pipeline.py      # Whisper ＋ Luna 雙軌驗證管線核心
+│   │   ├── lyric_reference.py    # 歌詞參考載入與切分工具
 │   │   ├── proofreader.py        # llama-cpp-python Qwen2.5 與雲端 API 校對引擎
-│   │   ├── transcriber.py        # 固定原生 Whisper large-v3-turbo 語音辨識
-│   │   └── video_burner.py       # NVENC / libx264 影音壓制燒錄
-│   ├── schemas/         # Pydantic 資料模型 (SubtitleTrack, SubtitleStyle 等)
-│   └── web/             # 前端工作台 (Tailwind CSS, Vanilla JS, HTML 模板)
-│       ├── static/app.js         # 前端應用邏輯 (含雙向 CSS、即時預覽、Modal)
+│   │   ├── segmenter.py          # 字幕斷句與分段工具
+│   │   ├── transcriber.py        # 原生 Whisper large-v3-turbo 辨識與 CUDA 預檢
+│   │   ├── video_burner.py       # NVENC / libx264 影音壓制燒錄
+│   │   └── video_upscaler.py     # Real-ESRGAN AI 視訊超解析度放大
+│   ├── schemas/                  # Pydantic 資料模型 (SubtitleTrack, SubtitleStyle 等)
+│   └── web/                      # 前端工作台 (Tailwind CSS, Vanilla JS, HTML 模板)
+│       ├── static/app.js         # 前端應用邏輯 (含雙向 CSS、純音訊/多行編輯、Modal)
 │       └── templates/index.html  # 4-Tab 整合式工作台 UI
-├── scripts/             # 輔助與管線腳本
-├── install.sh           # 一鍵環境安裝與地端模型下載腳本
-├── requirements.txt     # Python 相依清單
-└── tests/               # 測試腳本
+├── scripts/                      # 輔助與管線腳本
+├── install.sh                    # 一鍵環境安裝與地端模型下載腳本
+├── run_web.bat                   # Windows 一鍵獨立背景啟動腳本 (透過 WSL2)
+├── requirements.txt              # Python 相依清單
+└── tests/                        # pytest 與 Node.js (.cjs) 整合測試集
 ```
 
 ---
