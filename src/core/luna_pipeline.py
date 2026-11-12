@@ -508,6 +508,8 @@ class LunaPipeline:
                 return self.cue_evidence
         finally:
             unload_whisper_model(st_model)
+            del st_model
+            release_gpu_memory()
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""

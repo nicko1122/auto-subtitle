@@ -816,7 +816,7 @@
           <!-- 字幕檔案匯出 -->
           <div class="p-3.5 bg-zinc-950/60 rounded-lg border border-zinc-800 space-y-2.5">
             <h4 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">匯出標準字幕檔案</h4>
-            <div class="grid grid-cols-3 gap-2">
+            <div class="grid grid-cols-2 gap-2">
               <button id="btn-export-srt" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
                 <span>下載 SRT</span>
                 <span class="text-[10px] text-zinc-500">.srt</span>
@@ -824,6 +824,10 @@
               <button id="btn-export-vtt" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
                 <span>下載 WebVTT</span>
                 <span class="text-[10px] text-zinc-500">.vtt</span>
+              </button>
+              <button id="btn-export-openshot" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
+                <span>下載 OpenShot</span>
+                <span class="text-[10px] text-zinc-500">無空行連續字幕</span>
               </button>
               <button id="btn-export-json" class="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs font-medium border border-zinc-700 transition flex flex-col items-center">
                 <span>下載 JSON</span>
@@ -835,7 +839,7 @@
           <!-- 純音訊匯出提示 (WAV/MP3 上傳時替代燒錄卡片) -->
           <div id="audio-only-export-notice" class="hidden p-3.5 bg-zinc-950/60 rounded-lg border border-emerald-900/40 text-xs text-zinc-400 space-y-1">
             <div class="font-semibold text-emerald-300 flex items-center gap-1.5">🎵 純音訊模式 (.wav / .mp3)</div>
-            <p class="text-[11px] text-zinc-400 leading-relaxed">目前載入為純音檔，不進行 MP4 影片燒錄，請直接點擊上方按鈕下載 <b>SRT</b>、<b>WebVTT</b> 或 <b>JSON</b> 字幕檔。</p>
+            <p class="text-[11px] text-zinc-400 leading-relaxed">目前載入為純音檔，不進行 MP4 影片燒錄，請直接點擊上方按鈕下載 <b>SRT</b>、<b>WebVTT</b>、<b>OpenShot</b> 或 <b>JSON</b> 字幕檔。</p>
           </div>
 
           <!-- 影音硬字幕燒錄壓制 (Hardcopy Burn-in) -->
@@ -1004,6 +1008,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261111_v4"></script>
+  <script src="/static/app.js?v=20261112_v1"></script>
 </body>
 </html>

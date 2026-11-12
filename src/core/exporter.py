@@ -464,13 +464,19 @@ def format_timestamp(seconds: float, decimal_separator: str = ",") -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}{decimal_separator}{millis:03d}"
 
 
+def _normalize_cue_text(text: str) -> str:
+    """將字幕中的 <br> / <br/> / \\N 正規化為純換行符號。"""
+    s = re.sub(r'<br\s*/?>|\\N', '\n', text or "", flags=re.IGNORECASE)
+    return s.replace("\r\n", "\n")
+
+
 def to_srt(track: SubtitleTrack) -> str:
     """將 SubtitleTrack 轉成標準 SRT 格式字串 (支援 <br> 轉換為換行)"""
     lines = []
     for seg in track.segments:
         start_str = format_timestamp(seg.start, decimal_separator=",")
         end_str = format_timestamp(seg.end, decimal_separator=",")
-        clean_text = re.sub(r'<br\s*/?>', '\n', seg.text or "", flags=re.IGNORECASE)
+        clean_text = _normalize_cue_text(seg.text)
         lines.append(str(seg.id))
         lines.append(f"{start_str} --> {end_str}")
         lines.append(clean_text)
@@ -484,12 +490,26 @@ def to_vtt(track: SubtitleTrack) -> str:
     for seg in track.segments:
         start_str = format_timestamp(seg.start, decimal_separator=".")
         end_str = format_timestamp(seg.end, decimal_separator=".")
-        clean_text = re.sub(r'<br\s*/?>', '\n', seg.text or "", flags=re.IGNORECASE)
+        clean_text = _normalize_cue_text(seg.text)
         lines.append(str(seg.id))
         lines.append(f"{start_str} --> {end_str}")
         lines.append(clean_text)
         lines.append("")
     return "\n".join(lines)
+
+
+def to_openshot(track: SubtitleTrack) -> str:
+    """將 SubtitleTrack 轉成 OpenShot Caption 格式 (無序號、無空行連續時間軸與文字)"""
+    lines = []
+    for seg in track.segments:
+        text_lines = [line for line in _normalize_cue_text(seg.text).splitlines() if line.strip()]
+        if not text_lines:
+            continue
+        start_str = format_timestamp(seg.start, decimal_separator=",")
+        end_str = format_timestamp(seg.end, decimal_separator=",")
+        lines.append(f"{start_str} --> {end_str}")
+        lines.extend(text_lines)
+    return ("\n".join(lines) + "\n") if lines else ""
 
 
 def to_json(track: SubtitleTrack, indent: int = 2) -> str:

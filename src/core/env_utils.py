@@ -45,9 +45,14 @@ def preload_cuda_libs() -> None:
 
 
 def release_gpu_memory() -> None:
-    """回收不再使用的物件與 PyTorch CUDA 快取，不初始化新的 CUDA context。"""
+    """回收不再使用的物件、PyTorch CUDA 快取與 glibc 堆積記憶體，避免長駐服務累積 OOM。"""
     gc.collect()
     try:
         torch.cuda.empty_cache()
     except RuntimeError as error:
         logger.warning(f"CUDA 快取回收失敗，請重啟工作台: {error}")
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass

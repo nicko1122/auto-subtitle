@@ -78,3 +78,5 @@ def transcribe_audio(
         }
     finally:
         unload_whisper_model(model)
+        del model
+        release_gpu_memory()

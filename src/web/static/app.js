@@ -209,6 +209,7 @@ const el = {
   summaryDuration: document.getElementById("summary-duration"),
   btnExportSrt: document.getElementById("btn-export-srt"),
   btnExportVtt: document.getElementById("btn-export-vtt"),
+  btnExportOpenshot: document.getElementById("btn-export-openshot"),
   btnExportJson: document.getElementById("btn-export-json"),
   burnVideoCard: document.getElementById("burn-video-card"),
   audioOnlyExportNotice: document.getElementById("audio-only-export-notice"),
@@ -3408,19 +3409,29 @@ function initExport() {
     URL.revokeObjectURL(url);
   }
 
+  function formatSubtitleTime(t, decimalSep = ",") {
+    const sec = Math.max(0, Number(t) || 0);
+    let totalSeconds = Math.floor(sec);
+    let ms = Math.round((sec - totalSeconds) * 1000);
+    if (ms >= 1000) {
+      totalSeconds += 1;
+      ms = 0;
+    }
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}${decimalSep}${String(ms).padStart(3, "0")}`;
+  }
+
+  function normalizeExportCueText(text) {
+    return String(text || "").replace(/<br\s*\/?>|\\N/gi, "\n").replace(/\r\n/g, "\n");
+  }
+
   el.btnExportSrt.addEventListener("click", () => {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
     let srt = "";
     state.track.segments.forEach((seg, i) => {
-      const formatSrtTime = (t) => {
-        const sec = Math.max(0, t);
-        const hrs = Math.floor(sec / 3600);
-        const mins = Math.floor((sec % 3600) / 60);
-        const secs = Math.floor(sec % 60);
-        const ms = Math.floor((sec % 1) * 1000);
-        return `${String(hrs).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
-      };
-      srt += `${i + 1}\n${formatSrtTime(seg.start)} --> ${formatSrtTime(seg.end)}\n${seg.text}\n\n`;
+      srt += `${i + 1}\n${formatSubtitleTime(seg.start, ",")} --> ${formatSubtitleTime(seg.end, ",")}\n${normalizeExportCueText(seg.text)}\n\n`;
     });
     const outName = `${getExportStem()}.srt`;
     downloadTextFile(srt, outName);
@@ -3431,20 +3442,29 @@ function initExport() {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
     let vtt = "WEBVTT\n\n";
     state.track.segments.forEach((seg, i) => {
-      const formatVttTime = (t) => {
-        const sec = Math.max(0, t);
-        const hrs = Math.floor(sec / 3600);
-        const mins = Math.floor((sec % 3600) / 60);
-        const secs = Math.floor(sec % 60);
-        const ms = Math.floor((sec % 1) * 1000);
-        return `${String(hrs).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-      };
-      vtt += `${i + 1}\n${formatVttTime(seg.start)} --> ${formatVttTime(seg.end)}\n${seg.text}\n\n`;
+      vtt += `${i + 1}\n${formatSubtitleTime(seg.start, ".")} --> ${formatSubtitleTime(seg.end, ".")}\n${normalizeExportCueText(seg.text)}\n\n`;
     });
     const outName = `${getExportStem()}.vtt`;
     downloadTextFile(vtt, outName);
     addLog(`已匯出 ${outName}`, "success");
   });
+
+  if (el.btnExportOpenshot) {
+    el.btnExportOpenshot.addEventListener("click", () => {
+      if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
+      const lines = [];
+      state.track.segments.forEach((seg) => {
+        const textLines = normalizeExportCueText(seg.text).split("\n").filter((l) => l.trim().length > 0);
+        if (!textLines.length) return;
+        lines.push(`${formatSubtitleTime(seg.start, ",")} --> ${formatSubtitleTime(seg.end, ",")}`);
+        lines.push(...textLines);
+      });
+      if (!lines.length) { addLog("目前沒有非空字幕可匯出 OpenShot 格式", "warning"); return; }
+      const outName = `${getExportStem()}_openshot.txt`;
+      downloadTextFile(`${lines.join("\n")}\n`, outName);
+      addLog(`已匯出 OpenShot 字幕格式 ${outName}`, "success");
+    });
+  }
 
   el.btnExportJson.addEventListener("click", () => {
     if (!state.track.segments.length) { addLog("尚無字幕可供匯出", "error"); return; }
