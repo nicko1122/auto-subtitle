@@ -1,7 +1,6 @@
 from src.schemas.subtitle import WordItem, SubtitleSegment, SubtitleTrack, SegmentationConfig, SubtitleStyle
 from src.core.segmenter import split_words_into_segments, build_subtitle_track
-from src.core.exporter import to_srt, to_vtt, to_json, to_ass, parse_srt_content, split_vertical_columns
-from src.core.aligner import align_script_to_audio
+from src.core.exporter import to_srt, to_vtt, to_json, parse_srt_content, split_vertical_columns
 from src.core.font_manager import get_font_catalog
 from src.core.acoustic_analyzer import analyze_audio_breakpoints, snap_time_to_valley
 
@@ -66,7 +65,7 @@ def test_export_and_parse_srt():
     assert abs(parsed.segments[0].start - 0.5) < 0.01
 
 
-def test_css_and_vertical_ass_wrapping():
+def test_css_and_vertical_wrapping():
     css = """
     font-size: 40px;
     color: #FFD700;
@@ -81,38 +80,11 @@ def test_css_and_vertical_ass_wrapping():
     assert style.primary_color == "#FFD700"
     assert style.outline_color == "#1F1F1F"
     assert style.orientation == "vertical"
-    assert style.ass_alignment == 9
+    assert style.padding_top == 60
+    assert style.padding_right == 50
 
     cols = split_vertical_columns("這是一段非常長的直式字幕，應該在標點處自動換成第二列顯示", max_chars_per_col=12)
     assert len(cols) >= 2
-
-    track = SubtitleTrack(
-        source_file="v.mp4",
-        duration=5.0,
-        segments=[SubtitleSegment(id=1, start=0.0, end=4.0, text="這是一段非常長的直式字幕，應該在標點處自動換成第二列顯示")]
-    )
-    ass_text = to_ass(track, style=style, res_x=1080, res_y=720)
-    assert ass_text.count("Dialogue:") >= 2
-
-
-def test_aligner_with_band_search():
-    script = "牆上的時鐘\n滴答滴答"
-    trans_data = {
-        "source_file": "a.wav",
-        "duration": 4.0,
-        "language": "zh",
-        "all_words": [
-            {"word": "強上", "start": 0.2, "end": 0.8, "probability": 0.9},
-            {"word": "的時鐘", "start": 0.8, "end": 1.5, "probability": 0.9},
-            {"word": "滴答滴答", "start": 2.0, "end": 3.2, "probability": 0.9},
-        ]
-    }
-    aligned = align_script_to_audio(script, trans_data)
-    assert len(aligned.segments) == 2
-    assert aligned.segments[0].text == "牆上的時鐘"
-    assert aligned.segments[0].start == 0.2
-    assert aligned.segments[1].text == "滴答滴答"
-    assert aligned.segments[1].start >= 1.5
 
 
 def test_font_catalog():
@@ -142,8 +114,7 @@ if __name__ == "__main__":
     test_segmentation_by_pause()
     test_segmentation_by_length()
     test_export_and_parse_srt()
-    test_css_and_vertical_ass_wrapping()
-    test_aligner_with_band_search()
+    test_css_and_vertical_wrapping()
     test_font_catalog()
     test_acoustic_breakpoint_analyzer()
     print("All unit tests passed successfully!")

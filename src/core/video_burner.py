@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 import json
@@ -6,15 +5,53 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Tuple, Optional, Union, Literal, List
+from typing import Tuple, Optional, Union, List, Callable, Dict, Any
 
 from ..schemas.subtitle import SubtitleTrack, SubtitleStyle
 from .audio_extractor import get_media_duration
 from .css_renderer import render_css_subtitles_to_pngs
-from .exporter import to_ass, save_file, parse_srt_content
-from .font_manager import FONTS_DIR
+from .exporter import parse_srt_content
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_audio_codec(media_path: Path) -> Optional[str]:
+    """回傳來源影片第一條音軌的編碼名稱 (無音軌回傳 None)。"""
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "csv=p=0",
+        str(media_path),
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        codec = res.stdout.strip().splitlines()[0].strip().lower() if res.stdout.strip() else ""
+        return codec or None
+    except Exception:
+        return None
+
+
+def _mux_audio_args(input_v: Path, out_v: Path) -> List[str]:
+    """依來源音軌編碼與輸出容器副檔名決定 copy 或轉碼，避免 .webm/Opus 封裝進 .mp4 時失敗。"""
+    codec = _probe_audio_codec(input_v)
+    if not codec:
+        return ["-an"]
+
+    ext = out_v.suffix.lower()
+    mp4_copy_ok = {"aac", "mp3", "ac3", "eac3", "alac", "mp2"}
+    webm_copy_ok = {"opus", "vorbis"}
+
+    if ext in (".mp4", ".m4v", ".mov"):
+        if codec in mp4_copy_ok:
+            return ["-c:a", "copy"]
+        return ["-c:a", "aac", "-b:a", "320k"]
+    if ext == ".webm":
+        if codec in webm_copy_ok:
+            return ["-c:a", "copy"]
+        return ["-c:a", "libopus", "-b:a", "192k"]
+    return ["-c:a", "copy"]
 
 
 def has_video_stream(media_path: str) -> bool:
@@ -134,46 +171,60 @@ def _create_css_work_dir() -> Path:
     return job_dir
 
 
-def _burn_with_ass(
-    input_v: Path,
-    out_v: Path,
-    track: SubtitleTrack,
-    style: SubtitleStyle,
-    width: int,
-    height: int,
-    encoder_args: List[str],
-) -> None:
-    """傳統 ASS/libass 硬字幕燒錄管線。"""
-    ass_content = to_ass(track, style=style, res_x=width, res_y=height)
-    with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as temp_ass:
-        temp_ass_path = Path(temp_ass.name)
-    save_file(ass_content, str(temp_ass_path))
+def _run_ffmpeg_with_progress(
+    cmd: List[str],
+    duration: float,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    register_process: Optional[Callable[[Any], None]] = None,
+) -> Tuple[int, str]:
+    """執行 FFmpeg，並在提供進度/取消回呼時解析 -progress pipe:1 即時回報編碼進度。"""
+    if progress_callback is None and cancel_check is None and register_process is None:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return proc.returncode, getattr(proc, "stderr", "") or ""
 
-    ass_escaped = str(temp_ass_path).replace("\\", "/").replace(":", "\\:")
-    if FONTS_DIR.exists():
-        fonts_escaped = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
-        vf_filter = f"ass='{ass_escaped}':fontsdir='{fonts_escaped}'"
-    else:
-        vf_filter = f"ass='{ass_escaped}'"
+    prog_cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats", cmd[-1]]
+    proc = subprocess.Popen(
+        prog_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    if register_process:
+        register_process(proc)
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", str(input_v),
-        "-vf", vf_filter,
-        *encoder_args,
-        "-c:a", "copy",
-        str(out_v),
-    ]
-    logger.info(f"開始執行 ASS 壓制: {' '.join(cmd)}")
     try:
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    finally:
-        if temp_ass_path.exists():
-            temp_ass_path.unlink()
+        if proc.stdout is not None:
+            for raw_line in proc.stdout:
+                if cancel_check and cancel_check():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except Exception:
+                        proc.kill()
+                    raise InterruptedError("硬字幕燒錄已手動中止")
 
-    if process.returncode != 0:
-        raise RuntimeError(f"FFmpeg 影片字幕壓制失敗: {process.stderr}")
+                line = raw_line.strip()
+                if line.startswith("out_time_us=") and progress_callback and duration > 0:
+                    try:
+                        us = int(line.split("=", 1)[1])
+                        ratio = min(1.0, max(0.0, (us / 1_000_000.0) / duration))
+                        pct = round(35.0 + ratio * 65.0, 1)
+                        progress_callback({
+                            "stage": "encoding",
+                            "percent": pct,
+                            "message": f"正在合成硬字幕影片 ({pct:.0f}%)...",
+                        })
+                    except Exception:
+                        pass
+
+        rc = proc.wait()
+        stderr_text = proc.stderr.read() if proc.stderr is not None else ""
+        return rc, stderr_text
+    finally:
+        if register_process:
+            register_process(None)
 
 
 def _burn_with_css(
@@ -185,10 +236,31 @@ def _burn_with_css(
     height: int,
     duration: float,
     encoder_args: List[str],
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    register_process: Optional[Callable[[Any], None]] = None,
 ) -> None:
     """使用 Headless 瀏覽器 CSS 截透明 PNG + FFmpeg ffconcat overlay 的 100% 所見即所得燒錄管線。"""
     work_dir = _create_css_work_dir()
     try:
+        if progress_callback:
+            progress_callback({
+                "stage": "rendering_css",
+                "percent": 5.0,
+                "message": "正在啟動瀏覽器渲染 CSS 字幕圖層...",
+            })
+
+        def _on_png(done: int, total: int):
+            if progress_callback and total > 0:
+                pct = round(5.0 + (done / total) * 30.0, 1)
+                progress_callback({
+                    "stage": "rendering_css",
+                    "current_frame": done,
+                    "total_frames": total,
+                    "percent": pct,
+                    "message": f"正在渲染 CSS 字幕圖層 ({done}/{total})...",
+                })
+
         concat_path = render_css_subtitles_to_pngs(
             track=track,
             style=style,
@@ -196,7 +268,10 @@ def _burn_with_css(
             height=height,
             video_duration=duration,
             work_dir=work_dir,
+            progress_callback=_on_png if progress_callback else None,
+            cancel_check=cancel_check,
         )
+        audio_args = _mux_audio_args(input_v, out_v)
         cmd = [
             "ffmpeg",
             "-y",
@@ -208,13 +283,25 @@ def _burn_with_css(
             "-map", "[v]",
             "-map", "0:a?",
             *encoder_args,
-            "-c:a", "copy",
+            *audio_args,
             str(out_v),
         ]
+        if progress_callback:
+            progress_callback({
+                "stage": "encoding",
+                "percent": 35.0,
+                "message": "正在進行影片硬字幕合成編碼...",
+            })
         logger.info(f"開始執行 CSS PNG Overlay 壓制: {' '.join(cmd)}")
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if process.returncode != 0:
-            raise RuntimeError(f"FFmpeg CSS Overlay 影片壓制失敗: {process.stderr}")
+        rc, stderr_text = _run_ffmpeg_with_progress(
+            cmd,
+            duration=duration,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+            register_process=register_process,
+        )
+        if rc != 0:
+            raise RuntimeError(f"FFmpeg CSS Overlay 影片壓制失敗: {stderr_text}")
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -225,17 +312,18 @@ def burn_subtitles_to_video(
     output_path: Optional[str] = None,
     style: Optional[SubtitleStyle] = None,
     use_gpu: bool = True,
-    render_mode: Literal["css", "ass"] = "ass",
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    register_process: Optional[Callable[[Any], None]] = None,
 ) -> str:
     """
-    將字幕燒錄 (Hardcopy / Burn-in) 到影片中，支援 CSS 瀏覽器透明圖層 (css) 與傳統 libass (ass) 雙引擎
+    將字幕以 Headless 瀏覽器 CSS 透明圖層 100% 所見即所得燒錄 (Hardcopy / Burn-in) 至影片中。
 
     :param video_path: 輸入來源影片路徑
     :param subtitles_source: 字幕來源 (可為 SubtitleTrack 物件、.json 檔案路徑、或 .srt/.vtt 檔案路徑)
     :param output_path: 輸出的燒錄影片路徑 (預設為同目錄的 .hardsub.mp4)
     :param style: 字幕樣式配置 (包含 font_size, primary_color, alignment, pos_x, pos_y 等)
     :param use_gpu: 是否優先啟用 NVIDIA NVENC 硬體加速
-    :param render_mode: 渲染引擎，"css" (瀏覽器 CSS 截圖疊加) 或 "ass" (傳統 libass 濾鏡)
     :return: 產出之燒錄影片絕對路徑
     """
     input_v = Path(video_path).resolve()
@@ -249,7 +337,7 @@ def burn_subtitles_to_video(
         raise ValueError("純音訊檔案 (.wav / .mp3 等) 不支援硬字幕影片壓制，請改為匯出 SRT / VTT 字幕檔")
 
     width, height, duration = get_video_info(str(input_v))
-    logger.info(f"偵測到影片解析度: {width}x{height} (render_mode={render_mode})")
+    logger.info(f"偵測到影片解析度: {width}x{height} (CSS 渲染燒錄模式)")
 
     track = _load_subtitle_track(subtitles_source, input_v, duration)
 
@@ -260,11 +348,18 @@ def burn_subtitles_to_video(
     out_v.parent.mkdir(parents=True, exist_ok=True)
 
     encoder_args = _get_encoder_args(use_gpu)
-    if render_mode == "css":
-        _burn_with_css(input_v, out_v, track, style, width, height, duration, encoder_args)
-    elif render_mode == "ass":
-        _burn_with_ass(input_v, out_v, track, style, width, height, encoder_args)
-    else:
-        raise ValueError(f"不支援的 render_mode: {render_mode}")
+    _burn_with_css(
+        input_v,
+        out_v,
+        track,
+        style,
+        width,
+        height,
+        duration,
+        encoder_args,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+        register_process=register_process,
+    )
 
     return str(out_v)

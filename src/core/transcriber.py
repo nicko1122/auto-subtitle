@@ -53,18 +53,21 @@ def transcribe_audio(
     device: str = "auto",
     language: Optional[str] = "zh",
     initial_prompt: Optional[str] = None,
+    *,
+    model: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """所有辨識入口固定使用原生 Whisper large-v3-turbo 與逐詞時間戳。"""
     audio_p = Path(audio_path).resolve()
     if not audio_p.is_file():
         raise FileNotFoundError(f"找不到音訊檔案: {audio_path}")
-    model = load_whisper_model(device)
+    owns_model = model is None
+    active_model = load_whisper_model(device) if owns_model else model
     try:
-        result = model.transcribe(
+        result = active_model.transcribe(
             str(audio_p), language=language, initial_prompt=initial_prompt,
             condition_on_previous_text=False, word_timestamps=True,
             regroup=False, suppress_silence=True,
-            fp16=model.device.type == "cuda", verbose=False,
+            fp16=active_model.device.type == "cuda", verbose=False,
         )
         segments = [dict(segment, id=index) for index, segment in enumerate(result.to_dict()['segments'], 1)]
         words = [WordItem(**word).model_dump() for segment in segments for word in segment.get('words', [])]
@@ -74,9 +77,10 @@ def transcribe_audio(
             "duration": get_media_duration(str(audio_p)),
             "raw_segments": segments, "all_words": words,
             "whisper_model": WHISPER_MODEL, "whisper_backend": "native",
-            "device": str(model.device),
+            "device": str(active_model.device),
         }
     finally:
-        unload_whisper_model(model)
-        del model
-        release_gpu_memory()
+        if owns_model:
+            unload_whisper_model(active_model)
+            del active_model
+            release_gpu_memory()

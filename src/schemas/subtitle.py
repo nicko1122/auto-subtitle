@@ -56,22 +56,6 @@ class SubtitleLayout(BaseModel):
     padding_left: int = Field(default=40, ge=0, description="左側內距 (像素，與畫面左邊界距離)")
     padding_right: int = Field(default=40, ge=0, description="右側內距 (像素，與畫面右邊界距離)")
 
-    @property
-    def ass_alignment(self) -> int:
-        """根據 (vertical_align, horizontal_align) 計算 ASS 標準九宮格對齊碼 (1~9)"""
-        mapping = {
-            ("top", "left"): 7,
-            ("top", "center"): 8,
-            ("top", "right"): 9,
-            ("middle", "left"): 4,
-            ("middle", "center"): 5,
-            ("middle", "right"): 6,
-            ("bottom", "left"): 1,
-            ("bottom", "center"): 2,
-            ("bottom", "right"): 3,
-        }
-        return mapping.get((self.vertical_align, self.horizontal_align), 2)
-
 
 class SubtitleStyle(BaseModel):
     """字幕外觀樣式、字型排版與 Web 盒模型座標定位配置 (完整支援 CSS 語法)"""
@@ -110,22 +94,6 @@ class SubtitleStyle(BaseModel):
     # 3. 精準絕對座標覆蓋 (像素值，若提供則強制釘在畫面上特定 X, Y 位置，用於進階自訂)
     pos_x: Optional[int] = Field(default=None, description="精確絕對 X 座標 (像素)")
     pos_y: Optional[int] = Field(default=None, description="精確絕對 Y 座標 (像素)")
-
-    @property
-    def ass_alignment(self) -> int:
-        """根據 (vertical_align, horizontal_align) 計算 ASS 標準九宮格對齊碼 (1~9)"""
-        mapping = {
-            ("top", "left"): 7,
-            ("top", "center"): 8,
-            ("top", "right"): 9,
-            ("middle", "left"): 4,
-            ("middle", "center"): 5,
-            ("middle", "right"): 6,
-            ("bottom", "left"): 1,
-            ("bottom", "center"): 2,
-            ("bottom", "right"): 3,
-        }
-        return mapping.get((self.vertical_align, self.horizontal_align), 2)
 
     @classmethod
     def from_css(cls, css_text_or_path: str, **overrides) -> "SubtitleStyle":
@@ -201,9 +169,10 @@ class SubtitleStyle(BaseModel):
         if "margin_r" in data and "padding_right" not in data:
             data["padding_right"] = data["margin_r"]
 
-        # 支援 CSS padding 簡寫 (如 "50 40" 或 "40")
+        # 支援 CSS padding 簡寫 (如 "50 40"、"50px 40px" 或 "40")
         if "padding" in data and isinstance(data["padding"], str):
-            parts = [int(p) for p in data["padding"].split() if p.isdigit()]
+            import re
+            parts = [int(p) for p in re.findall(r"\d+", data["padding"])]
             if len(parts) == 1:
                 data["padding_top"] = data["padding_bottom"] = data["padding_left"] = data["padding_right"] = parts[0]
             elif len(parts) == 2:
@@ -211,6 +180,19 @@ class SubtitleStyle(BaseModel):
                 data["padding_left"] = data["padding_right"] = parts[1]
             elif len(parts) == 4:
                 data["padding_top"], data["padding_right"], data["padding_bottom"], data["padding_left"] = parts
+
+        for color_key, fallback in (
+            ("primary_color", "#FFFFFF"),
+            ("outline_color", "#000000"),
+            ("shadow_color", "#000000"),
+        ):
+            val = data.get(color_key)
+            if isinstance(val, str):
+                import re
+                val = val.strip()
+                if len(val) == 4 and val.startswith("#"):
+                    val = "#" + "".join(c * 2 for c in val[1:])
+                data[color_key] = val.upper() if re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", val) else fallback
 
         return data
 

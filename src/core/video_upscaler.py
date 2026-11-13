@@ -289,6 +289,16 @@ def upscale_video(
         if cancel_check and cancel_check():
             raise InterruptedError("任務已由使用者中止")
 
+        # 檢查剩餘磁碟空間，避免長片解出上萬張影格塞爆硬碟
+        try:
+            free_bytes = shutil.disk_usage(str(temp_dir)).free
+            est_per_frame = max(250_000, int(info["width"] * info["height"] * 0.6))
+            est_needed = est_per_frame * max(1, total_frames) * (1 + scale * scale // 2)
+            if free_bytes < est_needed and free_bytes < 4 * (1024 ** 3):
+                logger.warning(f"暫存碟可用空間可能偏低 ({free_bytes / (1024**3):.1f} GB)")
+        except Exception:
+            pass
+
         # (B) 分解影格為高品質 JPEG
         if progress_callback:
             progress_callback({
@@ -303,16 +313,20 @@ def upscale_video(
         extract_cmd = [
             "ffmpeg", "-y",
             "-i", str(input_file),
+            "-vsync", "cfr",
             "-q:v", "2",
             str(frames_in / "frame_%08d.jpg")
         ]
-        p_ext = subprocess.Popen(extract_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p_ext = subprocess.Popen(extract_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if register_process:
             register_process(p_ext)
-        p_ext.wait()
+        _, ext_stderr = p_ext.communicate()
 
         if cancel_check and cancel_check():
             raise InterruptedError("任務已由使用者中止")
+        if p_ext.returncode != 0:
+            err_tail = (ext_stderr or b"").decode("utf-8", errors="ignore")[-400:]
+            raise RuntimeError(f"FFmpeg 分解影格失敗 (returncode={p_ext.returncode}): {err_tail}")
 
         actual_extracted = len(os.listdir(str(frames_in)))
         if actual_extracted > 0:
@@ -323,6 +337,8 @@ def upscale_video(
         is_exe = upscaler_bin.name.lower().endswith(".exe")
 
         if is_exe:
+            if not shutil.which("wslpath"):
+                raise RuntimeError("Windows 執行檔需要 wslpath 工具進行路徑轉換")
             w_in = subprocess.check_output(["wslpath", "-w", str(frames_in)], text=True).strip()
             w_out = subprocess.check_output(["wslpath", "-w", str(frames_out)], text=True).strip()
             w_models = subprocess.check_output(["wslpath", "-w", str(MODELS_DIR)], text=True).strip()
@@ -346,7 +362,7 @@ def upscale_video(
                 "-f", "jpg"
             ]
 
-        proc = subprocess.Popen(upscale_cmd, cwd=str(TOOLS_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(upscale_cmd, cwd=str(TOOLS_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if register_process:
             register_process(proc)
 
@@ -398,7 +414,8 @@ def upscale_video(
         if proc.returncode != 0:
             if cancel_check and cancel_check():
                 raise InterruptedError("任務已由使用者中止")
-            raise RuntimeError(f"Real-ESRGAN 放大行程異常結束 (returncode={proc.returncode})")
+            err_tail = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", errors="ignore")[-400:]
+            raise RuntimeError(f"Real-ESRGAN 放大行程異常結束 (returncode={proc.returncode}): {err_tail}")
 
         if cancel_check and cancel_check():
             raise InterruptedError("任務已由使用者中止")
@@ -435,7 +452,10 @@ def upscale_video(
             "-i", str(frames_out / "frame_%08d.jpg")
         ]
         if has_audio and audio_path.exists():
-            assemble_cmd.extend(["-i", str(audio_path), "-c:a", "copy"])
+            if out_file.suffix.lower() == ".webm":
+                assemble_cmd.extend(["-i", str(audio_path), "-c:a", "libopus", "-b:a", "192k"])
+            else:
+                assemble_cmd.extend(["-i", str(audio_path), "-c:a", "copy"])
 
         assemble_cmd.extend([
             *encoder_args,
@@ -443,13 +463,14 @@ def upscale_video(
             str(out_file)
         ])
 
-        p_ass = subprocess.Popen(assemble_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p_ass = subprocess.Popen(assemble_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if register_process:
             register_process(p_ass)
-        p_ass.wait()
+        _, ass_stderr = p_ass.communicate()
 
         if p_ass.returncode != 0:
-            raise RuntimeError(f"FFmpeg 視訊封裝失敗 (returncode={p_ass.returncode})")
+            err_tail = (ass_stderr or b"").decode("utf-8", errors="ignore")[-400:]
+            raise RuntimeError(f"FFmpeg 視訊封裝失敗 (returncode={p_ass.returncode}): {err_tail}")
 
     finally:
         # 自動清理暫存影格目錄
@@ -521,6 +542,12 @@ class UpscaleTaskManager:
 
     def create_task(self, task_id: str, target_name: str, total_frames: int) -> UpscaleTask:
         with self.lock:
+            finished_ids = [
+                tid for tid, t in self.tasks.items()
+                if t.stage in ("completed", "failed", "cancelled")
+            ]
+            while len(self.tasks) >= 50 and finished_ids:
+                self.tasks.pop(finished_ids.pop(0), None)
             task = UpscaleTask(task_id, target_name, total_frames)
             self.tasks[task_id] = task
             return task

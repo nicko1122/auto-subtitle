@@ -77,7 +77,8 @@ def test_build_subtitle_html_matches_css_style_and_position():
     assert "transform: translate(-100%, 0%);" in html
 
 
-def test_api_burn_defaults_to_css_and_passes_explicit_ass(tmp_path, monkeypatch):
+def test_api_burn_css_only_and_async_start(tmp_path, monkeypatch):
+    import time as _time
     media = tmp_path / "clip.mp4"
     media.touch()
     monkeypatch.setattr(server, "UPLOADS_DIR", tmp_path)
@@ -85,6 +86,9 @@ def test_api_burn_defaults_to_css_and_passes_explicit_ass(tmp_path, monkeypatch)
 
     def fake_burn(**kwargs):
         calls.append(kwargs)
+        cb = kwargs.get("progress_callback")
+        if cb:
+            cb({"stage": "muxing", "percent": 90.0, "message": "mux"})
         return kwargs["output_path"]
 
     monkeypatch.setattr(server, "burn_subtitles_to_video", fake_burn)
@@ -92,13 +96,18 @@ def test_api_burn_defaults_to_css_and_passes_explicit_ass(tmp_path, monkeypatch)
 
     r1 = client.post("/api/burn", json={"video_path": str(media), "track": {"source_file": "clip.mp4"}})
     assert r1.status_code == 200
-    assert r1.json()["render_mode"] == "css"
-    assert calls[-1]["render_mode"] == "css"
+    assert "render_mode" not in calls[-1]
 
-    r2 = client.post("/api/burn", json={"video_path": str(media), "track": {"source_file": "clip.mp4"}, "render_mode": "ass"})
+    r2 = client.post("/api/burn/start", json={"video_path": str(media), "track": {"source_file": "clip.mp4"}})
     assert r2.status_code == 200
-    assert r2.json()["render_mode"] == "ass"
-    assert calls[-1]["render_mode"] == "ass"
+    task_id = r2.json()["task_id"]
+    for _ in range(30):
+        task = client.get(f"/api/burn/task/{task_id}").json()
+        if task["stage"] in ("completed", "failed"):
+            break
+        _time.sleep(0.05)
+    assert task["stage"] == "completed"
+    assert task["result"]["status"] == "success"
 
 
 def test_css_burn_cleans_temp_dir_on_failure(tmp_path, monkeypatch):
@@ -131,7 +140,7 @@ def test_css_burn_cleans_temp_dir_on_failure(tmp_path, monkeypatch):
 
     track = SubtitleTrack(source_file="video.mp4", segments=[SubtitleSegment(id=1, start=0.2, end=1.2, text="測試")])
     with pytest.raises(RuntimeError, match="CSS Overlay"):
-        video_burner.burn_subtitles_to_video(str(media), track, str(tmp_path / "out.mp4"), render_mode="css")
+        video_burner.burn_subtitles_to_video(str(media), track, str(tmp_path / "out.mp4"))
 
     assert len(created_dirs) == 1
     assert not created_dirs[0].exists()
@@ -177,7 +186,6 @@ def test_end_to_end_css_burn_with_real_browser(tmp_path):
         output_path=str(out_mp4),
         style=style,
         use_gpu=False,
-        render_mode="css",
     )
     assert Path(result_path).exists()
     assert Path(result_path).stat().st_size > 1024

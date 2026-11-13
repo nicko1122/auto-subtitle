@@ -40,6 +40,10 @@ source .venv/bin/activate
 echo "📦 正在安裝相依套件 (requirements.txt)..."
 pip install --upgrade pip
 pip install -r requirements.txt
+if ! command -v google-chrome &> /dev/null && ! command -v chromium &> /dev/null; then
+    echo "🌐 正在安裝 CSS 字幕渲染用 Chromium (Playwright)..."
+    playwright install chromium || echo "⚠️ Playwright Chromium 安裝略過，可改用本機 Chrome/Edge。"
+fi
 
 # 5. 下載地端模型
 echo "----------------------------------------------------------------------"

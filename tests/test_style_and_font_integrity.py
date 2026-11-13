@@ -4,12 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import server
-from src.core import font_manager
-from src.core.exporter import to_ass
+from src.core import css_renderer, font_manager
 from src.schemas.subtitle import SubtitleStyle, SubtitleTrack
 
 
-def test_disabled_outline_survives_api_and_ass_export(tmp_path, monkeypatch):
+def test_disabled_outline_survives_api_and_css_render(tmp_path, monkeypatch):
     media=tmp_path/'video.mp4'
     media.touch()
     monkeypatch.setattr(server,'UPLOADS_DIR',tmp_path)
@@ -25,8 +24,8 @@ def test_disabled_outline_survives_api_and_ass_export(tmp_path, monkeypatch):
     style=styles[0]
     assert style.outline_width == 2.5
     assert not style.outline_enabled
-    line=next(line for line in to_ass(SubtitleTrack(source_file='test'),style).splitlines() if line.startswith('Style:'))
-    assert float(line.split(',')[16]) == 0
+    html=css_renderer.build_subtitle_html(style, width=1920, height=1080)
+    assert '-webkit-text-stroke: 0px transparent;' in html
     assert '0px transparent' in style.to_css()
 
 

@@ -8,15 +8,23 @@ function evaluate(ctx, start, end) {
 function environment() {
   const applied = [];
   const ctx = {
-    state: {video:{path:'A.mp4'}, activePackage:{path:'A'}, track:{segments:[{id:1,start:0,end:1,text:'原文'}]}},
-    el: {alignScriptTextarea:{value:'原詞'},rawSubtitleTextarea:{value:'全文草稿'}}, addLog(){},
+    FormData,
+    state: {video:{path:'A.mp4', filename:'A.mp4'}, activePackage:{path:'A'}, track:{segments:[{id:1,start:0,end:1,text:'原文'}]}},
+    el: {
+      alignScriptTextarea:{value:'原詞'},
+      rawSubtitleTextarea:{value:'全文草稿'},
+      checkAutoProofread:{checked:false},
+      selectLlmEngine:{value:'local'},
+      selectScriptMode:{value:'reference'},
+      btnAiTranscribe:{}
+    },
+    addLog(){},
     subtitleFingerprint(){return JSON.stringify(ctx.state.track.segments)},
     setSubtitleTrack(track){applied.push(track)},
   };
   vm.createContext(ctx);
   evaluate(ctx, 'let subtitleRequestId =', 'function initAiButtons()');
   evaluate(ctx, 'function formatEditorText(', 'function setSubtitleTrack(');
-  evaluate(ctx, 'async function runLockedTimelineTranscribe()', 'function initEditorViewToggle()');
   return {ctx, applied};
 }
 (async () => {
@@ -31,7 +39,7 @@ function environment() {
     const {ctx:c,applied}=environment();
     let release;
     c.fetch=()=>new Promise(resolve=>{release=resolve});
-    const pending=c.runLockedTimelineTranscribe();
+    const pending=c.runAiTranscribe();
     if(change==='package') {c.state.activePackage={path:'B'};c.state.video.path='B.mp4';}
     if(change==='edit') c.state.track.segments[0].text='手動新內容';
     if(change==='reload') c.state.track=JSON.parse(JSON.stringify(c.state.track));

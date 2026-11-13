@@ -65,6 +65,7 @@ def test_api_exposes_failed_proofreading(tmp_path,monkeypatch,endpoint):
     media = tmp_path/'test.wav'
     media.touch()
     monkeypatch.setattr(server,'UPLOADS_DIR',tmp_path)
+    monkeypatch.setattr(server,'extract_audio',lambda src,dst:{'audio_path':src,'duration':1.0})
     monkeypatch.setattr(server,'transcribe_audio',lambda **kw:{'source_file':str(media),'raw_segments':[s.model_dump() for s in track().segments]})
     options = {'json':{'track':track().model_dump()}} if endpoint.endswith('proofread') else {'data':{'media_path':str(media),'auto_proofread':'true'}}
     response = TestClient(server.app,base_url='http://localhost').post(endpoint,**options)

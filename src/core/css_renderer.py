@@ -387,6 +387,22 @@ class _CdpSocketClient:
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
         self.sock.sendall(bytes(header) + masked)
 
+    def _send_pong(self, payload: bytes) -> None:
+        mask = os.urandom(4)
+        header = bytearray([0x8A])
+        ln = len(payload)
+        if ln < 126:
+            header.append(0x80 | ln)
+        elif ln < 65536:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", ln))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", ln))
+        header.extend(mask)
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self.sock.sendall(bytes(header) + masked)
+
     def _recv_message(self) -> str:
         fragments = bytearray()
         while True:
@@ -406,7 +422,9 @@ class _CdpSocketClient:
             if opcode == 0x8:
                 raise RuntimeError("CDP WebSocket 已關閉")
             if opcode == 0x9:
-                # 忽略或簡易跳過 ping
+                self._send_pong(raw)
+                continue
+            if opcode == 0xA:
                 continue
             fragments.extend(raw)
             if fin:
@@ -440,9 +458,13 @@ def _render_via_linux_chrome(
     out_dir: Path,
     width: int,
     height: int,
+    progress_callback=None,
+    cancel_check=None,
 ) -> None:
     """在原生 Linux 環境啟動 Headless Chrome/Chromium 並逐段截圖為透明 PNG。"""
     profile_dir = Path(tempfile.mkdtemp(prefix="autosub_linux_cdp_"))
+    stderr_log = profile_dir / "chrome_stderr.log"
+    stderr_fp = stderr_log.open("w+", encoding="utf-8", errors="ignore")
     proc = subprocess.Popen(
         [
             browser_exe,
@@ -458,13 +480,15 @@ def _render_via_linux_chrome(
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_fp,
     )
     client: Optional[_CdpSocketClient] = None
     try:
         port_file = profile_dir / "DevToolsActivePort"
         port = None
         for _ in range(80):
+            if cancel_check and cancel_check():
+                raise InterruptedError("CSS 字幕渲染已手動中止")
             if port_file.exists():
                 lines = port_file.read_text(encoding="utf-8", errors="ignore").splitlines()
                 if lines and lines[0].strip().isdigit():
@@ -472,7 +496,9 @@ def _render_via_linux_chrome(
                     break
             time.sleep(0.05)
         if not port:
-            raise RuntimeError("Linux Headless Chrome 無法取得 DevToolsActivePort")
+            stderr_fp.flush()
+            diag = stderr_log.read_text(encoding="utf-8", errors="ignore")[-400:].strip()
+            raise RuntimeError(f"Linux Headless Chrome 無法取得 DevToolsActivePort{f': {diag}' if diag else ''}")
 
         ws_url = None
         for _ in range(50):
@@ -515,11 +541,16 @@ def _render_via_linux_chrome(
         blank = client.call("Page.captureScreenshot", {"format": "png", "fromSurface": True})
         (out_dir / "blank.png").write_bytes(base64.b64decode(blank["data"]))
 
-        for item in manifest:
+        total = len(manifest)
+        for idx, item in enumerate(manifest, start=1):
+            if cancel_check and cancel_check():
+                raise InterruptedError("CSS 字幕渲染已手動中止")
             js_expr = f"window.setSubText({json.dumps(item['text'], ensure_ascii=False)})"
             client.call("Runtime.evaluate", {"expression": js_expr, "awaitPromise": True})
             shot = client.call("Page.captureScreenshot", {"format": "png", "fromSurface": True})
             (out_dir / item["file"]).write_bytes(base64.b64decode(shot["data"]))
+            if progress_callback:
+                progress_callback(idx, total)
     finally:
         if client is not None:
             client.close()
@@ -528,6 +559,10 @@ def _render_via_linux_chrome(
             proc.wait(timeout=3)
         except Exception:
             proc.kill()
+        try:
+            stderr_fp.close()
+        except Exception:
+            pass
         shutil.rmtree(profile_dir, ignore_errors=True)
 
 
@@ -537,6 +572,8 @@ def _render_via_playwright(
     out_dir: Path,
     width: int,
     height: int,
+    progress_callback=None,
+    cancel_check=None,
 ) -> None:
     """使用原生 Linux Playwright Chromium 渲染透明字幕 PNG (不依賴 Windows Interop)。"""
     from playwright.sync_api import sync_playwright
@@ -550,9 +587,14 @@ def _render_via_playwright(
             page.evaluate("() => document.fonts.ready")
             page.evaluate("() => window.setSubText('')")
             page.screenshot(path=str(out_dir / "blank.png"), omit_background=True)
-            for item in manifest:
+            total = len(manifest)
+            for idx, item in enumerate(manifest, start=1):
+                if cancel_check and cancel_check():
+                    raise InterruptedError("CSS 字幕渲染已手動中止")
                 page.evaluate("(txt) => window.setSubText(txt)", item["text"])
                 page.screenshot(path=str(out_dir / item["file"]), omit_background=True)
+                if progress_callback:
+                    progress_callback(idx, total)
         finally:
             browser.close()
 
@@ -607,6 +649,8 @@ def render_css_subtitles_to_pngs(
     height: int,
     video_duration: float,
     work_dir: Path,
+    progress_callback=None,
+    cancel_check=None,
 ) -> Path:
     """
     使用真實瀏覽器 CSS 渲染引擎產出每句透明背景 PNG 與 ffconcat 時間軸檔。
@@ -615,7 +659,7 @@ def render_css_subtitles_to_pngs(
     """
     browser = detect_headless_browser()
     if browser is None:
-        raise RuntimeError("找不到可用的 Headless Chrome / Edge，無法執行 CSS 精準燒錄；請改用 ASS 模式或安裝 Chrome。")
+        raise RuntimeError("找不到可用的 Headless Chrome / Edge，無法執行 CSS 字幕渲染；請安裝 Playwright Chromium 或 Chrome。")
     kind, browser_path = browser
     for_win = (kind == "wsl_windows")
 
@@ -643,11 +687,17 @@ def render_css_subtitles_to_pngs(
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
     if kind == "playwright":
-        _render_via_playwright(html_path, manifest, work_dir, width, height)
+        _render_via_playwright(
+            html_path, manifest, work_dir, width, height,
+            progress_callback=progress_callback, cancel_check=cancel_check,
+        )
     elif for_win:
         _render_via_wsl_windows_browser(browser_path, html_path, manifest_path, work_dir, width, height)
     else:
-        _render_via_linux_chrome(browser_path, html_path, manifest, work_dir, width, height)
+        _render_via_linux_chrome(
+            browser_path, html_path, manifest, work_dir, width, height,
+            progress_callback=progress_callback, cancel_check=cancel_check,
+        )
 
     concat_path = work_dir / "subs.ffconcat"
     concat_path.write_text(build_ffconcat_content(concat_entries), encoding="utf-8")

@@ -1,15 +1,31 @@
 import logging
-import re
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
-from whisper import load_audio
 
-from .env_utils import preload_cuda_libs
-from .transcriber import load_whisper_model, unload_whisper_model
 from ..schemas.subtitle import SubtitleSegment, SubtitleTrack
 
 logger = logging.getLogger(__name__)
+
+
+def _load_audio_mono_16k(media_path: str, sr: int = 16000) -> np.ndarray:
+    """使用 ffmpeg 將影音檔案解碼為 16kHz 單聲道 float32 PCM 陣列 (不依賴 openai-whisper)。"""
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-threads", "0",
+        "-i", str(media_path),
+        "-f", "s16le",
+        "-ac", "1",
+        "-acodec", "pcm_s16le",
+        "-ar", str(sr),
+        "-",
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode != 0:
+        raise RuntimeError(f"FFmpeg 解碼音訊失敗: {res.stderr.decode('utf-8', errors='ignore')[-400:]}")
+    return np.frombuffer(res.stdout, np.int16).astype(np.float32) / 32768.0
 
 # 三種斷點偵測靈敏度模式設定
 BREAKPOINT_MODES: Dict[str, Dict[str, float]] = {
@@ -188,7 +204,7 @@ def analyze_audio_breakpoints(
 
     cfg = BREAKPOINT_MODES.get(mode, BREAKPOINT_MODES["balanced"])
     sr = 16000
-    audio = load_audio(str(p), sr=sr)
+    audio = _load_audio_mono_16k(str(p), sr=sr)
     total_duration = round(len(audio) / float(sr), 3)
 
     raw_rms, smooth_vocal_rms = _compute_vocal_energy_envelope(audio, sr=sr)
@@ -299,7 +315,7 @@ def snap_time_to_valley(
         return round(time_sec, 2)
 
     sr = 16000
-    audio = load_audio(str(p), sr=sr)
+    audio = _load_audio_mono_16k(str(p), sr=sr)
     _, smooth_vocal_rms = _compute_vocal_energy_envelope(audio, sr=sr)
 
     center_frame = int(round(time_sec * 100))
@@ -313,108 +329,3 @@ def snap_time_to_valley(
     local_slice = smooth_vocal_rms[w_start:w_end]
     best_frame = w_start + int(np.argmin(local_slice))
     return round(best_frame / 100.0, 2)
-
-
-def transcribe_on_locked_timeline(
-    media_path: str,
-    track: SubtitleTrack,
-    device: str = "cuda",
-    prompt: str = "繁體中文",
-    only_empty: bool = False,
-    auto_proofread: bool = False,
-    llm_provider: str = "local",
-    proofread_report: Optional[Dict[str, Any]] = None,
-) -> SubtitleTrack:
-    """
-    【階段三：依「已校正鎖定的時間軸」執行受控 Whisper 填字 (Segment-Guided Whisper)】
-    核心保證：
-    1. 100% 鎖定使用者已經聽音確認過的每個 #index [start, end] 時間區間，絕不改動時間軸！
-    2. 針對每個獨立時間格切片音訊，並根據該格時長/預估字數限制 sample_len，
-       徹底杜絕密集歌詞跨句暴衝、不成句或拖長音重複幻覺！
-    """
-    from .proofreader import SubtitleProofreader
-
-    p = Path(media_path).resolve()
-    if not p.exists():
-        raise FileNotFoundError(f"找不到媒體檔案: {media_path}")
-
-    preload_cuda_libs()
-    sr = 16000
-    audio = load_audio(str(p), sr=sr)
-    total_samples = len(audio)
-
-    model = load_whisper_model(device)
-
-    try:
-        updated_segments: List[SubtitleSegment] = []
-        prev_text_context = prompt or "繁體中文"
-        for seg in track.segments:
-            existing_text = (seg.text or "").strip()
-            # 若使用者勾選「僅填補空白段」且該段已有手動輸入的文字，直接保留
-            if only_empty and existing_text and not existing_text.startswith("[#"):
-                updated_segments.append(seg)
-                prev_text_context = existing_text
-                continue
-
-            # 取出該時間段音訊切片 (前後各留 60ms 避免子音被切邊)
-            s_sample = max(0, int((seg.start - 0.06) * sr))
-            e_sample = min(total_samples, int((seg.end + 0.08) * sr))
-            audio_slice = audio[s_sample:e_sample]
-
-            dur = max(0.3, seg.end - seg.start)
-            exp_chars = seg.expected_chars or max(2, min(22, int(round(dur * 3.5))))
-            # 根據該段合理字數動態限制 token 上限，防止拖長音產生重複幻覺
-            max_tokens = max(12, min(64, exp_chars * 3 + 10))
-
-            if len(audio_slice) < int(0.20 * sr):
-                rec_text = existing_text
-            else:
-                result = model.transcribe(
-                    audio_slice,
-                    language="zh",
-                    initial_prompt=prev_text_context[-40:] if prev_text_context else "繁體中文",
-                    word_timestamps=False, regroup=False, suppress_silence=False,
-                    fp16=model.device.type == "cuda", verbose=False,
-                    condition_on_previous_text=False,
-                    without_timestamps=True,
-                    sample_len=max_tokens,
-                )
-                pieces = [s.text.strip() for s in result.segments if s.text and s.text.strip()]
-                rec_text = " ".join(pieces).strip()
-                # 清理首尾多餘逗號或重複標點
-                rec_text = re.sub(r"^[，、,.\s]+|[，、,\s]+$", "", rec_text)
-
-            if rec_text:
-                prev_text_context = f"{prompt}。{rec_text}"
-
-            updated_segments.append(
-                SubtitleSegment(
-                    id=seg.id,
-                    start=seg.start,
-                    end=seg.end,
-                    text=rec_text,
-                    expected_chars=exp_chars,
-                    words=seg.words,
-                )
-            )
-    finally:
-        unload_whisper_model(model)
-
-    new_track = SubtitleTrack(
-        version=track.version,
-        source_file=track.source_file or f"{p.stem}.srt",
-        duration=track.duration or round(total_samples / float(sr), 3),
-        language=track.language or "zh",
-        segments=updated_segments,
-    )
-
-    if auto_proofread and new_track.segments:
-        proofreader = SubtitleProofreader(n_gpu_layers=-1, provider=llm_provider)
-        try:
-            new_track = proofreader.proofread_track(new_track, batch_size=8)
-            if proofread_report is not None:
-                proofread_report.update(proofreader.last_report, warning=proofreader.warning)
-        finally:
-            proofreader.close()
-
-    return new_track

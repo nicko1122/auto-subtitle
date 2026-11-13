@@ -15,6 +15,7 @@ stable-ts==2.19.1
 torch
 torchaudio
 httpx
+playwright>=1.45.0
 nvidia-cublas-cu12; platform_system == "Linux" and platform_machine == "x86_64"
 nvidia-cudnn-cu12; platform_system == "Linux" and platform_machine == "x86_64"
 nvidia-cuda-runtime-cu12; platform_system == "Linux" and platform_machine == "x86_64"

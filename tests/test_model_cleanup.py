@@ -72,27 +72,6 @@ def test_failed_loader_does_not_keep_its_model_alive_during_retry(monkeypatch):
     assert references[0]() is None
 
 
-@pytest.mark.parametrize('failure', ['call', 'iteration'])
-def test_locked_timeline_unloads_after_failure(tmp_path, monkeypatch, failure):
-    path = tmp_path / 'audio.wav'
-    path.touch()
-    monkeypatch.setattr(acoustic_analyzer, 'load_audio', lambda *a, **kw: np.zeros(16000, dtype=np.float32))
-    native = Mock()
-    error = RuntimeError('locked inference failed')
-    def segments():
-        raise error
-        yield
-    model = SimpleNamespace(cpu=native.cpu, device=SimpleNamespace(type='cuda'), transcribe=Mock(return_value=SimpleNamespace(segments=segments())))
-    if failure == 'call':
-        model.transcribe.side_effect = error
-    monkeypatch.setattr(acoustic_analyzer, 'load_whisper_model', lambda *a, **kw: model)
-    track = SubtitleTrack(source_file='audio', segments=[SubtitleSegment(id=1, start=0, end=1, text='')])
-    with pytest.raises(RuntimeError) as caught:
-        acoustic_analyzer.transcribe_on_locked_timeline(str(path), track)
-    assert caught.value is error
-    native.cpu.assert_called_once()
-
-
 @pytest.mark.parametrize('failure', ['alignment', 'slice', 'partial_slice'])
 def test_luna_unloads_model_and_removes_owned_slices(tmp_path, monkeypatch, failure):
     error = OSError('alignment or slice failed')

@@ -1,77 +1,73 @@
 # AutoSubtitle AI (智慧影音字幕工作台)
 
 <p align="center">
-  <b>結合聲學斷點分析、原生 Whisper large-v3-turbo、GPT-6 Luna 雙軌歌詞對齊管線、地端/雲端 LLM 決策大腦、Web CSS 盒模型排版與 NVIDIA NVENC 硬字幕燒錄的一站式字幕系統。</b>
+  <b>結合聲學斷點分析、原生 Whisper large-v3-turbo、Luna 雙軌歌詞對齊管線、地端/雲端 LLM 決策大腦、無頭瀏覽器 CSS 透明覆蓋渲染與 NVIDIA NVENC 硬字幕燒錄的一站式字幕系統。</b>
 </p>
 
 ---
 
 ## 🌟 最新重大功能更新 (Latest Highlights)
 
-### 1. 🌙 Whisper ＋ GPT-6 Luna 歌詞字幕對齊管線 (Luna Pipeline)
+### 1. 🌙 Whisper ＋ Luna 歌詞字幕對齊管線 (Luna Pipeline)
 - **雙軌驗證架構 (Dual Verification)**：
-  - **軌道 A**：原生 Whisper（預設 `large-v3-turbo`）＋ stable-ts 全曲辨識與逐詞時間提取。
-  - **軌道 B**：原歌詞多行文字比對與 `stable-ts` 聲學強制對齊。
+  - **軌道 A**：原生 Whisper（預設 `large-v3-turbo`）＋ `stable-ts` 全曲辨識與逐詞時間提取（且單例共享已載入模型，不重複佔用顯存）。
+  - **軌道 B**：原歌詞多行文字比對與 `stable-ts` 聲學強制對齊（保留括號伴唱與真實音訊長度）。
 - **決策大腦 (Decision Brain)**：
-  - 支援 **地端 Edge LLM (`Qwen2.5-3B-Instruct GGUF`)** 或 **雲端 API (OpenAI 相容 / GPT-6 Luna)**。
+  - 支援 **地端 Edge LLM (`Qwen2.5-3B-Instruct GGUF`)** 或 **雲端 API (OpenAI / Gemini / Anthropic 相容端點)**。
   - 智能掃描時長異常、單字密度過高或相似度偏低的異常句，進行單句精確仲裁，不擾動全局時間軸。
-- **7 項標準交付產物 (Deliverables)**：
-  - 一次性輸出：`lyrics.srt`、`lyrics.vtt`、`lyrics.lrc`（支援動態歌詞播放器）、`lyrics.ass`、`cue_evidence.json`（斷點聲學憑證）、`review.csv`（異常與校正報告）與 `run_manifest.json`（SHA-256 執行清單）。
+- **6 項標準交付產物 (Deliverables)**：
+  - 一次性輸出：`lyrics.srt`、`lyrics.vtt`、`lyrics.lrc`（支援動態歌詞播放器）、`cue_evidence.json`（斷點聲學憑證）、`review.csv`（異常與校正報告）與 `run_manifest.json`（SHA-256 執行清單）。
 
-### 2. 🎨 Web CSS 字幕樣式全面進化
-- **透明度屬性（Opacity）**：
-  - 支援 `0% ~ 100%`（`0.05 ~ 1.0`）平滑滑桿調節。
-  - Web 影片預覽即時疊層透明效果。
-  - 雙向解析 CSS `opacity: 0.8;` 或 `80%`。
-  - **ASS 影音硬字幕同步**：自動換算 ASS 色彩 Alpha 通道（$$\text{Alpha} = \text{round}((1.0 - \text{opacity}) \times 255)$$），MP4 壓制時與 Web 預覽保持完全一致的透明度。
-- **1:1 Web-to-ASS 字型度量與排版保真**：
-  - 自動讀取字型 `usWinAscent + usWinDescent` 計算 `em_ratio` 縮放倍率，並於壓制前自動修復損壞的 TrueType/OpenType 字型（補齊缺失表或異常字距），讓特定手寫/藝術字型與 Web CSS `font-size` 一致。
-  - **多行字幕支援**：時間軸與編輯框支援 `<br>` / `<br/>` 標籤及 `Shift+Enter` 換行（單按 `Enter` 仍跳至下一段），同步轉換為 ASS `\N` 與多行 SRT/VTT。
-  - **直排中英混排與避頭尾**：`vertical-rl` 直書自動偵測 ASCII / 英數區段套用真實 `hmtx`/`cmap` 字寬量測與 `\frz-90` 順時針旋轉、支援避頭尾推入法（Kinsoku Oikomi）折欄、水平安全邊距夾擠防溢出，且橫/直排切換時自動重置位置避免殘留偏移。
-- **描邊外側生長（Outward Stroke）**：
-  - 新增獨立描邊開關。
-  - 引入 CSS `paint-order: stroke fill;`，描邊往外生長，絕不侵蝕內部筆畫字型。
+### 2. 🎨 純 CSS 無頭瀏覽器 1:1 渲染壓制引擎
+- **所見即所得 (What You See Is What You Get)**：
+  - 移除過往容易有字體度量與版型誤差的 ASS 轉換路徑，全面採用 **Playwright / Chromium / Edge 無頭瀏覽器 (CDP)** 直接將 Web CSS 樣式渲染為高精準透明 PNG 影格序列，再透過 FFmpeg `overlay` 燒錄至影片。
+  - 確保編輯器預覽與最終 MP4 成品在字體、字距、行距、位置座標（含九宮格與拖曳 `x`/`y`）、透明色階與多欄直排上達成 **100% 視覺一致**。
+- **完整 CSS 樣式支援**：
+  - **透明度屬性（Opacity）**：支援 `0% ~ 100%`（`0.05 ~ 1.0`）滑桿微調與雙向 CSS 解析。
+  - **描邊外側生長（Outward Stroke）**：內建 `paint-order: stroke fill;`，描邊往外生長，絕不侵蝕文字筆畫內部。
+  - **多行字幕支援**：編輯框支援 `<br>` / `<br/>` 標籤及 `Shift+Enter` 換行（單按 `Enter` 跳至下一段並自動對齊時間軸），同步輸出至多行 SRT / VTT / OpenShot。
+  - **真・直排中英混排**：`writing-mode: vertical-rl` 由瀏覽器原生排版引擎直接處理直書斷行、避頭尾及混排方向，並為每個本機資產包獨立記憶專屬樣式（`localStorage`）。
+- **非同步燒錄進度與串流無損音軌**：
+  - Web UI 提供即時燒錄進度條與中途 **取消壓制** 功能；FFmpeg Mux 階段針對 MP4 相容音軌（AAC / MP3 / AC3 / EAC3 / ALAC / MP2）自動使用 `-c:a copy` **零重編碼直通**，僅在遇到不支援格式（如 Opus / Vorbis / FLAC / PCM）時才轉碼為 320kbps AAC。
 - **字型安裝與管理中心**：
   - 一鍵安裝開源繁中字幕字型（粉圓體、文楷、芫荽體等）。
-  - 支援本機 Windows 系統字型匯入與自訂網址 / 本機檔案上傳安裝，Web 預覽與 FFmpeg 壓片字型即時無縫生效。
+  - 支援本機 Windows 系統字型匯入與自訂網址 / 本機檔案上傳安裝，Web 預覽與無頭瀏覽器渲染字型即時無縫生效。
 
-### 3. 🛡️ 作業體驗防護（Semi-transparent Busy Modal & 60FPS Sync）
-- 長時間 AI 辨識／對齊任務執行時，自動顯示半透明整頁遮罩（`#busy-overlay`）搭配紫藍漸層旋轉動畫與實時碼錶，防止介面誤觸或重疊請求。
-- 採用 `requestAnimationFrame` 60FPS 毫秒級即時比對，歌詞唱完的一瞬間立刻乾淨消失，無任何拖泥帶水的殘影。
+### 3. 🛡️ 編輯保護與流暢操作體驗
+- **獨立 AI 校對 & 30 步 Undo**：Tab 1 內建一鍵 `✨ AI 校對目前字幕`；Tab 2 聲學斷點時間軸校對支援 **最多 30 步復原 (`Ctrl+Z`)**。
+- **半透明執行防護（Busy Modal & 60FPS Sync）**：長時間 AI 任務期間顯示半透明狀態視窗與碼錶防止重複操作；播放器採用 `requestAnimationFrame` 60FPS 比對時間軸，切句即時無殘影。
 
 ---
 
 ## ✨ 核心特色與工作流
 
-### 1. 🎵 聲學斷點分析 ➔ 拍點快修 ➔ 鎖定時間軸填字（針對密集歌詞與歌唱語音）
-- **階段 1：純聲學斷點掃描**：透過 Silero VAD ＋ 10ms 人聲高通 RMS 能量包絡波谷偵測，1 秒內標出全片發聲段落（`#1 ~ #N`），並自動計算預估字數與產生視覺化波形條。
-- **階段 2：拍點快速校對**：
-  - `🎧 聽頭` / `🎧 聽尾` / `▶ 整段` 試聽鈕（播放完畢自動暫停，省去手動按空白鍵的時間）。
-  - `[` 設起點、`]` 設終點、`✂️ 游標處切開`（快捷鍵 `S`，自動吸附 `±0.18s` 最深換氣波谷）。
-- **階段 3：鎖定時間軸填字**：
-  - **手動模式**：直接打字（按下 `Enter` 自動跳下一段並試聽）、或貼上多行歌詞 1:1 填入。
-  - **受控 Whisper 填空**：嚴格按校對好的起訖點切片辨識，按字數容量限制 Token 上限，**100% 不動時間軸、不跨句暴衝、不產生拖音幻覺**。
+### 1. 🎵 聲學斷點分析 ➔ 拍點快修（針對密集歌詞與歌唱語音）
+- **純聲學斷點掃描**：透過 Silero VAD ＋ 10ms 人聲高通 RMS 能量包絡波谷偵測，1 秒內標出全片發聲段落（`#1 ~ #N`），並產生視覺化波形條。
+- **拍點快速校對**：
+  - `🎧 聽頭` / `🎧 聽尾` / `▶ 整段` 試聽鈕（播放完畢自動暫停）。
+  - `[` 設起點、`]` 設終點、`✂️ 游標處切開`（快捷鍵 `S`，自動吸附 `±0.18s` 最深換氣波谷），並支援 `Ctrl+Z` 復原誤操作。
 
-### 2. 🎯 有稿模式強制對齊 (Forced Alignment)
-- 提供原稿/歌詞 `.txt`，透過 Needleman-Wunsch 動態規劃 ＋ Sakoe-Chiba 搜尋帶加速，以拼音相似度將原稿文字與語音強制對齊，100% 保留文字內容。
+### 2. 🎯 統一 AI 辨識／對齊入口（無稿辨識 ＆ 有稿 Luna 對齊）
+- **有稿模式（推薦）**：貼入原稿或歌詞 `.txt`，透過單一 `/api/ai/transcribe` 入口自動切換至 **Luna 雙軌管線**，將原稿精準對齊語音並產出待複核建議，100% 保留原詞內容。
+- **無稿模式**：留空歌詞原稿時，以原生 Whisper (`large-v3-turbo`) 直接辨識與斷句，並可搭配 LLM 進行同音錯字自動校對。
 
 ### 3. ✍️ 地端 Edge LLM 同音錯字校對 (Qwen2.5) / 雲端 API
-- 內建 `Qwen2.5-3B-Instruct GGUF` 模型（GPU 全層加速），自動偵測並修正語音辨識常見的同音異字（如「開平洋 ➔ 太平洋」），亦支援透過 `.env` 設定雲端 OpenAI 相容模型。
+- 內建 `Qwen2.5-3B-Instruct GGUF` 模型（GPU 全層加速），自動偵測並修正語音辨識常見的同音異字（如「開平洋 ➔ 太平洋」），亦支援透過 `.env` 設定 Gemini / OpenAI / Anthropic 相容模型。
 
-### 4. 🎨 Web CSS 盒模型排版與 ASS 壓制引擎
+### 4. 🎨 Web CSS 盒模型排版與無頭瀏覽器燒錄
 - 支援標準 CSS 語法（`font-size`, `color`, `opacity`, `-webkit-text-stroke`, `paint-order`, `text-shadow`, `writing-mode: vertical-rl`, `padding`, `text-align`, `vertical-align`）。
-- **直書長字幕自動多欄換行與避頭尾**：根據畫面高度自動由右至左折行（符合 CSS `vertical-rl` 規範），套用中文避頭尾推入法與中英混排旋轉。
 - **畫面直覺拖曳**：可直接在影片預覽區拖曳字幕位置，或使用 X / Y 滑桿平滑微調。
 
-### 5. 🎧 純音訊字幕製作 & ⚡ NVIDIA NVENC 硬字幕壓制
-- **純音訊模式（WAV / MP3 / M4A / FLAC / AAC / OGG）**：支援直接上傳或建立純音訊資產包，提供專屬音訊播放背景預覽、聲學斷點、Whisper/Luna 辨識對齊與匯出 `SRT` / `WebVTT` / `JSON`；純音訊模式不執行 MP4 燒錄與視訊放大。
-- **NVIDIA NVENC GPU 硬字幕壓制**：支援以 NVIDIA NVENC 硬體加速將 ASS 樣式字幕無損音軌直接燒錄進 MP4 影片中。
+### 5. 🎧 純音訊字幕製作、多格式匯出 ＆ ⚡ NVIDIA NVENC 硬字幕壓制
+- **純音訊模式（WAV / MP3 / M4A / FLAC / AAC / OGG）**：支援直接上傳或建立純音訊資產包，提供專屬音訊播放背景預覽、聲學斷點、Whisper/Luna 辨識對齊，並隱藏視訊燒錄與放大操作。
+- **多格式即時匯出**：支援下載 `SRT`、`OpenShot TXT`（緊湊純文字對軌格式）、`WebVTT` 與 `JSON`。
+- **NVIDIA NVENC GPU 硬字幕壓制**：支援以 NVIDIA NVENC（或 CPU `libx264` 後備）將 CSS 透明圖層直接燒錄進 MP4 影片，並盡可能保留原始無損/直通音軌。
 
 ### 6. ✨ AI 視訊超解析度放大 (Video Super-Resolution)
 - **Compact 輕量視訊模型**：整合 `realesrgan-ncnn-vulkan`（`realesr-animevideov3`），兼具高速、低顯存與邊緣銳化保真度。
-- **資產庫隨選放大與無痛繼承**：在資產庫可一鍵執行 2x / 4x 放大，自動衍生高畫質資產包，並同步繼承現有字幕與原稿（時間軸通用）；僅對視訊資產包開放（純音訊略過）。
-- **執行預警、取消與清理**：開始前自動試算總影格數與預估耗時並顯示風險提醒；支援任務中途停止與自動清理暫存／未完成目錄。
-- **GPU 任務鎖排程保護**：嚴格納入 `ModelTaskLock`，避免與 Whisper / LLM 並行造成顯存溢出。
+- **資產庫隨選放大與階層保留**：在資產庫可一鍵執行 2x / 4x 放大，衍生高畫質資產包並保留資料夾階層與現有字幕、原稿（僅對視訊資產包開放）。
+- **執行預警、取消與清理**：開始前試算總影格數與預估耗時並顯示提醒；支援任務中途停止與自動清理暫存／未完成空目錄。
+- **GPU 任務鎖排程保護**：嚴格納入 `ModelTaskLock`，避免與 Whisper / LLM / Burn 並行造成顯存溢出。
 
 ---
 
@@ -80,8 +76,9 @@
 - **作業系統**：Linux / Ubuntu / Windows 11 + WSL2（附 `run_web.bat` Windows 一鍵啟動器）
 - **Python**：3.10–3.12（目前 `av<14` 的相容範圍）
 - **系統相依**：`ffmpeg`, `ffprobe`, `fontconfig`
+- **無頭渲染引擎**：`playwright`（隨 `requirements.txt` 與 `install.sh` 自動安裝 Chromium）或本機 Chrome / Edge（透過 CDP 連接）
 - **GPU (可選但推薦)**：支援 CUDA 之 NVIDIA 顯卡（如 GTX 1070 Ti、RTX 3060 或更高等級）
-  - **Pascal 架構（GTX 1070 Ti / `sm_61`）注意事項**：需安裝 NVIDIA 驅動 **550+** 與 PyTorch **cu126**（`torch==2.8.0+cu126`）；避免安裝已移除 `sm_61` 支援的 CUDA 13.x 套件。`transcriber.py` 內建 1ms CUDA 核心預檢，若不支援會自動安全降級至 CPU 或報錯提示。
+  - **Pascal 架構（GTX 1070 Ti / `sm_61`）注意事項**：需安裝 NVIDIA 驅動 **550+** 與 PyTorch **cu126**（`torch==2.8.0+cu126`）；避免安裝已移除 `sm_61` 支援的 CUDA 13.x 套件。`transcriber.py` 與 `/api/health` 內建 CUDA 核心預檢，若不支援會自動安全降級至 CPU。
 
 ---
 
@@ -107,7 +104,7 @@ Web 校對依「本地 / 雲端」選單執行；本地模式不讀取雲端金�
 
 LLM 回覆會驗證編號與文字型別；失敗、漏答或重複編號保留該段原文，API 的 `proofread_warning`／`proofread_report` 回報未完成項目。有詞時間審核的失敗記錄於執行 manifest 與 `decision_batches.json`。
 
-每次 Web 任務使用獨立輸出目錄／檔名；CLI `luna` 預設建立獨立資料夾，明確指定 `-o` 時沿用該目錄。除七項標準交付檔，另保留 `corrections.json` 與 `validation.json` 診斷檔。
+每次 Web 任務使用獨立輸出目錄／檔名；CLI `luna` 預設建立獨立資料夾，明確指定 `-o` 時沿用該目錄。除六項標準交付檔（`lyrics.srt`、`lyrics.vtt`、`lyrics.lrc`、`cue_evidence.json`、`review.csv`、`run_manifest.json`），另保留 `corrections.json` 與 `validation.json` 診斷檔。
 
 ### ⚙️ 設定檔 (.env，可選)
 若欲啟用雲端 LLM API（支援 Gemini、OpenAI 相容端點、Anthropic，且系統支援熱重載無需重啟服務）：
@@ -140,7 +137,7 @@ ANTHROPIC_MODEL=claude-3-5-haiku-latest
 
 每個 `uploads/訪談/` 資料夾管理一支影片或純音訊檔（支援 `MP4/MKV/MOV/AVI/WEBM` 及 `WAV/MP3/M4A/FLAC/AAC/OGG`），以及選填的 `訪談.txt` 原詞與 `訪談.srt` 工作字幕。可匯入整個資料夾，或一起選取媒體、原詞和字幕建立資產包；直接在 `uploads/` 放入整理好的資料夾後，重新整理也能讀取。
 
-開啟資產包會同時載入三者。編輯文字、時間軸或原詞後自動儲存，也可按頂端「儲存字幕」或 Ctrl+S；SRT 不存在時會建立，已存在時更新同一份檔案。純音訊資產包會於預覽區自動切換為音訊播放介面，產出完字幕後可直接匯出 `SRT` / `WebVTT` / `JSON`（隱藏燒錄與 AI 放大操作）。切換資產包前會先完成儲存，儲存失敗則保留目前工作區。包內不建立編輯紀錄 JSON。
+開啟資產包會同時載入三者。編輯文字、時間軸或原詞後自動儲存，也可按頂端「儲存字幕」或 Ctrl+S；SRT 不存在時會建立，已存在時更新同一份檔案。純音訊資產包會於預覽區自動切換為音訊播放介面，產出完字幕後可直接匯出 `SRT` / `OpenShot TXT` / `WebVTT` / `JSON`（隱藏燒錄與 AI 放大操作）。切換資產包前會先完成儲存，儲存失敗則保留目前工作區。包內不建立編輯紀錄 JSON。
 
 AI 結果套用前會核對工作區與內容，過期回覆不會覆寫新編輯。全文編輯以 `[#序號]` 保留每段的多行文字及空字幕；字幕框內支援 `<br>` / `<br/>` 或 `Shift+Enter` 換行，貼上每行一段的純文字時，段數須與時間軸一致。無效的字幕匯入會被拒絕，字型經暫存驗證成功後才替換。
 
@@ -166,14 +163,14 @@ python3 src/cli/main.py serve --host 0.0.0.0 --port 8000
 CLI 適合批次自動化、伺服器排程與無頭（Headless）作業。輸入 `python3 src/cli/main.py --help` 可查看總覽。
 
 #### 🔹 (1) `luna` / `align`：有稿歌詞雙軌對齊管線
-結合 Whisper 聲學逐詞特徵與原歌詞文字，經決策大腦裁決產出 7 項標準交付檔：
+結合 Whisper 聲學逐詞特徵與原歌詞文字，經決策大腦裁決產出 6 項標準交付檔：
 ```bash
 python3 src/cli/main.py luna <媒體檔案> <原稿.txt> [OPTIONS]
 ```
 
-所有辨識與對齊入口固定使用**原生 Whisper `large-v3-turbo`**：有詞、無詞、鎖定時間軸填字、CLI 與 API 均採同一載入器。介面不提供模型選單，CLI 不再接受 `--model`／`-m`／`--compute-type`，API 不再提供 `model` 欄位。CUDA 無法使用時只切換到 CPU，模型與後端維持相同。健康檢查與辨識紀錄會回報固定模型及後端。
+所有辨識與對齊入口固定使用**原生 Whisper `large-v3-turbo`**：有詞、無詞、CLI 與 API 均採同一單例載入器（不重複載入模型佔用顯存）。介面不提供模型選單，CLI 不再接受 `--model`／`-m`／`--compute-type`，API 不再提供 `model` 欄位。CUDA 無法使用時只切換到 CPU，模型與後端維持相同。健康檢查與辨識紀錄會回報固定模型、後端及硬體能力（CUDA / NVENC / CSS 無頭瀏覽器）。
 
-固定模型由 `WHISPER_MODEL` 定義；安裝腳本只預載這個原生模型。Faster-Whisper 套件只用於 Silero VAD 聲學斷點分析，不再執行語音辨識。舊 `scripts/pipeline_luna.py` 現在轉呼叫正式 `luna` CLI，需提供影音與 TXT 路徑；重複實驗流程 `scripts/test_pipeline_inputclip.py` 已移除。關鍵字命中的疑似幻覺會保留並標記待複核。
+固定模型由 `WHISPER_MODEL` 定義；安裝腳本只預載這個原生模型。Faster-Whisper 套件僅供 Silero VAD 聲學斷點分析之相依套件使用，不再執行語音辨識。舊 `scripts/pipeline_luna.py` 現在轉呼叫正式 `luna` CLI，需提供影音與 TXT 路徑。關鍵字命中的疑似幻覺會保留並標記待複核。
 
 中文原詞先經繁簡正規化與整串拼音比對，映射回 Whisper 逐詞時間；詞內字元共用完整詞時間窗。映射有效時作為主時間，缺少有效映射才保留強制對齊候選並標記待確認。LLM 每批審核最多 4 句，`decision_batches.json` 保存證據、回覆及漏答編號；未提供的句號或候選不會套用。原稿文字與 0.16 秒閱讀延長規則保留。
 
@@ -204,8 +201,8 @@ python3 src/cli/main.py pipeline <媒體檔案> [OPTIONS]
 | `-p`, `--pause` | `-p` | `0.45` | 視為句子斷點的語音停頓時間 (秒) |
 | `-o`, `--output-dir`| `-o` | 來源同目錄 | 輸出目錄 |
 
-#### 🔹 (3) `burn`：影音硬字幕燒錄壓制 (Hardsub)
-以 GPU (NVENC) 或 CPU 將 ASS/SRT 字幕永久燒錄進 MP4 影片中：
+#### 🔹 (3) `burn`：影音硬字幕燒錄壓制 (CSS Transparent Overlay Hardsub)
+透過無頭瀏覽器將 CSS 樣式精準渲染為透明影格序列，並以 GPU (NVENC) 或 CPU 將字幕永久燒錄進 MP4 影片中（相容音軌自動 `-c:a copy` 直通不重壓）：
 ```bash
 python3 src/cli/main.py burn <影片路徑> <字幕路徑> [OPTIONS]
 ```
@@ -256,6 +253,7 @@ python3 src/cli/main.py proofread <字幕檔.srt/.json> [OPTIONS]
 | :--- | :--- | :--- | :--- |
 | `input_file` | (必填) | - | 來源字幕檔案 (.srt, .json 或影音檔) |
 | `-b`, `--batch-size` | `-b` | `8` | 每次批次送入 LLM 校對的字幕句數 |
+| `-d`, `--device` | `-d` | `auto` | 運算裝置 (`auto`, `cuda`, `cpu`，當輸入為影音檔時套用於 Whisper 辨識) |
 | `--gpu-layers` | - | `-1` | GPU 卸載層數 (`-1` 為全層放入 VRAM 加速) |
 | `-o`, `--output`| `-o` | `<檔名>.proofread.srt` | 輸出校對後字幕檔路徑 |
 
@@ -279,7 +277,7 @@ python3 src/cli/main.py fonts remove jf-openhuninn-2.0.ttf
 - **抽音**：`python3 src/cli/main.py extract <影片> -o <音訊.wav> --sr 16000`
 - **獨立辨識**：`python3 src/cli/main.py transcribe <音訊.wav> -d cuda`
 - **獨立斷句**：`python3 src/cli/main.py segment <raw.json> -c 16 -p 0.45`
-- **格式轉換**：`python3 src/cli/main.py export <track.json> -f srt -o <out.srt>`
+- **格式轉換**：`python3 src/cli/main.py export <track.json> -f srt -o <out.srt>`（支援 `srt`、`openshot`、`vtt`、`json`）
 
 ---
 
@@ -368,15 +366,15 @@ print("輸出完成:", out_mp4)
 啟動 `serve` 服務後，外部系統可透過 HTTP REST 呼叫進行無人值守排程：
 - 完整的 Swagger 互動式文件：造訪 `http://localhost:8000/docs`
 - 常用 API 端點：
-  - `POST /api/ai/transcribe`：無稿辨識（接收媒體路徑與模型參數）
-  - `POST /api/ai/transcribe-segments`：分段語音辨識
-  - `POST /api/ai/align`：Luna 歌詞雙軌對齊（接收媒體與歌詞文字）
-  - `POST /api/ai/proofread`：LLM 字幕校對
+  - `GET /api/health`：系統狀態與硬體能力檢查（回傳 Whisper 固定模型、CUDA / NVENC 可用性與無頭 CSS 瀏覽器偵測結果）
+  - `POST /api/ai/transcribe`：統一 AI 辨識／對齊入口（留空歌詞原稿時執行 Whisper 無稿辨識＋斷句＋選用校對；提供歌詞原稿時自動走 Luna 雙軌歌詞對齊管線）
+  - `POST /api/ai/proofread`：LLM 字幕獨立校對
   - `POST /api/audio/breakpoints` / `POST /api/audio/snap-split`：聲學斷點與能量波谷吸附切分
   - `POST /api/style/parse-css`：CSS 樣式雙向解析
-  - `POST /api/burn`：背景壓制燒錄硬字幕（視訊限定）
+  - `POST /api/burn`：同步硬字幕燒錄（視訊限定）
+  - `POST /api/burn/start` / `GET /api/burn/task/{task_id}` / `POST /api/burn/task/{task_id}/cancel`：非同步硬字幕燒錄啟動、進度輪詢與中途取消
   - `DELETE /api/packages` / `DELETE /api/assets/{filename}`：刪除資產包或單一資產
-  - `POST /api/upscale/estimate` / `POST /api/upscale/start` / `POST /api/upscale/task/{task_id}/cancel`：AI 超解析度試算、執行與取消
+  - `POST /api/upscale/estimate` / `POST /api/upscale/start` / `GET /api/upscale/task/{task_id}` / `POST /api/upscale/task/{task_id}/cancel`：AI 超解析度試算、執行、狀態查詢與取消
 
 ### 4. 🧠 Antigravity Workspace Skill 整合
 本專案已在倉庫內建標準 Antigravity Agent Skill：
@@ -387,11 +385,12 @@ print("輸出完成:", out_mp4)
 
 ## 🧪 執行單元測試
 
-專案包含 Python 後端（聲學斷點、DTW 對齊、CSS 解析、Web-to-ASS 度量/中英直排與破損字型修復、純音訊流程、AI 放大等）與 Node.js 前端完整性測試集：
+專案包含 Python 後端（聲學斷點、Luna 管線、CSS 解析與純 CSS 無頭渲染壓制、音軌直通與編解碼、純音訊流程、AI 放大等）與 Node.js 前端完整性測試集：
 
 ```bash
 source .venv/bin/activate
 .venv/bin/pytest
+python3 tests/check_env.py
 node tests/editor_integrity.cjs
 node tests/frontend_security.cjs
 node tests/package_workflow.cjs
@@ -409,32 +408,32 @@ auto-subtitle/
 │   ├── api/                      # FastAPI 後端服務
 │   │   ├── asset_packages.py     # 本機資產包管理與清理
 │   │   ├── model_tasks.py        # GPU 模型任務互斥鎖 (ModelTaskLock)
-│   │   └── server.py             # API 路由與靜態檔案服務
+│   │   └── server.py             # API 路由、反向代理 Header 支援與靜態檔案服務
 │   ├── cli/                      # Typer CLI 命令列介面
 │   ├── core/                     # 核心邏輯
-│   │   ├── acoustic_analyzer.py  # 聲學斷點分析、能量波谷吸附、受控 Whisper
-│   │   ├── aligner.py            # Needleman-Wunsch + Sakoe-Chiba DTW 強制對齊
+│   │   ├── acoustic_analyzer.py  # Silero VAD 聲學斷點分析與能量波谷吸附
 │   │   ├── audio_extractor.py    # FFmpeg 抽音
 │   │   ├── css_parser.py         # CSS 解析 (支援 opacity, paint-order, stroke)
+│   │   ├── css_renderer.py       # Playwright / Chrome CDP 無頭 CSS 透明影格渲染引擎
 │   │   ├── env_utils.py          # .env 與環境變數熱重載工具
-│   │   ├── exporter.py           # SRT / VTT / JSON / ASS (含 em_ratio、旋轉、避頭尾)
-│   │   ├── font_manager.py       # 字型安裝、管理與破損字型自動修復
+│   │   ├── exporter.py           # SRT / OpenShot TXT / VTT / JSON 匯出與解析
+│   │   ├── font_manager.py       # 字型安裝與管理 (OpenType/TrueType)
 │   │   ├── luna_pipeline.py      # Whisper ＋ Luna 雙軌驗證管線核心
 │   │   ├── lyric_reference.py    # 歌詞參考載入與切分工具
 │   │   ├── proofreader.py        # llama-cpp-python Qwen2.5 與雲端 API 校對引擎
 │   │   ├── segmenter.py          # 字幕斷句與分段工具
-│   │   ├── transcriber.py        # 原生 Whisper large-v3-turbo 辨識與 CUDA 預檢
-│   │   ├── video_burner.py       # NVENC / libx264 影音壓制燒錄
+│   │   ├── transcriber.py        # 原生 Whisper large-v3-turbo 單例辨識與 CUDA 預檢
+│   │   ├── video_burner.py       # CSS 透明覆蓋 NVENC / libx264 壓制與音軌直通 Mux
 │   │   └── video_upscaler.py     # Real-ESRGAN AI 視訊超解析度放大
 │   ├── schemas/                  # Pydantic 資料模型 (SubtitleTrack, SubtitleStyle 等)
 │   └── web/                      # 前端工作台 (Tailwind CSS, Vanilla JS, HTML 模板)
-│       ├── static/app.js         # 前端應用邏輯 (含雙向 CSS、純音訊/多行編輯、Modal)
+│       ├── static/app.js         # 前端應用邏輯 (含雙向 CSS、30步 Undo、非同步燒錄輪詢)
 │       └── templates/index.html  # 4-Tab 整合式工作台 UI
 ├── scripts/                      # 輔助與管線腳本
-├── install.sh                    # 一鍵環境安裝與地端模型下載腳本
+├── install.sh                    # 一鍵環境安裝、Playwright Chromium 與地端模型下載腳本
 ├── run_web.bat                   # Windows 一鍵獨立背景啟動腳本 (透過 WSL2)
 ├── requirements.txt              # Python 相依清單
-└── tests/                        # pytest 與 Node.js (.cjs) 整合測試集
+└── tests/                        # pytest、環境檢查與 Node.js (.cjs) 整合測試集
 ```
 
 ---

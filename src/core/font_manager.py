@@ -263,37 +263,8 @@ def _read_font_tables(data: bytes, font_offset: int) -> Dict[bytes, int]:
     return tables
 
 
-def get_font_em_ratio_from_file(font_path: Path, index: int = 0) -> Optional[float]:
-    """
-    計算 libass 字級換算比例 = (OS/2.usWinAscent + usWinDescent) / head.unitsPerEm。
-
-    libass (與 VSFilter 相容) 會把 ASS 的 Fontsize 視為「字型 Win 行高」而非 em 方框，
-    但瀏覽器 CSS font-size 指的是 em 方框。因此同樣數字下，libass 實際字面會縮小為 1/ratio。
-    以 CSS px * ratio 作為 ASS Fontsize，即可讓燒錄字面與網頁預覽一致。
-    """
-    try:
-        data = font_path.read_bytes()
-        offset = 0
-        if data[:4] == b"ttcf":
-            num_fonts = struct.unpack(">I", data[8:12])[0]
-            idx = index if 0 <= index < num_fonts else 0
-            offset = struct.unpack(">I", data[12 + idx * 4:16 + idx * 4])[0]
-        tables = _read_font_tables(data, offset)
-        if b"head" not in tables or b"OS/2" not in tables:
-            return None
-        upem = struct.unpack(">H", data[tables[b"head"] + 18:tables[b"head"] + 20])[0]
-        os2 = tables[b"OS/2"]
-        win_ascent, win_descent = struct.unpack(">HH", data[os2 + 74:os2 + 78])
-        if upem <= 0 or (win_ascent + win_descent) <= 0:
-            return None
-        return (win_ascent + win_descent) / float(upem)
-    except Exception as e:
-        logger.debug(f"字型度量解析失敗 ({font_path}): {e}")
-        return None
-
-
 def resolve_font_file(font_name: str) -> Optional[tuple]:
-    """依 Family 名稱找出 libass 實際會使用的字型檔 (優先專案 fonts/，其次 fc-match)"""
+    """依 Family 名稱找出實際會使用的字型檔 (優先專案 fonts/，其次 fc-match)"""
     if FONTS_DIR.exists():
         for p in FONTS_DIR.iterdir():
             if p.is_file() and p.suffix.lower() in ALLOWED_FONT_EXTS:
@@ -315,17 +286,6 @@ def resolve_font_file(font_name: str) -> Optional[tuple]:
     except Exception:
         pass
     return None
-
-
-def get_font_em_ratio(font_name: str) -> float:
-    """取得 Family 對應的 libass 字級換算比例 (找不到時回傳 1.0)"""
-    ratio = 1.0
-    resolved = resolve_font_file(font_name)
-    if resolved:
-        r = get_font_em_ratio_from_file(resolved[0], resolved[1])
-        if r and 0.5 < r < 3.0:
-            ratio = r
-    return ratio
 
 
 _FONT_ADVANCE_CACHE: Dict[str, Dict[str, float]] = {}

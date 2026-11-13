@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import shutil
+import time
 import uuid
 import ipaddress
 import tempfile
@@ -22,14 +23,13 @@ from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, SubtitleStyle
 from ..core.audio_extractor import extract_audio, get_media_duration
 from ..core.transcriber import WHISPER_MODEL, transcribe_audio
 from ..core.segmenter import build_subtitle_track
-from ..core.aligner import align_script_to_audio
 from ..core.luna_pipeline import run_luna_pipeline, LunaPipeline
 from ..core.proofreader import SubtitleProofreader
 from ..core.acoustic_analyzer import (
     analyze_audio_breakpoints,
     snap_time_to_valley,
-    transcribe_on_locked_timeline
 )
+from ..core.css_renderer import detect_headless_browser
 from ..core.video_burner import burn_subtitles_to_video, get_video_info, check_nvenc_support
 from ..core.video_upscaler import (
     upscale_video,
@@ -69,6 +69,9 @@ for d in (UPLOADS_DIR, OUTPUT_DIR, TEMP_DIR, STATIC_DIR, TEMPLATES_DIR, PRESETS_
 
 try:
     clean_stale_upscale_temp_dirs()
+    for _stale in TEMP_DIR.glob("autosub_css_*"):
+        if _stale.is_dir():
+            shutil.rmtree(_stale, ignore_errors=True)
 except Exception:
     pass
 
@@ -84,7 +87,10 @@ async def disable_static_html_cache(request, call_next):
         if host not in [h.strip() for h in allowed_hosts]:
             return JSONResponse(status_code=403, content={"detail": "請使用 localhost、伺服器 IP 或設定 AUTOSUBTITLE_ALLOWED_HOSTS"})
     origin = request.headers.get("origin")
-    if (origin and origin.rstrip("/") != f"{request.url.scheme}://{request.url.netloc}") or request.headers.get("sec-fetch-site") == "cross-site":
+    expected_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip() or request.url.scheme
+    expected_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip() or request.url.netloc
+    expected_origin = f"{expected_proto}://{expected_host}"
+    if (origin and origin.rstrip("/") != expected_origin) or request.headers.get("sec-fetch-site") == "cross-site":
         return JSONResponse(status_code=403, content={"detail": "不允許跨來源存取"})
     response = await call_next(request)
     path = request.url.path
@@ -127,25 +133,6 @@ class BurnVideoRequest(BaseModel):
     subtitle_path: Optional[str] = None
     style: Optional[SubtitleStyle] = None
     css: Optional[str] = None
-    render_mode: Literal["css", "ass"] = "css"
-
-
-class UpscaleVideoRequest(BaseModel):
-    package_path: Optional[str] = None
-    media_path: Optional[str] = None
-    scale: int = 2
-    model_name: str = "realesr-animevideov3"
-
-
-class AlignRequest(BaseModel):
-    media_path: str
-    script_text: Optional[str] = None
-    script_path: Optional[str] = None
-    llm_provider: Literal["local", "api"] = "local"
-    device: str = "cuda"
-    prompt: Optional[str] = "繁體中文"
-    auto_proofread: bool = True
-    script_mode: Literal["reference", "transcript"] = "transcript"
 
 
 class ProofreadRequest(BaseModel):
@@ -171,14 +158,11 @@ class SnapSplitRequest(BaseModel):
     time_sec: float
 
 
-class TranscribeLockedRequest(BaseModel):
-    media_path: str
-    track: SubtitleTrack
-    device: str = "cuda"
-    prompt: str = "繁體中文"
-    only_empty: bool = False
-    auto_proofread: bool = False
-    llm_provider: Literal["local", "api"] = "local"
+class UpscaleVideoRequest(BaseModel):
+    package_path: Optional[str] = None
+    media_path: Optional[str] = None
+    scale: int = 2
+    model_name: str = "realesr-animevideov3"
 
 
 # ---------------- API Endpoints ----------------
@@ -190,9 +174,49 @@ async def serve_index():
     return index_file.read_text(encoding="utf-8")
 
 
+_HW_CAPS_CACHE: Optional[Dict[str, Any]] = None
+
+
+def _get_hw_capabilities() -> Dict[str, Any]:
+    global _HW_CAPS_CACHE
+    if _HW_CAPS_CACHE is not None:
+        return _HW_CAPS_CACHE
+    cuda_available = False
+    cuda_device_name = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cuda_available = True
+            cuda_device_name = torch.cuda.get_device_name(0)
+    except Exception:
+        pass
+    nvenc = False
+    try:
+        nvenc = check_nvenc_support()
+    except Exception:
+        pass
+    browser = None
+    try:
+        browser = detect_headless_browser()
+    except Exception:
+        pass
+    _HW_CAPS_CACHE = {
+        "cuda_available": cuda_available,
+        "cuda_device_name": cuda_device_name,
+        "nvenc_available": nvenc,
+        "css_browser": browser[0] if browser else None,
+    }
+    return _HW_CAPS_CACHE
+
+
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "app": "Auto Subtitle Studio", "whisper": {"model": WHISPER_MODEL, "backend": "native"}}
+    return {
+        "status": "ok",
+        "app": "Auto Subtitle Studio",
+        "whisper": {"model": WHISPER_MODEL, "backend": "native"},
+        "hardware": _get_hw_capabilities(),
+    }
 
 
 def detect_file_type(p: Path) -> str:
@@ -549,29 +573,6 @@ def snap_split_endpoint(req: SnapSplitRequest):
         return {"status": "success", "snapped_time": round(req.time_sec, 2)}
 
 
-@app.post("/api/ai/transcribe-segments")
-@model_task
-def transcribe_locked_segments_endpoint(req: TranscribeLockedRequest):
-    """【階段三：依鎖定時間軸填字】嚴格依照使用者已確認的每個 #index [start, end] 執行受控 Whisper 填字"""
-    p = _resolve_media_path(req.media_path)
-    try:
-        report = {}
-        updated_track = transcribe_on_locked_timeline(
-            media_path=str(p),
-            track=req.track,
-            device=req.device,
-            prompt=req.prompt,
-            only_empty=req.only_empty,
-            auto_proofread=req.auto_proofread,
-            llm_provider=req.llm_provider,
-            proofread_report=report,
-        )
-        return {"status": "success", "track": updated_track.model_dump(), "proofread_warning": report.get("warning"), "proofread_report": report or None}
-    except Exception as e:
-        logger.error(f"依鎖定時間軸辨識失敗: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/ai/transcribe")
 @model_task
 def transcribe_endpoint(
@@ -592,16 +593,13 @@ def transcribe_endpoint(
     """
     p = _resolve_media_path(media_path)
     job_id = uuid.uuid4().hex
-
-    # 無論來源是影片或音檔 (mp4 / wav / mp3 / m4a / flac...)，統一抽取轉成 16kHz 單聲道 WAV 至 TEMP_DIR，
-    # 確保 Whisper 與局部切音對齊準確且不污染 uploads 資產庫
     wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
-    extract_res = extract_audio(str(p), str(wav_path))
-    audio_file = extract_res["audio_path"]
-
     clean_script = (script_text or "").strip()
 
     try:
+        # 無論來源是影片或音檔 (mp4 / wav / mp3 / m4a / flac...)，統一抽取轉成 16kHz 單聲道 WAV 至 TEMP_DIR
+        extract_res = extract_audio(str(p), str(wav_path))
+        audio_file = extract_res["audio_path"]
         if clean_script:
             # 【有稿模式：呼叫完整 Luna 強制對齊管線】
             logger.info(f"啟動完整 Luna 歌詞字幕對齊管線 (LLM Provider: {llm_provider})...")
@@ -671,51 +669,6 @@ def transcribe_endpoint(
         wav_path.unlink(missing_ok=True)
 
 
-@app.post("/api/ai/align")
-@model_task
-def align_endpoint(req: AlignRequest):
-    """【有稿模式】利用完整 Luna Pipeline 進行原稿強制對齊與時間軸審核"""
-    p = _resolve_media_path(req.media_path)
-    job_id = uuid.uuid4().hex
-
-    job_dir = OUTPUT_DIR / job_id
-    job_dir.mkdir()
-    script_source = None
-    if req.script_text:
-        script_file = job_dir / "script.txt"
-        script_file.write_text(req.script_text, encoding="utf-8")
-        script_source = str(script_file)
-    if not script_source and req.script_path:
-        sp = _resolve_media_path(req.script_path)
-        script_source = str(sp)
-
-    if not script_source:
-        raise HTTPException(status_code=400, detail="請提供原稿文字內容或原稿檔案路徑")
-
-    wav_path = TEMP_DIR / f"{job_id}_extracted.wav"
-    try:
-        extract_res = extract_audio(str(p), str(wav_path))
-        audio_file = extract_res["audio_path"]
-        track = run_luna_pipeline(
-            audio_path=audio_file,
-            lyrics_source=script_source,
-            output_dir=str(job_dir),
-            llm_provider=req.llm_provider or "local",
-            device=req.device,
-            prompt=req.prompt,
-            llm_audit=req.auto_proofread,
-            script_mode=req.script_mode,
-        )
-        manifest_path = job_dir / "run_manifest.json"
-        warning = json.loads(manifest_path.read_text(encoding="utf-8")).get("audit_warning") if manifest_path.exists() else None
-        return {"status": "success", "track": track.model_dump(), "mode": "luna_pipeline", "proofread_warning": warning}
-    except Exception as e:
-        logger.error(f"對齊失敗: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        wav_path.unlink(missing_ok=True)
-
-
 @app.post("/api/ai/proofread")
 @model_task
 def proofread_endpoint(req: ProofreadRequest):
@@ -738,12 +691,73 @@ def proofread_endpoint(req: ProofreadRequest):
             proofreader.close()
 
 
-@app.post("/api/burn")
-@model_task
-def burn_endpoint(req: BurnVideoRequest):
-    """【Hardcopy 壓制】將字幕硬燒錄進影片中"""
-    v_path = _resolve_media_path(req.video_path)
+class BurnTask:
+    """追蹤非同步字幕壓制任務的進度、結果與可中斷 subprocess。"""
 
+    def __init__(self, task_id: str, video_name: str):
+        self.task_id = task_id
+        self.video_name = video_name
+        self.stage = "starting"
+        self.percent = 0.0
+        self.message = "準備壓制影片..."
+        self.error: Optional[str] = None
+        self.result: Optional[dict] = None
+        self.cancel_requested = False
+        self.current_process = None
+
+    def cancel(self):
+        self.cancel_requested = True
+        proc = self.current_process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    def to_dict(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "video_name": self.video_name,
+            "stage": self.stage,
+            "percent": round(float(self.percent or 0.0), 1),
+            "message": self.message,
+            "error": self.error,
+            "result": self.result,
+            "cancel_requested": self.cancel_requested,
+        }
+
+
+class BurnTaskManager:
+    """管理非同步壓制任務生命週期並自動清理舊紀錄。"""
+
+    def __init__(self, max_finished: int = 50):
+        self._tasks: dict[str, BurnTask] = {}
+        self._lock = threading.Lock()
+        self._max_finished = max_finished
+
+    def create_task(self, task_id: str, video_name: str) -> BurnTask:
+        with self._lock:
+            done_ids = [
+                tid for tid, t in self._tasks.items()
+                if t.stage in {"completed", "failed", "cancelled"}
+            ]
+            while len(done_ids) >= self._max_finished:
+                self._tasks.pop(done_ids.pop(0), None)
+            task = BurnTask(task_id, video_name)
+            self._tasks[task_id] = task
+            return task
+
+    def get_task(self, task_id: str) -> Optional[BurnTask]:
+        with self._lock:
+            return self._tasks.get(task_id)
+
+
+burn_manager = BurnTaskManager()
+
+
+def _resolve_burn_inputs(req: BurnVideoRequest):
+    """解析壓制請求的影片路徑、字幕來源、樣式與輸出檔案位置。"""
+    v_path = _resolve_media_path(req.video_path)
     if req.css:
         style = SubtitleStyle.from_css(req.css)
     elif req.style:
@@ -760,6 +774,14 @@ def burn_endpoint(req: BurnVideoRequest):
 
     out_name = f"{v_path.stem}_burned_{uuid.uuid4().hex}.mp4"
     out_file = OUTPUT_DIR / out_name
+    return v_path, sub_source, style, out_name, out_file
+
+
+@app.post("/api/burn")
+@model_task
+def burn_endpoint(req: BurnVideoRequest):
+    """【Hardcopy 壓制 (CSS 渲染)】將字幕硬燒錄進影片中"""
+    v_path, sub_source, style, out_name, out_file = _resolve_burn_inputs(req)
 
     try:
         out_path = burn_subtitles_to_video(
@@ -768,20 +790,117 @@ def burn_endpoint(req: BurnVideoRequest):
             output_path=str(out_file),
             style=style,
             use_gpu=True,
-            render_mode=req.render_mode,
         )
         return {
             "status": "success",
             "filename": out_name,
             "url": f"/output/{out_name}",
             "absolute_path": out_path,
-            "render_mode": req.render_mode,
         }
     except ValueError as e:
+        out_file.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        out_file.unlink(missing_ok=True)
         logger.error(f"壓制失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/burn/start")
+def start_burn_endpoint(req: BurnVideoRequest):
+    """【啟動非同步字幕壓制任務】支援即時進度查詢與中途取消。"""
+    if not model_task_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="模型或壓制任務執行中，請稍候再試。")
+
+    try:
+        v_path, sub_source, style, out_name, out_file = _resolve_burn_inputs(req)
+        task_id = f"burn_{uuid.uuid4().hex[:8]}"
+        task = burn_manager.create_task(task_id, v_path.name)
+    except Exception:
+        model_task_lock.release()
+        raise
+
+    def worker():
+        try:
+            def progress_cb(data: dict):
+                task.stage = data.get("stage", task.stage)
+                task.percent = data.get("percent", task.percent)
+                task.message = data.get("message", task.message)
+
+            def cancel_cb() -> bool:
+                return task.cancel_requested
+
+            def reg_proc(proc):
+                task.current_process = proc
+
+            out_path = burn_subtitles_to_video(
+                video_path=str(v_path),
+                subtitles_source=sub_source,
+                output_path=str(out_file),
+                style=style,
+                use_gpu=True,
+                progress_callback=progress_cb,
+                cancel_check=cancel_cb,
+                register_process=reg_proc,
+            )
+
+            if task.cancel_requested:
+                task.stage = "cancelled"
+                task.message = "壓制任務已由使用者手動中止"
+                out_file.unlink(missing_ok=True)
+                return
+
+            task.stage = "completed"
+            task.percent = 100.0
+            task.message = f"影片壓制完成：{out_name}"
+            task.result = {
+                "status": "success",
+                "filename": out_name,
+                "url": f"/output/{out_name}",
+                "absolute_path": out_path,
+            }
+        except InterruptedError:
+            logger.info(f"壓制任務 {task_id} 已手動中止")
+            task.stage = "cancelled"
+            task.message = "壓制任務已手動中止"
+            out_file.unlink(missing_ok=True)
+        except Exception as e:
+            logger.error(f"非同步壓制任務 {task_id} 失敗: {e}", exc_info=True)
+            task.stage = "failed"
+            task.error = str(e)
+            task.message = f"壓制失敗: {str(e)}"
+            out_file.unlink(missing_ok=True)
+        finally:
+            try:
+                model_task_lock.release()
+            except RuntimeError:
+                pass
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {
+        "status": "started",
+        "task_id": task_id,
+        "video_name": v_path.name,
+    }
+
+
+@app.get("/api/burn/task/{task_id}")
+def get_burn_task_endpoint(task_id: str):
+    """查詢非同步壓制任務的當前進度。"""
+    task = burn_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到指定的壓制任務")
+    return task.to_dict()
+
+
+@app.post("/api/burn/task/{task_id}/cancel")
+def cancel_burn_task_endpoint(task_id: str):
+    """中途手動中止非同步壓制任務。"""
+    task = burn_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到指定的壓制任務")
+    task.cancel()
+    return {"status": "cancelling", "task_id": task_id}
 
 
 @app.get("/api/upscale/status")
@@ -860,6 +979,33 @@ def estimate_upscale_endpoint(req: UpscaleVideoRequest):
     }
 
 
+def _prepare_upscale_package(req: UpscaleVideoRequest):
+    """計算保留資產目錄階層的放大目標資料夾與輸出媒體路徑。"""
+    target_media, source_srt, source_script, source_pkg_dir = _resolve_upscale_target(req)
+    if source_pkg_dir:
+        new_pkg_dir = source_pkg_dir.parent / f"{source_pkg_dir.name}_{req.scale}x"
+    else:
+        new_pkg_dir = UPLOADS_DIR / f"{target_media.stem}_{req.scale}x"
+    new_pkg_name = new_pkg_dir.relative_to(UPLOADS_DIR).as_posix()
+    existed_before = new_pkg_dir.exists()
+    new_pkg_dir.mkdir(parents=True, exist_ok=True)
+    out_media_name = f"{target_media.stem}_{req.scale}x{target_media.suffix}"
+    out_media_path = new_pkg_dir / out_media_name
+    return target_media, source_srt, source_script, new_pkg_name, new_pkg_dir, existed_before, out_media_path
+
+
+def _cleanup_failed_upscale_output(out_media_path: Path, new_pkg_dir: Path, existed_before: bool):
+    """清除失敗或中斷時殘留的輸出檔與新建立的空資料夾。"""
+    if out_media_path.exists():
+        out_media_path.unlink(missing_ok=True)
+    if not existed_before and new_pkg_dir.exists():
+        try:
+            if not any(new_pkg_dir.iterdir()):
+                new_pkg_dir.rmdir()
+        except Exception:
+            pass
+
+
 @app.post("/api/upscale/start")
 def start_upscale_endpoint(req: UpscaleVideoRequest):
     """【啟動非同步 AI 放大任務】回傳 task_id 以供前端即時輪詢進度與支援中途停止"""
@@ -867,14 +1013,7 @@ def start_upscale_endpoint(req: UpscaleVideoRequest):
         raise HTTPException(status_code=409, detail="模型或放大任務執行中，請稍候再試。")
 
     try:
-        target_media, source_srt, source_script, source_pkg_dir = _resolve_upscale_target(req)
-        base_name = source_pkg_dir.name if source_pkg_dir else target_media.stem
-        new_pkg_name = f"{base_name}_{req.scale}x"
-        new_pkg_dir = UPLOADS_DIR / new_pkg_name
-        new_pkg_dir.mkdir(parents=True, exist_ok=True)
-
-        out_media_name = f"{target_media.stem}_{req.scale}x{target_media.suffix}"
-        out_media_path = new_pkg_dir / out_media_name
+        target_media, source_srt, source_script, new_pkg_name, new_pkg_dir, existed_before, out_media_path = _prepare_upscale_package(req)
 
         info = get_video_stream_info(str(target_media))
         total_frames = info["nb_frames"]
@@ -920,8 +1059,7 @@ def start_upscale_endpoint(req: UpscaleVideoRequest):
             if task.cancel_requested:
                 task.stage = "cancelled"
                 task.message = "任務已由使用者手動中止"
-                if out_media_path.exists():
-                    out_media_path.unlink(missing_ok=True)
+                _cleanup_failed_upscale_output(out_media_path, new_pkg_dir, existed_before)
                 return
 
             if source_srt and source_srt.exists():
@@ -949,15 +1087,13 @@ def start_upscale_endpoint(req: UpscaleVideoRequest):
             logger.info(f"AI 放大任務 {task_id} 已手動中止")
             task.stage = "cancelled"
             task.message = "任務已手動中止，暫存檔案已自動清理。"
-            if out_media_path.exists():
-                out_media_path.unlink(missing_ok=True)
+            _cleanup_failed_upscale_output(out_media_path, new_pkg_dir, existed_before)
         except Exception as e:
             logger.error(f"AI 放大任務 {task_id} 失敗: {e}", exc_info=True)
             task.stage = "failed"
             task.error = str(e)
             task.message = f"AI 畫質放大失敗: {str(e)}"
-            if out_media_path.exists():
-                out_media_path.unlink(missing_ok=True)
+            _cleanup_failed_upscale_output(out_media_path, new_pkg_dir, existed_before)
         finally:
             try:
                 model_task_lock.release()
@@ -1001,15 +1137,7 @@ def upscale_video_endpoint(req: UpscaleVideoRequest):
     【資產 AI 畫質超解析放大 (同步阻塞端點)】
     以 Real-ESRGAN Compact 輕量模型放大影片，並自動建立/衍生高畫質資產包（同步繼承既有字幕與原稿）
     """
-    target_media, source_srt, source_script, source_pkg_dir = _resolve_upscale_target(req)
-
-    base_name = source_pkg_dir.name if source_pkg_dir else target_media.stem
-    new_pkg_name = f"{base_name}_{req.scale}x"
-    new_pkg_dir = UPLOADS_DIR / new_pkg_name
-    new_pkg_dir.mkdir(parents=True, exist_ok=True)
-
-    out_media_name = f"{target_media.stem}_{req.scale}x{target_media.suffix}"
-    out_media_path = new_pkg_dir / out_media_name
+    target_media, source_srt, source_script, new_pkg_name, new_pkg_dir, existed_before, out_media_path = _prepare_upscale_package(req)
 
     logger.info(f"開始執行 AI 超解析放大: {target_media} ➔ {out_media_path} ({req.scale}x, {req.model_name})")
 
@@ -1042,6 +1170,5 @@ def upscale_video_endpoint(req: UpscaleVideoRequest):
         }
     except Exception as e:
         logger.error(f"AI 放大失敗: {e}", exc_info=True)
-        if out_media_path.exists():
-            out_media_path.unlink(missing_ok=True)
+        _cleanup_failed_upscale_output(out_media_path, new_pkg_dir, existed_before)
         raise HTTPException(status_code=500, detail=f"AI 畫質放大失敗: {str(e)}")

@@ -19,9 +19,10 @@ preload_cuda_libs()
 
 import stable_whisper
 from .transcriber import WHISPER_MODEL, transcribe_audio, load_whisper_model, unload_whisper_model
+from .audio_extractor import get_media_duration
 from .proofreader import SubtitleProofreader, _extract_json_payload
 from .lyric_reference import build_lyric_occurrences
-from .exporter import to_srt, to_vtt, to_ass, save_file, parse_srt_content
+from .exporter import to_srt, to_vtt, save_file, parse_srt_content
 from ..schemas.subtitle import SubtitleTrack, SubtitleSegment, WordItem
 
 HALLUCINATION_PATTERNS = [
@@ -233,6 +234,7 @@ class LunaPipeline:
         self.corrections: List[Dict[str, Any]] = []
         self.reviews: List[Dict[str, Any]] = []
         self.final_track: Optional[SubtitleTrack] = None
+        self._shared_whisper_model: Optional[Any] = None
         self.start_perf_time = time.time()
 
     def _notify(self, step: int, total: int, msg: str):
@@ -272,7 +274,11 @@ class LunaPipeline:
 
         cleaned_lines = []
         for line in raw_lyrics_text.splitlines():
-            l = re.sub(r"\[.*?\]|\(.*?\)", "", line).strip()
+            # 僅移除 LRC 時間標籤與段落結構標記 ([00:12.34], [Chorus], [副歌], (作詞/作曲...) 等)，保留真實括號歌詞
+            l = re.sub(r"\[\s*\d{1,2}:\d{2}(?:[.:]\d+)?\s*\]", "", line)
+            l = re.sub(r"^\s*\[(?:intro|outro|verse|pre-?chorus|chorus|hook|bridge|interlude|前奏|主歌|副歌|橋段|間奏|尾奏)[^\]]*\]\s*$", "", l, flags=re.IGNORECASE)
+            l = re.sub(r"^\s*[\[(](?:作詞|作曲|編曲|演唱|和聲)[:：].*[\])]\s*$", "", l)
+            l = l.strip()
             if l:
                 cleaned_lines.append(l)
 
@@ -283,10 +289,17 @@ class LunaPipeline:
         self.reference_lines = cleaned_lines.copy()
         audio_hash = compute_sha256_file(self.audio_path)
 
-        cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path]
-        dur_str = subprocess.check_output(cmd).decode().strip()
-        self.audio_duration = float(dur_str)
+        dur = get_media_duration(self.audio_path)
+        if dur <= 0.0:
+            try:
+                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path]
+                dur_str = subprocess.check_output(cmd).decode().strip()
+                dur = float(dur_str) if dur_str and dur_str != "N/A" else 0.0
+            except Exception:
+                dur = 0.0
+        self.audio_duration = dur
 
+        resolved_cloud_model = os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or os.getenv("OPENAI_MODEL") or os.getenv("ANTHROPIC_MODEL") or "cloud_api"
         self.manifest = {
             "run_id": f"run_{int(time.time())}",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -303,7 +316,7 @@ class LunaPipeline:
             "alignment_tool": "stable-ts 2.19.1",
             "llm_provider": self.llm_provider,
             "llm_audit_enabled": self.llm_audit,
-            "llm_model": self.local_model_name if self.llm_provider == "local" else "gpt-6-luna",
+            "llm_model": self.local_model_name if self.llm_provider == "local" else resolved_cloud_model,
             "reading_extension_sec": 0.16,
             "anomaly_threshold_sec": 0.3
         }
@@ -313,11 +326,14 @@ class LunaPipeline:
         """【第 4 節】Whisper 全曲辨識 (初稿分段 + 逐詞時間戳)"""
         self._notify(2, 5, f"原生 Whisper ({WHISPER_MODEL}) 全曲聲學辨識與逐詞特徵提取中...")
         
-        self.raw_asr = transcribe_audio(
-            audio_path=self.audio_path,
-            device=self.device,
-            initial_prompt=self.prompt,
-        )
+        asr_kwargs: Dict[str, Any] = {
+            "audio_path": self.audio_path,
+            "device": self.device,
+            "initial_prompt": self.prompt,
+        }
+        if self._shared_whisper_model is not None:
+            asr_kwargs["model"] = self._shared_whisper_model
+        self.raw_asr = transcribe_audio(**asr_kwargs)
         self.manifest["whisper_device"] = self.raw_asr.get("device", self.device)
 
         raw_segs = self.raw_asr.get("raw_segments", [])
@@ -365,7 +381,8 @@ class LunaPipeline:
             return self.cue_evidence
         lyrics_text = "\n".join(self.org_lines)
 
-        st_model = load_whisper_model(self.device)
+        owns_model = self._shared_whisper_model is None
+        st_model = load_whisper_model(self.device) if owns_model else self._shared_whisper_model
         try:
             with tempfile.TemporaryDirectory(dir=self.output_dir, prefix="temp_slices_") as slice_directory:
                 align_res = st_model.align(
@@ -507,9 +524,10 @@ class LunaPipeline:
                 self.cue_evidence = evidence_list
                 return self.cue_evidence
         finally:
-            unload_whisper_model(st_model)
-            del st_model
-            release_gpu_memory()
+            if owns_model:
+                unload_whisper_model(st_model)
+                del st_model
+                release_gpu_memory()
 
     def step_5_and_6_luna_decision(self) -> List[SubtitleSegment]:
         """【第 7 & 9 節】呼叫決策大腦 (Local Qwen2.5 / Luna API) 審核異常句子並選定最佳邊界"""
@@ -738,7 +756,6 @@ class LunaPipeline:
 
         # 標準字幕與診斷檔案
         save_file(to_vtt(self.final_track), str(self.output_dir / "lyrics.vtt"))
-        save_file(to_ass(self.final_track), str(self.output_dir / "lyrics.ass"))
 
         # 1. lyrics.srt
         srt_content = to_srt(self.final_track)
@@ -813,14 +830,24 @@ class LunaPipeline:
         return self.final_track
 
     def run(self) -> SubtitleTrack:
-        """端到端執行完整管線並回傳 SubtitleTrack"""
+        """端到端執行完整管線並回傳 SubtitleTrack (全程復用單次載入的 Whisper 模型以節省顯存與時間)"""
+        shared_model = None
         try:
             self.step_1_prepare_and_manifest()
+            shared_model = load_whisper_model(self.device)
+            self._shared_whisper_model = shared_model
             self.step_2_whisper_full_asr()
             self.step_3_and_4_alignment_and_evidence()
+            self._shared_whisper_model = None
+            unload_whisper_model(shared_model)
+            shared_model = None
             final_segs = self.step_5_and_6_luna_decision()
             return self.step_7_display_rules_and_export(final_segs)
         finally:
+            self._shared_whisper_model = None
+            if shared_model is not None:
+                unload_whisper_model(shared_model)
+                del shared_model
             release_gpu_memory()
 
 

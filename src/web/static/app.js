@@ -118,26 +118,16 @@ const el = {
   upscalePreviewPkgName: document.getElementById("upscale-preview-pkg-name"),
   assetLibraryContainer: document.getElementById("asset-library-container"),
   btnRefreshAssets: document.getElementById("btn-refresh-assets"),
-  btnModeUnscripted: document.getElementById("btn-mode-unscripted"),
-  btnModeScripted: document.getElementById("btn-mode-scripted"),
-  panelAiUnscripted: document.getElementById("panel-ai-unscripted"),
-  panelAiScripted: document.getElementById("panel-ai-scripted"),
   checkAutoProofread: document.getElementById("check-auto-proofread"),
   selectLlmEngine: document.getElementById("select-llm-engine"),
   selectScriptMode: document.getElementById("select-script-mode"),
   alignScriptTextarea: document.getElementById("align-script-textarea"),
   btnAiTranscribe: document.getElementById("btn-ai-transcribe"),
-  btnAiAlign: document.getElementById("btn-ai-align"),
   btnAiProofread: document.getElementById("btn-ai-proofread"),
-  btnGotoBreakpointFlow: document.getElementById("btn-goto-breakpoint-flow"),
 
   // Tab 2: 斷點校對與字幕編輯
   selectBreakpointMode: document.getElementById("select-breakpoint-mode"),
   btnAnalyzeBreakpoints: document.getElementById("btn-analyze-breakpoints"),
-  checkLockedOnlyEmpty: document.getElementById("check-locked-only-empty"),
-  checkLockedProofread: document.getElementById("check-locked-proofread"),
-  selectLockedLlmEngine: document.getElementById("select-locked-llm-engine"),
-  btnTranscribeLocked: document.getElementById("btn-transcribe-locked"),
   btnSetInPoint: document.getElementById("btn-set-in-point"),
   btnSetOutPoint: document.getElementById("btn-set-out-point"),
   btnSplitAtPlayhead: document.getElementById("btn-split-at-playhead"),
@@ -146,6 +136,7 @@ const el = {
   btnSplitByPunct: document.getElementById("btn-split-by-punct"),
   btnOffsetMinus: document.getElementById("btn-offset-minus"),
   btnOffsetPlus: document.getElementById("btn-offset-plus"),
+  btnUndoSegments: document.getElementById("btn-undo-segments"),
   btnClearSubtitles: document.getElementById("btn-clear-subtitles"),
   segmentListContainer: document.getElementById("segment-list-container"),
   rawTextContainer: document.getElementById("raw-text-container"),
@@ -213,7 +204,6 @@ const el = {
   btnExportJson: document.getElementById("btn-export-json"),
   burnVideoCard: document.getElementById("burn-video-card"),
   audioOnlyExportNotice: document.getElementById("audio-only-export-notice"),
-  selectBurnRenderMode: document.getElementById("select-burn-render-mode"),
   btnStartBurn: document.getElementById("btn-start-burn"),
   burnResultBox: document.getElementById("burn-result-box"),
   linkDownloadBurned: document.getElementById("link-download-burned"),
@@ -676,6 +666,14 @@ function initPlayer() {
       document.exitFullscreen();
     }
   });
+  document.addEventListener("fullscreenchange", () => {
+    syncVideoStageDimensions();
+    applySubtitleStyleToOverlay();
+    setTimeout(() => {
+      syncVideoStageDimensions();
+      applySubtitleStyleToOverlay();
+    }, 50);
+  });
 }
 
 // 精準計算並同步 #video-stage 與 #main-video 寬高 (完美支援 9:16 直式與 16:9 橫式，防止 CSS max-h-full 爆框裁切)
@@ -697,12 +695,13 @@ function syncVideoStageDimensions() {
   const vidW = v.videoWidth || state.video.width || 1920;
   const vidH = v.videoHeight || state.video.height || 1080;
 
-  const availW = Math.max(180, vp.clientWidth - 24);
-  let availH = Math.max(180, vp.clientHeight - 24);
+  const isStageFullscreen = (document.fullscreenElement === stage);
+  const availW = isStageFullscreen ? Math.max(180, window.innerWidth) : Math.max(180, vp.clientWidth - 24);
+  let availH = isStageFullscreen ? Math.max(180, window.innerHeight) : Math.max(180, vp.clientHeight - 24);
 
-  if (state.previewScaleMode === "compact") {
+  if (!isStageFullscreen && state.previewScaleMode === "compact") {
     availH = Math.min(availH, 300);
-  } else if (state.previewScaleMode === "large") {
+  } else if (!isStageFullscreen && state.previewScaleMode === "large") {
     availH = Math.min(availH, 560);
   }
 
@@ -734,25 +733,44 @@ function applySubtitleStyleToOverlay() {
   if (!overlay || !container) return;
   const scale = getPreviewScale();
 
-  // 1. 盒模型對齊
-  if (s.vertical_align === "top") container.style.alignItems = "flex-start";
-  else if (s.vertical_align === "middle") container.style.alignItems = "center";
-  else container.style.alignItems = "flex-end";
+  // 1. 盒模型對齊或絕對百分比座標 (pos_x / pos_y)
+  const hasFreePos = s.pos_x !== null && s.pos_x !== undefined && s.pos_y !== null && s.pos_y !== undefined;
+  if (hasFreePos) {
+    container.style.alignItems = "center";
+    container.style.justifyContent = "center";
+    container.style.paddingTop = "0px";
+    container.style.paddingRight = "0px";
+    container.style.paddingBottom = "0px";
+    container.style.paddingLeft = "0px";
+    overlay.style.position = "absolute";
+    overlay.style.left = `${Number(s.pos_x)}%`;
+    overlay.style.top = `${Number(s.pos_y)}%`;
+    overlay.style.transform = "translate(-50%, -50%)";
+  } else {
+    overlay.style.position = "";
+    overlay.style.left = "";
+    overlay.style.top = "";
+    overlay.style.transform = "";
 
-  if (s.horizontal_align === "left") container.style.justifyContent = "flex-start";
-  else if (s.horizontal_align === "right") container.style.justifyContent = "flex-end";
-  else container.style.justifyContent = "center";
+    if (s.vertical_align === "top") container.style.alignItems = "flex-start";
+    else if (s.vertical_align === "middle") container.style.alignItems = "center";
+    else container.style.alignItems = "flex-end";
 
-  // 等比縮放內距 (Padding) 邊界，確保在任何解析度下與影片邊緣距離一致
-  const padTop = Math.round(s.padding_top * scale);
-  const padRight = Math.round(s.padding_right * scale);
-  const padBottom = Math.round(s.padding_bottom * scale);
-  const padLeft = Math.round(s.padding_left * scale);
+    if (s.horizontal_align === "left") container.style.justifyContent = "flex-start";
+    else if (s.horizontal_align === "right") container.style.justifyContent = "flex-end";
+    else container.style.justifyContent = "center";
 
-  container.style.paddingTop = `${padTop}px`;
-  container.style.paddingRight = `${padRight}px`;
-  container.style.paddingBottom = `${padBottom}px`;
-  container.style.paddingLeft = `${padLeft}px`;
+    // 等比縮放內距 (Padding) 邊界，確保在任何解析度下與影片邊緣距離一致
+    const padTop = Math.round(s.padding_top * scale);
+    const padRight = Math.round(s.padding_right * scale);
+    const padBottom = Math.round(s.padding_bottom * scale);
+    const padLeft = Math.round(s.padding_left * scale);
+
+    container.style.paddingTop = `${padTop}px`;
+    container.style.paddingRight = `${padRight}px`;
+    container.style.paddingBottom = `${padBottom}px`;
+    container.style.paddingLeft = `${padLeft}px`;
+  }
 
   // 2. 文字外觀與特效 (依據影片原生解析度等比縮放，支援亞像素平滑渲染)
   const fontSize = Math.max(6, Number((s.font_size * scale).toFixed(1)));
@@ -919,9 +937,19 @@ function renderOverlayText(text) {
   }
 }
 
+function getPackageStyleStorageKey(pkgPath) {
+  return pkgPath ? `autosub_style_pkg:${pkgPath}` : "autosub_style_v1";
+}
+
 function saveSessionToStorage() {
   try {
-    localStorage.setItem("autosub_style_v1", JSON.stringify(state.style));
+    if (typeof localStorage !== "undefined") {
+      const json = JSON.stringify(state.style);
+      localStorage.setItem("autosub_style_v1", json);
+      if (state.activePackage && state.activePackage.path) {
+        localStorage.setItem(getPackageStyleStorageKey(state.activePackage.path), json);
+      }
+    }
   } catch (error) {
     // Browser storage is optional; the SRT is saved on disk.
   }
@@ -1106,9 +1134,21 @@ async function openPackage(path) {
     state.autoPauseAt = null;
     el.video.pause();
     loadVideoAsset(data.package.media);
+    // 優先載入此資產包專屬樣式；若無則保留全域樣式偏好，避免開啟影片時被重置
+    try {
+      if (typeof localStorage !== "undefined") {
+        const pkgStyle = localStorage.getItem(`autosub_style_pkg:${data.package.path}`);
+        const fallbackStyle = localStorage.getItem("autosub_style_v1");
+        const rawStyle = pkgStyle || fallbackStyle;
+        if (rawStyle) {
+          Object.assign(state.style, JSON.parse(rawStyle));
+          state.styleCustomized = true;
+          if (typeof syncStateToControls === "function") syncStateToControls();
+          if (typeof applySubtitleStyleToOverlay === "function") applySubtitleStyleToOverlay();
+        }
+      }
+    } catch (error) {}
     el.alignScriptTextarea.value = data.script_text;
-    if (data.script_text && el.btnModeScripted) el.btnModeScripted.click();
-    if (!data.script_text && el.btnModeUnscripted) el.btnModeUnscripted.click();
     setSubtitleTrack(data.track);
     state.savedSubtitle = subtitleFingerprint();
     state.savedScript = data.script_text;
@@ -1359,6 +1399,12 @@ function initUniversalDragAndDrop() {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       saveActivePackage().catch(error => addLog(error.message, "error"));
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+      const tag = (event.target && event.target.tagName) ? event.target.tagName.toUpperCase() : "";
+      if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT" && !(event.target && event.target.isContentEditable)) {
+        event.preventDefault();
+        undoSegmentEdit();
+      }
     }
   });
 }
@@ -1384,183 +1430,108 @@ function canApplySubtitleResult(request) {
   return true;
 }
 
+async function runAiTranscribe() {
+  const media = state.video.path;
+  if (!media) {
+    addLog("請先在上方選擇或上傳影片後再執行產生字幕", "error");
+    return;
+  }
+
+  const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
+  const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
+  const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
+  const scriptMode = el.selectScriptMode ? el.selectScriptMode.value : "reference";
+
+  if (scriptText) {
+    const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
+    const auditDescription = autoProofread ? `決策大腦: ${brainName}` : "AI 審核已關閉，保留 Whisper 時間結果";
+    const modeName = scriptMode === "reference" ? "歌詞參考，可重複引用" : "完整逐句稿，固定順序";
+    addLog(`【AI 產生字幕】${modeName}（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (large-v3-turbo，原生)＋Luna 歌詞字幕管線 (${auditDescription})...`);
+  } else {
+    const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
+    addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (large-v3-turbo，原生) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
+  }
+
+  if (el.btnAiTranscribe) {
+    el.btnAiTranscribe.disabled = true;
+    el.btnAiTranscribe.textContent = scriptText
+      ? "⏳ 歌詞強制對齊與時間軸審核管線執行中..."
+      : (autoProofread ? "⏳ Whisper 語音辨識與錯字校對中..." : "⏳ Whisper 語音辨識中...");
+  }
+  if (typeof showBusyOverlay === "function") {
+    showBusyOverlay(scriptText
+      ? "歌詞強制對齊與時間軸審核中，請稍候..."
+      : "Whisper 語音辨識中，請稍候...");
+  }
+
+  const formData = new FormData();
+  formData.append("media_path", media);
+  formData.append("device", "cuda");
+  formData.append("prompt", "繁體中文");
+  formData.append("auto_proofread", String(autoProofread));
+  formData.append("llm_provider", llmProvider);
+  if (scriptText) {
+    formData.append("script_text", scriptText);
+    formData.append("script_mode", scriptMode);
+  }
+
+  const request = captureSubtitleRequest();
+  try {
+    const res = await fetch("/api/ai/transcribe", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.status === "success") {
+      if (!canApplySubtitleResult(request)) return;
+      if (typeof pushUndoSnapshot === "function") pushUndoSnapshot("AI 產生字幕");
+      data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
+      setSubtitleTrack(data.track);
+      if (data.proofread_warning) {
+        addLog(`字幕已保留，LLM 審核尚未全部完成：${data.proofread_warning}`, "error");
+      } else if (data.has_reference) {
+        addLog(`已生成 ${data.track.segments.length} 句字幕，診斷報告已儲存於 output/，請確認待複核項目。`, "success");
+      } else {
+        addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
+      }
+    } else {
+      throw new Error(data.detail || "辨識失敗");
+    }
+  } catch (err) {
+    addLog(`辨識失敗: ${err.message}`, "error");
+  } finally {
+    if (typeof hideBusyOverlay === "function") hideBusyOverlay();
+    if (el.btnAiTranscribe) {
+      el.btnAiTranscribe.disabled = false;
+      el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg><span id="btn-ai-transcribe-label">🎙️ 開始 AI 產生字幕 (自動判定原詞)</span>`;
+    }
+  }
+}
+
 function initAiButtons() {
-  // 模式切換：無稿辨識 vs 有稿對齊
-  if (el.btnModeUnscripted && el.btnModeScripted) {
-    el.btnModeUnscripted.addEventListener("click", () => {
-      el.panelAiUnscripted.classList.remove("hidden");
-      el.panelAiScripted.classList.add("hidden");
-      el.btnModeUnscripted.className = "flex-1 py-1.5 px-2 rounded bg-purple-600/30 text-purple-300 border border-purple-500/40 font-medium transition";
-      el.btnModeScripted.className = "flex-1 py-1.5 px-2 rounded text-zinc-400 hover:text-zinc-200 transition";
-    });
-
-    el.btnModeScripted.addEventListener("click", () => {
-      el.panelAiScripted.classList.remove("hidden");
-      el.panelAiUnscripted.classList.add("hidden");
-      el.btnModeScripted.className = "flex-1 py-1.5 px-2 rounded bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-medium transition";
-      el.btnModeUnscripted.className = "flex-1 py-1.5 px-2 rounded text-zinc-400 hover:text-zinc-200 transition";
-    });
-  }
-
-  // 雙向即時連動：Tab 1 大腦引擎 <-> Tab 2 鎖定填字校對引擎
-  const syncLlmEngine = (val) => {
-    if (el.selectLlmEngine) el.selectLlmEngine.value = val;
-    if (el.selectLockedLlmEngine) el.selectLockedLlmEngine.value = val;
-    try { localStorage.setItem("autosub_llm_engine", val); } catch (e) {}
-  };
-
   if (el.selectLlmEngine) {
-    el.selectLlmEngine.addEventListener("change", (e) => syncLlmEngine(e.target.value));
+    el.selectLlmEngine.addEventListener("change", (e) => {
+      try { if (typeof localStorage !== "undefined") localStorage.setItem("autosub_llm_engine", e.target.value); } catch (err) {}
+    });
   }
-  if (el.selectLockedLlmEngine) {
-    el.selectLockedLlmEngine.addEventListener("change", (e) => syncLlmEngine(e.target.value));
-  }
-
-  // 雙向即時連動：Tab 1 校對開關 <-> Tab 2 鎖定填字校對開關
-  const syncProofreadCheck = (checked) => {
-    if (el.checkAutoProofread) el.checkAutoProofread.checked = checked;
-    if (el.checkLockedProofread) el.checkLockedProofread.checked = checked;
-    try { localStorage.setItem("autosub_auto_proofread", checked ? "1" : "0"); } catch (e) {}
-  };
 
   if (el.checkAutoProofread) {
-    el.checkAutoProofread.addEventListener("change", (e) => syncProofreadCheck(e.target.checked));
-  }
-  if (el.checkLockedProofread) {
-    el.checkLockedProofread.addEventListener("change", (e) => syncProofreadCheck(e.target.checked));
+    el.checkAutoProofread.addEventListener("change", (e) => {
+      try { if (typeof localStorage !== "undefined") localStorage.setItem("autosub_auto_proofread", e.target.checked ? "1" : "0"); } catch (err) {}
+    });
   }
 
-  // 還原上次儲存的 LLM 偏好設定
   try {
-    const savedEngine = localStorage.getItem("autosub_llm_engine");
-    if (savedEngine) syncLlmEngine(savedEngine);
-    const savedProof = localStorage.getItem("autosub_auto_proofread");
-    if (savedProof !== null) syncProofreadCheck(savedProof === "1");
+    if (typeof localStorage !== "undefined") {
+      const savedEngine = localStorage.getItem("autosub_llm_engine");
+      if (savedEngine && el.selectLlmEngine) el.selectLlmEngine.value = savedEngine;
+      const savedProof = localStorage.getItem("autosub_auto_proofread");
+      if (savedProof !== null && el.checkAutoProofread) el.checkAutoProofread.checked = (savedProof === "1");
+    }
   } catch (e) {}
 
-  // AI 自動產生字幕 (單一入口：自動依據是否有填寫原詞智慧雙分流)
   if (el.btnAiTranscribe) {
-    el.btnAiTranscribe.addEventListener("click", async () => {
-      const media = state.video.path;
-      if (!media) {
-        addLog("請先在上方選擇或上傳影片後再執行產生字幕", "error");
-        return;
-      }
-
-      const autoProofread = el.checkAutoProofread ? el.checkAutoProofread.checked : true;
-      const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
-      const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
-      const scriptMode = el.selectScriptMode.value;
-
-      if (scriptText) {
-        const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
-        const auditDescription = autoProofread ? `決策大腦: ${brainName}` : "AI 審核已關閉，保留 Whisper 時間結果";
-        const modeName = scriptMode === "reference" ? "歌詞參考，可重複引用" : "完整逐句稿，固定順序";
-        addLog(`【AI 產生字幕】${modeName}（${scriptText.split('\n').filter(Boolean).length} 行），啟動原生 Whisper (large-v3-turbo，原生)＋Luna 歌詞字幕管線 (${auditDescription})...`);
-      } else {
-        const brainName = llmProvider === "local" ? "本地 Qwen2.5" : "雲端 LLM API";
-        addLog(`【AI 產生字幕】無稿模式，正在以 Whisper (large-v3-turbo，原生) 辨識${autoProofread ? ` 並由 ${brainName} 自動盲校錯字` : ''}...`);
-      }
-
-      el.btnAiTranscribe.disabled = true;
-      el.btnAiTranscribe.textContent = scriptText 
-        ? "⏳ 歌詞強制對齊與時間軸審核管線執行中..." 
-        : (autoProofread ? "⏳ Whisper 語音辨識與錯字校對中..." : "⏳ Whisper 語音辨識中...");
-      showBusyOverlay(scriptText
-        ? "歌詞強制對齊與時間軸審核中，請稍候..."
-        : "Whisper 語音辨識中，請稍候...");
-
-      const formData = new FormData();
-      formData.append("media_path", media);
-      formData.append("device", "cuda");
-      formData.append("prompt", "繁體中文");
-      formData.append("auto_proofread", String(autoProofread));
-      formData.append("llm_provider", llmProvider);
-      if (scriptText) {
-        formData.append("script_text", scriptText);
-        formData.append("script_mode", scriptMode);
-      }
-
-      const request = captureSubtitleRequest();
-      try {
-        const res = await fetch("/api/ai/transcribe", { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.status === "success") {
-          if (!canApplySubtitleResult(request)) return;
-          data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.ai.srt`;
-          setSubtitleTrack(data.track);
-          if (data.proofread_warning) {
-            addLog(`字幕已保留，LLM 審核尚未全部完成：${data.proofread_warning}`, "error");
-          } else if (data.has_reference) {
-            addLog(`已生成 ${data.track.segments.length} 句字幕，診斷報告已儲存於 output/，請確認待複核項目。`, "success");
-          } else {
-            addLog(`【AI 辨識完成】已生成 ${data.track.segments.length} 句時間軸字幕！`, "success");
-          }
-        } else {
-          throw new Error(data.detail || "辨識失敗");
-        }
-      } catch (err) {
-        addLog(`辨識失敗: ${err.message}`, "error");
-      } finally {
-        hideBusyOverlay();
-        el.btnAiTranscribe.disabled = false;
-        el.btnAiTranscribe.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>🎙️ 開始 AI 產生字幕 (自動判定原詞)`;
-      }
-    });
+    el.btnAiTranscribe.addEventListener("click", runAiTranscribe);
   }
 
-  // 有稿強制對齊 (備用相容)
-  if (el.btnAiAlign) {
-    el.btnAiAlign.addEventListener("click", async () => {
-      const media = state.video.path;
-      if (!media) {
-        addLog("請先載入影片後再執行對齊", "error");
-        return;
-      }
-
-      const scriptText = el.alignScriptTextarea ? el.alignScriptTextarea.value.trim() : "";
-      const llmProvider = el.selectLlmEngine ? el.selectLlmEngine.value : "local";
-
-      if (!scriptText) {
-        addLog("請先選擇原稿 .txt 檔案或在文字框貼上歌詞/原稿內容", "error");
-        return;
-      }
-
-      addLog(`【有稿對齊】啟動 Luna 管線將原稿與 ${state.video.filename} 強制對齊...`);
-      el.btnAiAlign.disabled = true;
-      el.btnAiAlign.textContent = "⏳ 強制對齊與時間軸審核中...";
-      showBusyOverlay("歌詞強制對齊與時間軸審核中，請稍候...");
-
-      const request = captureSubtitleRequest();
-      try {
-        const payload = { media_path: media, llm_provider: llmProvider };
-        if (scriptText) payload.script_text = scriptText;
-
-        const res = await fetch("/api/ai/align", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (data.status === "success") {
-          if (!canApplySubtitleResult(request)) return;
-          data.track.source_file = `${state.video.filename.replace(/\.[^.]+$/, '')}.aligned.srt`;
-          setSubtitleTrack(data.track);
-          addLog(`【有稿對齊成功】生成 ${data.track.segments.length} 句 100% 原稿時間軸字幕（已輸出交付檔案）！`, "success");
-        } else {
-          throw new Error(data.detail || "對齊失敗");
-        }
-      } catch (err) {
-        addLog(`對齊失敗: ${err.message}`, "error");
-      } finally {
-        hideBusyOverlay();
-        el.btnAiAlign.disabled = false;
-        el.btnAiAlign.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>開始原稿與音軌 100% 強制對齊`;
-      }
-    });
-  }
-
-  // Edge LLM 校對 (自動依據是否有填寫原詞決定「有稿精準校對」或「無稿盲校」)
+  // Standalone LLM 校對 (自動依據是否有填寫原詞決定「有稿精準校對」或「無稿盲校」)
   if (el.btnAiProofread) {
     el.btnAiProofread.addEventListener("click", async () => {
       if (!state.track.segments.length) {
@@ -1575,6 +1546,7 @@ function initAiButtons() {
       }
       el.btnAiProofread.disabled = true;
       el.btnAiProofread.textContent = "⏳ 校對中...";
+      showBusyOverlay(scriptText ? "正在參照原稿歌詞進行 AI 錯字校對..." : "正在使用 AI 進行字幕上下文錯字校對...");
 
       const request = captureSubtitleRequest();
       try {
@@ -1590,6 +1562,7 @@ function initAiButtons() {
         const data = await res.json();
         if (data.status === "success") {
           if (!canApplySubtitleResult(request)) return;
+          if (typeof pushUndoSnapshot === "function") pushUndoSnapshot("AI 字幕校對");
           setSubtitleTrack(data.track);
           if (data.proofread_warning) {
             addLog(data.proofread_warning, "error");
@@ -1604,8 +1577,9 @@ function initAiButtons() {
       } catch (err) {
         addLog(`校對失敗: ${err.message}`, "error");
       } finally {
+        hideBusyOverlay();
         el.btnAiProofread.disabled = false;
-        el.btnAiProofread.textContent = "✨ 校對目前字幕";
+        el.btnAiProofread.textContent = "✨ AI 校對目前字幕";
       }
     });
   }
@@ -1721,6 +1695,43 @@ function parseEditorText(value, count) {
   if (lines.length === count + 1 && lines.at(-1) === "") lines.pop();
   if (lines.length !== count) throw new Error(`文字共 ${lines.length} 段，時間軸共 ${count} 段；請調整後再套用。`);
   return lines;
+}
+
+const _segmentUndoStack = [];
+const MAX_SEGMENT_UNDO = 30;
+
+function updateUndoButtonState() {
+  if (el.btnUndoSegments) {
+    el.btnUndoSegments.disabled = _segmentUndoStack.length === 0;
+  }
+}
+
+function pushUndoSnapshot(label = "編輯") {
+  try {
+    const snap = {
+      label,
+      selectedIndex: state.selectedSegmentIndex,
+      segments: JSON.parse(JSON.stringify(state.track.segments || []))
+    };
+    _segmentUndoStack.push(snap);
+    if (_segmentUndoStack.length > MAX_SEGMENT_UNDO) {
+      _segmentUndoStack.shift();
+    }
+    updateUndoButtonState();
+  } catch (e) {}
+}
+
+function undoSegmentEdit() {
+  if (!_segmentUndoStack.length) {
+    addLog("目前沒有可復原的步驟", "info");
+    return;
+  }
+  const snap = _segmentUndoStack.pop();
+  updateUndoButtonState();
+  state.track.segments = snap.segments;
+  state.selectedSegmentIndex = Math.max(0, Math.min(snap.selectedIndex || 0, Math.max(0, snap.segments.length - 1)));
+  setSubtitleTrack(state.track);
+  addLog(`↩️ 已復原：${snap.label}`, "info");
 }
 
 function setSubtitleTrack(track) {
@@ -1856,10 +1867,23 @@ function renderSegmentList() {
       }
     });
 
+    let _textBeforeEdit = seg.text || "";
     textInput.addEventListener("focus", () => {
+      _textBeforeEdit = seg.text || "";
       state.selectedSegmentIndex = idx;
       highlightActiveSegmentInList(seg.id);
       drawWaveformTimeline();
+    });
+
+    textInput.addEventListener("change", () => {
+      if ((seg.text || "") !== _textBeforeEdit) {
+        const snapshotSegs = JSON.parse(JSON.stringify(state.track.segments || []));
+        if (snapshotSegs[idx]) snapshotSegs[idx].text = _textBeforeEdit;
+        _segmentUndoStack.push({ label: `修改 #${seg.id} 文字`, selectedIndex: idx, segments: snapshotSegs });
+        if (_segmentUndoStack.length > MAX_SEGMENT_UNDO) _segmentUndoStack.shift();
+        updateUndoButtonState();
+        _textBeforeEdit = seg.text || "";
+      }
     });
 
     textInput.addEventListener("keydown", (e) => {
@@ -1869,7 +1893,6 @@ function renderSegmentList() {
         if (nextIdx < state.track.segments.length) {
           const nextSeg = state.track.segments[nextIdx];
           selectAndJumpToSegment(nextIdx);
-          auditionWindow(nextSeg.start, nextSeg.end);
           const nextCard = document.getElementById(`seg-card-${nextSeg.id}`);
           if (nextCard) {
             const nextInp = nextCard.querySelector(".seg-text-input");
@@ -1915,6 +1938,7 @@ function renderSegmentList() {
     });
 
     topRow.querySelector(".btn-del-seg").addEventListener("click", () => {
+      pushUndoSnapshot(`刪除 #${seg.id}`);
       state.track.segments.splice(idx, 1);
       setSubtitleTrack(state.track);
     });
@@ -1975,6 +1999,7 @@ function setInPointAtPlayhead() {
     addLog("請先選取一個 #Index 段落後再設起點", "error");
     return;
   }
+  pushUndoSnapshot(`設 #${segs[idx].id} 起點`);
   const cur = segs[idx];
   const t = Number((el.video.currentTime || 0).toFixed(2));
   if (t >= cur.end - 0.15) {
@@ -2004,6 +2029,7 @@ function setOutPointAtPlayhead() {
     addLog(`終點 (${t}s) 必須大於該段起點 (${cur.start}s)`, "error");
     return;
   }
+  pushUndoSnapshot(`設 #${cur.id} 終點`);
   cur.end = t;
   // 若與下一段重疊，自動往後推下一段的起點
   if (idx + 1 < segs.length && segs[idx + 1].start < t) {
@@ -2061,6 +2087,7 @@ async function splitSegmentAtPlayhead() {
   }
 
   if (!canApplySubtitleResult(request)) return;
+  pushUndoSnapshot("游標處切分段落");
   const origEnd = cur.end;
   const origText = (cur.text || "").trim();
   let text1 = origText;
@@ -2126,13 +2153,14 @@ async function runBreakpointAnalysis() {
     const data = await res.json();
     if (data.status === "success") {
       if (!canApplySubtitleResult(request)) return;
+      pushUndoSnapshot("分析音訊斷點");
       state.waveformPeaks = data.waveform_peaks || [];
       state.selectedSegmentIndex = 0;
       setSubtitleTrack(data.track);
       // 自動切換至 Tab 2 方便使用者立即聽頭尾校對
       const tab2Btn = document.querySelector('[data-tab="tab-editor"]');
       if (tab2Btn) tab2Btn.click();
-      addLog(`✔ 斷點分析完成！共抓出 ${data.segment_count} 個發聲段落 (#1 ~ #${data.segment_count})。請用「🎧 聽頭 / 聽尾」確認斷點，確認無誤後即可手打、貼詞或點「🎙️ 依目前時間軸填入 AI 字幕」！`, "success");
+      addLog(`✔ 斷點分析完成！共抓出 ${data.segment_count} 個發聲段落 (#1 ~ #${data.segment_count})。請用「🎧 聽頭 / 聽尾」確認斷點，並於列表填詞或切回 Tab 1 執行 AI 產生字幕。`, "success");
     } else {
       throw new Error(data.detail || "斷點分析失敗");
     }
@@ -2142,70 +2170,6 @@ async function runBreakpointAnalysis() {
     if (el.btnAnalyzeBreakpoints) {
       el.btnAnalyzeBreakpoints.disabled = false;
       el.btnAnalyzeBreakpoints.innerHTML = `<span>🔍 分析音訊斷點 (建立時間軸)</span>`;
-    }
-  }
-}
-
-// 【階段 3】依目前鎖定時間軸執行受控 Whisper 填空
-async function runLockedTimelineTranscribe() {
-  const media = state.video.path;
-  if (!media) {
-    addLog("請先載入影片後再執行填字", "error");
-    return;
-  }
-  if (!state.track.segments || !state.track.segments.length) {
-    addLog("請先點選左側「🔍 分析音訊斷點」建立時間軸段落後，再執行填字！", "error");
-    return;
-  }
-
-  const onlyEmpty = el.checkLockedOnlyEmpty ? el.checkLockedOnlyEmpty.checked : false;
-  const autoProofread = el.checkLockedProofread ? el.checkLockedProofread.checked : false;
-  const llmProvider = el.selectLockedLlmEngine ? el.selectLockedLlmEngine.value : (el.selectLlmEngine ? el.selectLlmEngine.value : "local");
-  const brainName = llmProvider === "local" ? "本地 Qwen2.5 (離線)" : "雲端 LLM API (.env)";
-  const proofText = autoProofread ? `AI校對: ${brainName}` : "無校對";
-
-  addLog(`【階段 3：鎖定時間軸填字】正在依照您校對好的 ${state.track.segments.length} 個時間段執行受控 Whisper 填字 (${proofText}，起訖時間100%鎖定)...`, "info");
-  
-  if (el.btnTranscribeLocked) {
-    el.btnTranscribeLocked.disabled = true;
-    el.btnTranscribeLocked.textContent = "⏳ 按鎖定時間軸逐段辨識中...";
-  }
-
-  if (typeof showBusyOverlay === "function") {
-    showBusyOverlay(`🎙️ 正在依鎖定時間軸逐段填入 AI 字幕... (${state.track.segments.length} 段 · ${proofText})`);
-  }
-
-  const request = captureSubtitleRequest();
-  try {
-    const res = await fetch("/api/ai/transcribe-segments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        media_path: media,
-        track: state.track,
-        device: "cuda",
-        prompt: "繁體中文",
-        only_empty: onlyEmpty,
-        auto_proofread: autoProofread,
-        llm_provider: llmProvider
-      })
-    });
-    const data = await res.json();
-    if (data.status === "success") {
-      if (!canApplySubtitleResult(request)) return;
-      setSubtitleTrack(data.track);
-      addLog(data.proofread_warning || `✔ 已依鎖定時間軸完成 ${data.track.segments.length} 段字幕填入！`, data.proofread_warning ? "error" : "success");
-    } else {
-      throw new Error(data.detail || "填字失敗");
-    }
-  } catch (err) {
-    addLog(`❌ 鎖定時間軸填字失敗: ${err.message}`, "error");
-    if (typeof alert === "function") alert(`鎖定時間軸填字失敗: ${err.message}`);
-  } finally {
-    if (typeof hideBusyOverlay === "function") hideBusyOverlay();
-    if (el.btnTranscribeLocked) {
-      el.btnTranscribeLocked.disabled = false;
-      el.btnTranscribeLocked.innerHTML = `<span>🎙️ 依目前時間軸填入 AI 字幕</span>`;
     }
   }
 }
@@ -2235,6 +2199,7 @@ function initEditorViewToggle() {
     let lines;
     try { lines = parseEditorText(el.rawSubtitleTextarea.value, segs.length); }
     catch (error) { addLog(error.message, "error"); return; }
+    pushUndoSnapshot("全文覆寫字幕");
     for (let i = 0; i < segs.length; i++) {
       segs[i].text = lines[i];
     }
@@ -2243,15 +2208,12 @@ function initEditorViewToggle() {
     addLog(`已更新 ${lines.length} 段文字，保留時間軸。`, "success");
   });
 
-  // 綁定斷點分析、鎖定時間軸填字與拍點快修按鈕
+  // 綁定斷點分析與拍點快修按鈕
   if (el.btnAnalyzeBreakpoints) {
     el.btnAnalyzeBreakpoints.addEventListener("click", runBreakpointAnalysis);
   }
-  if (el.btnGotoBreakpointFlow) {
-    el.btnGotoBreakpointFlow.addEventListener("click", runBreakpointAnalysis);
-  }
-  if (el.btnTranscribeLocked) {
-    el.btnTranscribeLocked.addEventListener("click", runLockedTimelineTranscribe);
+  if (el.btnUndoSegments) {
+    el.btnUndoSegments.addEventListener("click", undoSegmentEdit);
   }
   if (el.btnSetInPoint) {
     el.btnSetInPoint.addEventListener("click", setInPointAtPlayhead);
@@ -2265,6 +2227,7 @@ function initEditorViewToggle() {
 
   // 1. 新增字幕段
   el.btnAddSegment.addEventListener("click", () => {
+    pushUndoSnapshot("新增段落");
     const curTime = Number((el.video.currentTime || 0).toFixed(2));
     state.track.segments.push({
       id: state.track.segments.length + 1,
@@ -2286,6 +2249,7 @@ function initEditorViewToggle() {
         addLog("請先點選一句字幕（且其後方需有下一句）以進行合併", "error");
         return;
       }
+      pushUndoSnapshot(`合併 #${idx + 1} 與下一句`);
       const cur = segs[idx];
       const next = segs[idx + 1];
       cur.end = next.end;
@@ -2321,6 +2285,7 @@ function initEditorViewToggle() {
         return;
       }
 
+      pushUndoSnapshot(`標點拆句 #${cur.id}`);
       const part1 = text.slice(0, splitPos).trim();
       const part2 = text.slice(splitPos).trim();
       const ratio = part1.length / Math.max(1, text.length);
@@ -2344,6 +2309,7 @@ function initEditorViewToggle() {
   // 4. 全體時間軸平移 (-0.5s / +0.5s)
   function shiftAllTimestamps(deltaSec) {
     if (!state.track.segments.length) return;
+    pushUndoSnapshot(`全體時間平移 ${deltaSec > 0 ? '+' : ''}${deltaSec}s`);
     state.track.segments.forEach(seg => {
       seg.start = Math.max(0, Number((seg.start + deltaSec).toFixed(2)));
       seg.end = Math.max(seg.start + 0.2, Number((seg.end + deltaSec).toFixed(2)));
@@ -2359,6 +2325,7 @@ function initEditorViewToggle() {
   // 5. 清空字幕
   el.btnClearSubtitles.addEventListener("click", () => {
     if (confirm("確定要清空目前時間軸上的所有字幕嗎？")) {
+      pushUndoSnapshot("清空全部字幕");
       setSubtitleTrack({ ...state.track, source_file: "", segments: [] });
       addLog("已清空字幕時間軸", "info");
     }
@@ -2389,13 +2356,15 @@ function updateSubtitleSelectDropdown() {
 // 依據 X 百分比 (0=最左, 50=置中, 100=最右) 無死角平滑計算盒模型水平對齊與邊距
 function applySliderPositionX(pctX) {
   state.styleCustomized = true;
+  state.style.pos_x = null;
+  state.style.pos_y = null;
   const val = Math.max(0, Math.min(100, Math.round(pctX)));
   const vidW = state.video.width || 1920;
   const minPad = Math.max(10, Math.round(vidW * 0.025));
 
   if (state.style.orientation === "vertical") {
     state.style.horizontal_align = "right";
-    state.style.padding_right = Math.round(((100 - val) / 100) * (vidW * 0.86));
+    state.style.padding_right = Math.round(((100 - val) / 100) * (vidW * 0.80));
     state.style.padding_left = minPad;
     if (el.valPosX) el.valPosX.textContent = `距右 ${state.style.padding_right}px (${val}%)`;
   } else {
@@ -2408,7 +2377,7 @@ function applySliderPositionX(pctX) {
       state.style.padding_left = minPad;
       if (el.valPosX) el.valPosX.textContent = `靠右 距右 ${state.style.padding_right}px (${val}%)`;
     } else {
-      // 水平置中模式下，藉由左右非對稱內距平滑偏移中心點 (0~100 全程無死角，且與 FFmpeg ASS MarginL/MarginR 完全一致)
+      // 水平置中模式下，藉由左右非對稱內距平滑偏移中心點
       if (Math.abs(val - 50) <= 1) {
         state.style.padding_left = minPad;
         state.style.padding_right = minPad;
@@ -2436,27 +2405,23 @@ function applySliderPositionX(pctX) {
 // 依據 Y 百分比 (0=最底, 50=正中, 100=最頂) 無死角平滑計算盒模型垂直對齊與邊距
 function applySliderPositionY(pctY) {
   state.styleCustomized = true;
+  state.style.pos_x = null;
+  state.style.pos_y = null;
   const val = Math.max(0, Math.min(100, Math.round(pctY)));
   const vidH = state.video.height || 1080;
   const minPad = Math.max(10, Math.round(vidH * 0.025));
 
-  if (state.style.orientation === "vertical") {
-    state.style.vertical_align = "top";
-    state.style.padding_top = Math.round(((100 - val) / 100) * (vidH * 0.75));
+  if (state.style.orientation === "vertical" || state.style.vertical_align === "top") {
+    if (state.style.orientation === "vertical") state.style.vertical_align = "top";
+    state.style.padding_top = Math.round(((100 - val) / 100) * (vidH * 0.80));
     state.style.padding_bottom = minPad;
     if (el.valPosY) el.valPosY.textContent = `距頂 ${state.style.padding_top}px (${val}%)`;
   } else {
-    if (state.style.vertical_align === "top") {
-      state.style.padding_top = Math.round(((100 - val) / 100) * (vidH * 0.85));
-      state.style.padding_bottom = minPad;
-      if (el.valPosY) el.valPosY.textContent = `距頂 ${state.style.padding_top}px (${val}%)`;
-    } else {
-      // 以 bottom 為基準，從 0% (貼底) 到 100% (頂部) 全程平滑無死角移動，且與 FFmpeg ASS MarginV 100% 對應
-      state.style.vertical_align = "bottom";
-      state.style.padding_bottom = Math.round((val / 100) * (vidH * 0.86));
-      state.style.padding_top = minPad;
-      if (el.valPosY) el.valPosY.textContent = `距底 ${state.style.padding_bottom}px (${val}%)`;
-    }
+    // 以 bottom 為基準，從 0% (貼底) 到 100% (頂部) 全程平滑無死角移動
+    state.style.vertical_align = "bottom";
+    state.style.padding_bottom = Math.round((val / 100) * (vidH * 0.86));
+    state.style.padding_top = minPad;
+    if (el.valPosY) el.valPosY.textContent = `距底 ${state.style.padding_bottom}px (${val}%)`;
   }
 
   if (el.sliderPosY) el.sliderPosY.value = val;
@@ -2566,19 +2531,14 @@ function initStyleEditor() {
       adjustHeight();
       const txt = e.target.value;
       renderOverlayText(txt || "字幕樣式與位置即時預覽 Sample");
-      // 若目前已選取某句字幕，也可同步更新該句預覽
-      if (state.track.segments && state.track.segments[state.selectedSegmentIndex]) {
-        state.track.segments[state.selectedSegmentIndex].text = txt;
-        updateSubtitleSelectDropdown();
-        renderSegmentList();
-        saveSessionToStorage();
-      }
     });
   }
 
   if (el.btnResetPosition) {
     el.btnResetPosition.addEventListener("click", () => {
       state.styleCustomized = true;
+      state.style.pos_x = null;
+      state.style.pos_y = null;
       const vidH = state.video.height || 1080;
       const vidW = state.video.width || 1920;
       state.style.orientation = "horizontal";
@@ -2644,6 +2604,8 @@ function initStyleEditor() {
   document.querySelectorAll(".grid-align-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       state.styleCustomized = true;
+      state.style.pos_x = null;
+      state.style.pos_y = null;
       const valign = btn.dataset.valign;
       const halign = btn.dataset.halign;
       const vidW = state.video.width || 1920;
@@ -3224,10 +3186,10 @@ function syncStateToControls() {
 
   let pctX = 50;
   if (s.orientation === "vertical" || s.horizontal_align === "right") {
-    pctX = Math.max(0, Math.min(100, Math.round(100 - (s.padding_right / Math.max(1, vidW * 0.82)) * 100)));
+    pctX = Math.max(0, Math.min(100, Math.round(100 - (s.padding_right / Math.max(1, vidW * 0.80)) * 100)));
     if (el.valPosX) el.valPosX.textContent = `靠右 距右 ${s.padding_right}px (${pctX}%)`;
   } else if (s.horizontal_align === "left") {
-    pctX = Math.max(0, Math.min(100, Math.round((s.padding_left / Math.max(1, vidW * 0.82)) * 100)));
+    pctX = Math.max(0, Math.min(100, Math.round((s.padding_left / Math.max(1, vidW * 0.80)) * 100)));
     if (el.valPosX) el.valPosX.textContent = `靠左 距左 ${s.padding_left}px (${pctX}%)`;
   } else {
     const diff = (s.padding_left || 0) - (s.padding_right || 0);
@@ -3488,42 +3450,75 @@ function initExport() {
       return;
     }
 
-    const renderMode = el.selectBurnRenderMode ? el.selectBurnRenderMode.value : "css";
-    const engineLabel = renderMode === "css" ? "CSS 精準圖層 + NVENC" : "ASS 傳統引擎 + NVENC";
-    addLog(`【影音壓制】啟動 ${engineLabel} 壓制燒錄影片至 ${videoPath}...`);
+    addLog(`【影音壓制】啟動 CSS 瀏覽器精準圖層渲染壓制至 ${videoPath}...`);
     el.btnStartBurn.disabled = true;
-    el.btnStartBurn.textContent = "⏳ GPU 硬體編碼壓制中...";
+    el.btnStartBurn.textContent = "⏳ CSS 渲染與影片壓制中...";
     el.burnResultBox.classList.add("hidden");
+
+    let activeBurnTaskId = null;
     showBusyOverlay(
-      renderMode === "css"
-        ? `🎬 正在進行 CSS 瀏覽器精準排版＋NVENC 影片壓制... (${state.track.segments.length} 句)`
-        : `🎬 正在進行 ASS 傳統引擎＋NVENC 影片壓制... (${state.track.segments.length} 句)`
+      `🎬 正在進行 CSS 瀏覽器精準排版＋影片壓制... (${state.track.segments.length} 句)`,
+      {
+        showProgress: true,
+        onCancel: async () => {
+          if (!activeBurnTaskId) return;
+          try {
+            await fetch(`/api/burn/task/${activeBurnTaskId}/cancel`, { method: "POST" });
+          } catch (e) {}
+        }
+      }
     );
 
+    const progressBar = document.getElementById("busy-overlay-progress-bar");
+    const percentText = document.getElementById("busy-overlay-percent");
+    const frameCount = document.getElementById("busy-overlay-frame-count");
+    const detailText = document.getElementById("busy-overlay-detail");
+    if (frameCount) frameCount.textContent = "壓制進度";
+
     try {
-      const res = await fetch("/api/burn", {
+      const startRes = await fetch("/api/burn/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           video_path: videoPath,
           track: state.track,
-          style: state.style,
-          render_mode: renderMode
+          style: state.style
         })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.status === "success") {
-        addLog(`【壓制成功】已產出燒錄影片 (${data.render_mode || renderMode}): ${data.filename}`, "success");
-        el.burnResultBox.classList.remove("hidden");
-        el.linkDownloadBurned.href = data.url;
-        el.btnPreviewBurned.onclick = () => {
-          el.video.src = data.url;
-          el.video.play();
-          addLog("已切換播放器至壓制後影片", "info");
-        };
-        loadAssetLibrary();
-      } else {
-        throw new Error(data.detail || `壓制失敗 (HTTP ${res.status})`);
+      const startData = await startRes.json().catch(() => ({}));
+      if (!startRes.ok || !startData.task_id) {
+        throw new Error(startData.detail || `啟動壓制失敗 (HTTP ${startRes.status})`);
+      }
+      activeBurnTaskId = startData.task_id;
+
+      while (true) {
+        await new Promise((r) => setTimeout(r, 800));
+        const pollRes = await fetch(`/api/burn/task/${activeBurnTaskId}`);
+        if (!pollRes.ok) continue;
+        const task = await pollRes.json();
+        const pct = Math.max(0, Math.min(100, Number(task.percent || 0)));
+        if (progressBar) progressBar.style.width = `${pct.toFixed(1)}%`;
+        if (percentText) percentText.textContent = `${pct.toFixed(1)}%`;
+        if (detailText && task.message) detailText.textContent = task.message;
+
+        if (task.stage === "completed" && task.result) {
+          const data = task.result;
+          addLog(`【壓制成功】已產出燒錄影片: ${data.filename}`, "success");
+          el.burnResultBox.classList.remove("hidden");
+          el.linkDownloadBurned.href = data.url;
+          el.btnPreviewBurned.onclick = () => {
+            el.video.src = data.url;
+            el.video.play();
+            addLog("已切換播放器至壓制後影片", "info");
+          };
+          loadAssetLibrary();
+          break;
+        } else if (task.stage === "cancelled") {
+          addLog("⏹️ 壓制任務已手動中止。", "warning");
+          break;
+        } else if (task.stage === "failed") {
+          throw new Error(task.error || task.message || "壓制失敗");
+        }
       }
     } catch (err) {
       addLog(`壓制失敗: ${err.message}`, "error");
@@ -3774,10 +3769,34 @@ window.addEventListener("DOMContentLoaded", async () => {
     const savedStyle = localStorage.getItem("autosub_style_v1");
     if (savedStyle) {
       Object.assign(state.style, JSON.parse(savedStyle));
+      state.styleCustomized = true;
     }
   } catch (e) {
     // ignore
   }
+
+  // 查詢後端實際硬體與渲染環境狀態
+  fetch("/api/health").then(r => r.json()).then(health => {
+    const statusEl = document.getElementById("system-status");
+    const dotEl = document.getElementById("system-status-dot");
+    const hw = health && health.hardware;
+    if (statusEl && hw) {
+      const parts = [];
+      if (hw.cuda_available) {
+        parts.push(`GPU 加速 (${hw.cuda_device_name || "CUDA"})`);
+      } else {
+        parts.push("CPU 模式");
+      }
+      parts.push(hw.nvenc_available ? "NVENC" : "x264");
+      parts.push(hw.css_browser ? `CSS: ${hw.css_browser}` : "⚠️ 未偵測 CSS 瀏覽器");
+      statusEl.textContent = parts.join(" · ");
+      if (dotEl) {
+        dotEl.className = hw.css_browser
+          ? (hw.cuda_available ? "w-2 h-2 rounded-full bg-emerald-500 animate-pulse" : "w-2 h-2 rounded-full bg-sky-400")
+          : "w-2 h-2 rounded-full bg-red-500";
+      }
+    }
+  }).catch(() => {});
 
   const safeInit = (fn, name) => {
     try {

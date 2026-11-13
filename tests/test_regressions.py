@@ -113,6 +113,7 @@ def test_font_download_rejects_non_fonts_without_replacing_existing_file(tmp_pat
 def test_api_local_selection_is_forwarded(client, monkeypatch, track):
     media = server.UPLOADS_DIR / 'audio.wav'
     media.touch()
+    monkeypatch.setattr(server, 'extract_audio', lambda src, dst: {'audio_path': src, 'duration': 1.0})
     monkeypatch.setattr(server, 'transcribe_audio', lambda *a, **kw: {'source_file': str(media), 'duration': 1, 'raw_segments': [track.segments[0].model_dump()]})
     factory = Mock()
     factory.return_value.warning = None
@@ -146,6 +147,7 @@ def test_burn_outputs_do_not_overwrite_previous_results(client, monkeypatch, tra
 def test_luna_jobs_isolate_outputs_and_treat_script_text_literally(client, monkeypatch, track, tmp_path):
     media = server.UPLOADS_DIR / 'audio.wav'
     media.touch()
+    monkeypatch.setattr(server, 'extract_audio', lambda src, dst: {'audio_path': src, 'duration': 1.0})
     private = tmp_path / 'private.txt'
     private.write_text('must not read')
     directories = []
@@ -156,9 +158,9 @@ def test_luna_jobs_isolate_outputs_and_treat_script_text_literally(client, monke
         (directory / 'lyrics.srt').write_text(str(len(directories)))
         return track
     monkeypatch.setattr(server, 'run_luna_pipeline', run)
-    for endpoint in ('/api/ai/transcribe', '/api/ai/align'):
+    for _ in range(2):
         payload = {'media_path': str(media), 'script_text': str(private)}
-        response = client.post(endpoint, **({'data': payload} if endpoint.endswith('transcribe') else {'json': payload}))
+        response = client.post('/api/ai/transcribe', data=payload)
         assert response.status_code == 200
     assert len(set(directories)) == 2
     assert (directories[0] / 'lyrics.srt').read_text() == '1'
@@ -203,7 +205,7 @@ def test_luna_repairs_missing_timestamps_and_exports_all_formats(tmp_path):
     assert all(0 <= s.start < s.end <= 1 for s in result.segments)
     assert all(a.end <= b.start for a, b in zip(result.segments, result.segments[1:]))
     assert all(r['status'] == 'needs_review' for r in pipeline.reviews)
-    for filename in ('lyrics.srt', 'lyrics.vtt', 'lyrics.ass', 'lyrics.lrc', 'cue_evidence.json', 'review.csv', 'run_manifest.json'):
+    for filename in ('lyrics.srt', 'lyrics.vtt', 'lyrics.lrc', 'cue_evidence.json', 'review.csv', 'run_manifest.json'):
         assert (tmp_path / filename).is_file()
 
 
@@ -244,23 +246,30 @@ def test_tight_srt_without_blank_lines():
 def test_concurrent_burns_use_separate_temporary_subtitles(tmp_path, monkeypatch, track):
     media = tmp_path / 'video.mp4'
     media.touch()
+    monkeypatch.setattr(video_burner, 'has_video_stream', lambda *a: True)
     monkeypatch.setattr(video_burner, 'get_video_info', lambda *a: (320, 180, 1))
     monkeypatch.setattr(video_burner, 'check_nvenc_support', lambda: False)
     barrier = Barrier(2)
-    paths = []
+    work_dirs = []
+    def fake_render(*, work_dir, track, **kwargs):
+        concat = work_dir / 'subs.ffconcat'
+        concat.write_text(f"ffconcat version 1.0\n# {track.segments[0].text}\nfile 'blank.png'\n", encoding='utf-8')
+        return concat
+    monkeypatch.setattr(video_burner, 'render_css_subtitles_to_pngs', fake_render)
     def run(command, **kwargs):
-        path = Path(re.search(r"ass='([^']+)'", command[command.index('-vf') + 1])[1])
-        paths.append(path)
+        i_indices = [idx for idx, arg in enumerate(command) if arg == '-i']
+        concat_path = Path(command[i_indices[1] + 1])
+        work_dirs.append(concat_path.parent)
         barrier.wait(timeout=5)
-        assert path.exists()
-        assert '測試' in path.read_text()
-        return SimpleNamespace(returncode=0)
+        assert concat_path.exists()
+        assert '測試' in concat_path.read_text(encoding='utf-8')
+        return SimpleNamespace(returncode=0, stderr='')
     monkeypatch.setattr(video_burner.subprocess, 'run', run)
     with ThreadPoolExecutor(2) as pool:
         results = list(pool.map(lambda i: video_burner.burn_subtitles_to_video(str(media), track, str(tmp_path / f'{i}.mp4')), range(2)))
     assert results[0] != results[1]
-    assert len(set(paths)) == 2
-    assert all(not p.exists() for p in paths)
+    assert len(set(work_dirs)) == 2
+    assert all(not d.exists() for d in work_dirs)
 
 
 def test_font_api_rejects_local_file_urls(client, tmp_path, monkeypatch):

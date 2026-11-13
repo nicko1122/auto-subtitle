@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -14,11 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.core.audio_extractor import extract_audio, check_ffmpeg
 from src.core.transcriber import WHISPER_MODEL, transcribe_audio
 from src.core.segmenter import build_subtitle_track
-from src.core.aligner import align_script_to_audio
 from src.core.luna_pipeline import run_luna_pipeline
 from src.core.proofreader import SubtitleProofreader
 from src.core.video_burner import burn_subtitles_to_video
-from src.core.exporter import to_srt, to_vtt, to_json, save_file, parse_srt_content
+from src.core.exporter import to_srt, to_vtt, to_openshot, to_json, save_file, parse_srt_content
 from src.core.font_manager import (
     get_font_catalog,
     install_font_from_file,
@@ -127,10 +127,10 @@ def segment_cmd(
 @app.command("export")
 def export_cmd(
     subtitle_json: str = typer.Argument(..., help="SubtitleTrack JSON 檔案路徑"),
-    fmt: str = typer.Option("srt", "-f", "--format", help="匯出格式 (srt, vtt, json)"),
+    fmt: str = typer.Option("srt", "-f", "--format", help="匯出格式 (srt, openshot, vtt, json)"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出檔案路徑"),
 ):
-    """【步驟 4】將 SubtitleTrack JSON 轉換匯出為標準 SRT / VTT 格式"""
+    """【步驟 4】將 SubtitleTrack JSON 轉換匯出為標準 SRT / OpenShot / VTT 格式"""
     try:
         data = json.loads(Path(subtitle_json).read_text(encoding="utf-8"))
         track = SubtitleTrack(**data)
@@ -139,6 +139,9 @@ def export_cmd(
         if fmt_lower == "srt":
             content = to_srt(track)
             ext = ".srt"
+        elif fmt_lower == "openshot":
+            content = to_openshot(track)
+            ext = ".openshot.srt"
         elif fmt_lower == "vtt":
             content = to_vtt(track)
             ext = ".vtt"
@@ -146,7 +149,7 @@ def export_cmd(
             content = to_json(track)
             ext = ".json"
         else:
-            raise ValueError(f"不支援的格式: {fmt} (僅支援 srt, vtt, json)")
+            raise ValueError(f"不支援的格式: {fmt} (僅支援 srt, openshot, vtt, json)")
 
         out_file = output or str(Path(subtitle_json).with_suffix(ext))
         save_file(content, out_file)
@@ -179,24 +182,31 @@ def pipeline_cmd(
 
     console.rule("[bold cyan]開始執行自動上字幕流水線[/bold cyan]")
 
-    # 1. 音訊處理
     is_video = input_p.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv"]
-    if is_video:
-        console.print("[1/4] 抽取並轉換音訊 (16kHz Mono WAV)...")
-        wav_path = target_dir / f"{stem}.wav"
-        extract_res = extract_audio(str(input_p), str(wav_path))
-        audio_file = extract_res["audio_path"]
-    else:
-        audio_file = str(input_p)
+    temp_wav: Optional[Path] = None
+    try:
+        # 1. 音訊處理
+        if is_video:
+            console.print("[1/4] 抽取並轉換音訊 (16kHz Mono WAV)...")
+            fd, tmp_name = tempfile.mkstemp(prefix=f"{stem}_", suffix=".wav")
+            os.close(fd)
+            temp_wav = Path(tmp_name)
+            extract_res = extract_audio(str(input_p), str(temp_wav))
+            audio_file = extract_res["audio_path"]
+        else:
+            audio_file = str(input_p)
 
-    # 2. Whisper 語音辨識
-    console.print(f"[2/4] Whisper 語音辨識中 (模型: {WHISPER_MODEL}, 裝置: {device}, 提示: {prompt})...")
-    trans_res = transcribe_audio(
-        audio_path=audio_file,
-        device=device,
-        language=language,
-        initial_prompt=prompt
-    )
+        # 2. Whisper 語音辨識
+        console.print(f"[2/4] Whisper 語音辨識中 (模型: {WHISPER_MODEL}, 裝置: {device}, 提示: {prompt})...")
+        trans_res = transcribe_audio(
+            audio_path=audio_file,
+            device=device,
+            language=language,
+            initial_prompt=prompt
+        )
+    finally:
+        if temp_wav and temp_wav.exists():
+            temp_wav.unlink(missing_ok=True)
 
     # 3. 智慧斷句
     console.print(f"[3/4] 智慧斷句切分中 (單行最大 {max_chars} 字, 停頓閥值 {pause}s)...")
@@ -258,26 +268,33 @@ def align_cmd(
 
     # 1. 抽取音訊 (若為影片)
     is_video = input_p.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv"]
-    if is_video:
-        console.print("[1/2] 抽取並轉換音訊 (16kHz Mono WAV)...")
-        wav_path = target_dir / f"{stem}.wav"
-        extract_res = extract_audio(str(input_p), str(wav_path))
-        audio_file = extract_res["audio_path"]
-    else:
-        audio_file = str(input_p)
+    temp_wav: Optional[Path] = None
+    try:
+        if is_video:
+            console.print("[1/2] 抽取並轉換音訊 (16kHz Mono WAV)...")
+            fd, tmp_name = tempfile.mkstemp(prefix=f"{stem}_", suffix=".wav")
+            os.close(fd)
+            temp_wav = Path(tmp_name)
+            extract_res = extract_audio(str(input_p), str(temp_wav))
+            audio_file = extract_res["audio_path"]
+        else:
+            audio_file = str(input_p)
 
-    # 2. 呼叫完整 Luna 管線
-    console.print(f"[2/2] 正在執行強制對齊、雙軌比對、局部切音重跑與決策審核 (LLM: {llm_provider})...")
-    track = run_luna_pipeline(
-        audio_path=audio_file,
-        lyrics_source=str(script_p),
-        output_dir=str(target_dir),
-        llm_provider=llm_provider,
-        device=device,
-        prompt=prompt,
-        llm_audit=audit,
-        script_mode=script_mode,
-    )
+        # 2. 呼叫完整 Luna 管線
+        console.print(f"[2/2] 正在執行強制對齊、雙軌比對、局部切音重跑與決策審核 (LLM: {llm_provider})...")
+        track = run_luna_pipeline(
+            audio_path=audio_file,
+            lyrics_source=str(script_p),
+            output_dir=str(target_dir),
+            llm_provider=llm_provider,
+            device=device,
+            prompt=prompt,
+            llm_audit=audit,
+            script_mode=script_mode,
+        )
+    finally:
+        if temp_wav and temp_wav.exists():
+            temp_wav.unlink(missing_ok=True)
 
     console.rule("[bold green]有稿對齊完成[/bold green]")
     console.print(f"  ✔ 字幕句數: [yellow]{len(track.segments)} 句 ({script_mode})[/yellow]")
@@ -301,15 +318,16 @@ def proofread_cmd(
     input_file: str = typer.Argument(..., help="來源檔案 (可為 .subtitles.json、.srt 或影音檔)"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="輸出檔案路徑 (預設輸出 .proofread.srt)"),
     batch_size: int = typer.Option(8, "-b", "--batch-size", help="每次批次送入 LLM 校對的字幕句數"),
+    device: str = typer.Option("auto", "-d", "--device", help="運算裝置 (auto, cuda, cpu)"),
     gpu_layers: int = typer.Option(-1, "--gpu-layers", help="GPU 卸載層數 (-1 為全層放 GPU)"),
 ):
-    """【無稿模式】使用本地 Edge LLM (Qwen2.5) 自動校正逐字稿錯別字與同音字"""
+    """使用本地 Edge LLM (Qwen2.5) 自動校正逐字稿錯別字與同音字"""
     input_p = Path(input_file).resolve()
     if not input_p.exists():
         console.print(f"[bold red]找不到輸入檔案: {input_file}[/bold red]")
         raise typer.Exit(code=1)
 
-    console.rule("[bold cyan]開始執行【無稿模式】Edge LLM 智慧校對[/bold cyan]")
+    console.rule("[bold cyan]開始執行 Edge LLM 智慧校對[/bold cyan]")
 
     # 1. 取得 SubtitleTrack
     if input_p.suffix.lower() == ".json":
@@ -320,8 +338,8 @@ def proofread_cmd(
         track = parse_srt_content(content, source_file=str(input_p))
     else:
         # 假設為影音檔，先跑 pipeline 核心
-        console.print(f"[1/3] 執行快速語音辨識與切分...")
-        trans_res = transcribe_audio(str(input_p), device="cuda", initial_prompt="繁體中文")
+        console.print(f"[1/3] 執行快速語音辨識與切分 (device={device})...")
+        trans_res = transcribe_audio(str(input_p), device=device, initial_prompt="繁體中文")
         track = build_subtitle_track(trans_res)
 
     console.print(f"[2/3] 載入本地 Qwen2.5-3B-Instruct 模型 (GPU 全速加速)...")
@@ -380,7 +398,6 @@ def burn_cmd(
     shadow: Optional[float] = typer.Option(None, "--shadow", help="陰影偏移量 (像素，預設 1.2)"),
     pos_x: Optional[int] = typer.Option(None, "--x", help="精準絕對 X 座標 (像素，指定後將覆蓋對齊設定)"),
     pos_y: Optional[int] = typer.Option(None, "--y", help="精準絕對 Y 座標 (像素，指定後將覆蓋對齊設定)"),
-    render_mode: str = typer.Option("css", "--render-mode", help="字幕渲染引擎: css (瀏覽器 CSS 截圖疊加，100% 所見即所得) 或 ass (傳統 libass)"),
     cpu: bool = typer.Option(False, "--cpu", help="強制使用 CPU (預設自動啟用 NVIDIA NVENC 硬體加速)"),
 ):
     """【Hardcopy 壓制】將字幕硬燒錄進影片中，支援 CSS 樣式字串/檔案、陰影字、描邊字、Web 盒模型與自訂排版"""
@@ -459,7 +476,7 @@ def burn_cmd(
     if style.pos_x is not None and style.pos_y is not None:
         console.print(f"  定位模式: [magenta]精準絕對座標 (X={style.pos_x}, Y={style.pos_y})[/magenta]")
     else:
-        align_desc = f"{style.vertical_align}-{style.horizontal_align} (ASS Code: {style.ass_alignment})"
+        align_desc = f"{style.vertical_align}-{style.horizontal_align}"
         padding_desc = f"上={style.padding_top}px, 右={style.padding_right}px, 下={style.padding_bottom}px, 左={style.padding_left}px"
         console.print(f"  對齊模式: [magenta]{align_desc}[/magenta]")
         console.print(f"  內距邊界: [magenta]{padding_desc}[/magenta]")
@@ -471,7 +488,6 @@ def burn_cmd(
             output_path=output,
             style=style,
             use_gpu=not cpu,
-            render_mode=render_mode.strip().lower(),
         )
         console.rule("[bold green]影片壓制完成[/bold green]")
         console.print(f"  ✔ 燒錄影片已產出: [bold green]{out_file}[/bold green]")

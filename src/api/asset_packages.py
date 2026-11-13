@@ -44,7 +44,8 @@ def package_files(directory: Path):
             raise ValueError(f'資產包內有多份 {extension}，請使用與影片同名的工作檔案')
         return matches[0] if matches else None
 
-    return video, companion('.srt'), companion('.txt')
+    subtitle = companion('.srt') or companion('.vtt')
+    return video, subtitle, companion('.txt')
 
 
 def list_packages(root: Path):
